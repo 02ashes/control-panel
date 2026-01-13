@@ -1,0 +1,3154 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель - Генератор ссылок Lovense</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Tahoma, 'MS Sans Serif', 'Segoe UI', Arial, sans-serif;
+            background: #c0c0c0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            color: #000;
+        }
+
+        .container {
+            background: #e5e5e5;
+            border: 2px solid #000;
+            border-radius: 0;
+            box-shadow: none;
+            padding: 24px;
+            max-width: 720px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #000;
+            margin-bottom: 8px;
+            font-size: 22px;
+            text-align: left;
+            font-weight: 700;
+        }
+
+        .subtitle {
+            color: #222;
+            margin-bottom: 18px;
+            text-align: left;
+            font-size: 13px;
+        }
+
+        .btn-generate {
+            width: 100%;
+            background: #e0e0e0;
+            color: #000;
+            border: 2px solid #000;
+            padding: 12px 16px;
+            font-size: 14px;
+            border-radius: 0;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .btn-generate:hover {
+            filter: brightness(0.95);
+        }
+
+        .btn-generate:active {
+            filter: brightness(0.9);
+        }
+
+        .links-section {
+            margin-top: 16px;
+        }
+
+        .links-title {
+            color: #000;
+            font-size: 14px;
+            margin-bottom: 8px;
+            font-weight: 700;
+        }
+
+        .link-item {
+            background: #e5e5e5;
+            border: 1px solid #000;
+            border-radius: 0;
+            padding: 10px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .link-item:hover {
+            background: #dcdcdc;
+        }
+
+        .link-url {
+            color: #0000ee;
+            text-decoration: none;
+            flex: 1;
+            word-break: break-all;
+            margin-right: 10px;
+            font-size: 14px;
+        }
+
+        .link-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-copy,
+        .btn-delete,
+        .btn-chat {
+            padding: 6px 12px;
+            border: 2px solid #000;
+            background: #e0e0e0;
+            color: #000;
+            border-radius: 0;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .btn-copy:hover,
+        .btn-delete:hover,
+        .btn-chat:hover {
+            filter: brightness(0.95);
+        }
+
+        .btn-copy:active,
+        .btn-delete:active,
+        .btn-chat:active {
+            filter: brightness(0.9);
+        }
+
+        .no-links {
+            text-align: center;
+            color: #999;
+            padding: 30px;
+            font-style: italic;
+        }
+
+        .stats {
+            background: #e5e5e5;
+            border: 1px solid #000;
+            border-radius: 0;
+            padding: 10px;
+            margin-bottom: 16px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 8px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .stat-label {
+            color: #111;
+            font-size: 11px;
+            margin-top: 2px;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #ffffe1;
+            color: #000;
+            padding: 8px 12px;
+            border: 1px solid #000;
+            border-radius: 0;
+            opacity: 0;
+            transform: translateY(100px);
+            transition: all 0.2s;
+            z-index: 1000;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* Модальное окно чата */
+        .chat-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+            transition: left 0.3s ease;
+        }
+
+        .chat-modal.snippets-open {
+            left: var(--snippets-width, 0px);
+        }
+
+        .chat-modal.show {
+            display: flex;
+        }
+
+        .chat-window {
+            background: #e5e5e5;
+            border: 2px solid #000;
+            border-radius: 0;
+            width: 90%;
+            max-width: 700px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: none;
+            resize: both;
+            overflow: hidden;
+            min-width: 500px;
+            min-height: 400px;
+            position: relative;
+        }
+
+        .control-monitor {
+            padding: 10px 12px;
+            border-bottom: 1px solid #000;
+            background: #dcdcdc;
+        }
+
+        .monitor-title {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .graph-container {
+            background: #fff;
+            border: 1px solid #000;
+            border-radius: 0;
+            height: 150px;
+            position: relative;
+        }
+
+        .graph-container canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .intensity-display {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background: #e0e0e0;
+            color: #000;
+            padding: 3px 8px;
+            border: 1px solid #000;
+            border-radius: 0;
+            font-weight: 700;
+            font-size: 12px;
+        }
+
+        .intensity-display.active {
+            animation: pulse-intensity 1s ease-in-out infinite;
+        }
+
+        @keyframes pulse-intensity {
+
+            0%,
+            100% {
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(255, 45, 118, 0.7);
+            }
+
+            50% {
+                transform: scale(1.05);
+                box-shadow: 0 0 0 10px rgba(255, 45, 118, 0);
+            }
+        }
+
+        .chat-header {
+            padding: 10px 12px;
+            border-bottom: 1px solid #000;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-header h3 {
+            margin: 0;
+            color: #000;
+            font-size: 14px;
+        }
+
+        .close-chat {
+            background: #e0e0e0;
+            border: 2px solid #000;
+            font-size: 16px;
+            color: #000;
+            cursor: pointer;
+            padding: 0 8px;
+            height: 24px;
+            border-radius: 0;
+        }
+
+        .close-chat:hover {
+            background: #f5f5f5;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .message {
+            padding: 8px 10px;
+            border: 1px solid #000;
+            border-radius: 0;
+            max-width: 80%;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        .message.admin {
+            background: #ffffff;
+            align-self: flex-end;
+            margin-left: auto;
+        }
+
+        .message.controller {
+            background: #f2f2f2;
+            align-self: flex-start;
+        }
+
+        .message.system {
+            background: #e3f2fd;
+            align-self: center;
+            text-align: center;
+            font-size: 12px;
+            color: #1565c0;
+            max-width: 90%;
+            white-space: pre-line;
+            font-weight: 600;
+            border: 1px solid #90caf9;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        .message-time {
+            font-size: 10px;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        .chat-input-area {
+            border-top: 1px solid #000;
+            padding: 10px;
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+
+        .chat-input-area textarea {
+            flex: 1;
+            border: 1px solid #000;
+            border-radius: 0;
+            padding: 8px 10px;
+            font-size: 16px;
+            outline: none;
+            background: #fff;
+            color: #000;
+            font-family: inherit;
+            resize: none;
+            min-height: 36px;
+            max-height: 120px;
+            overflow-y: auto;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        .chat-input-area textarea:focus {
+            outline: 2px dotted #000;
+        }
+
+        .send-btn {
+            background: #e0e0e0;
+            color: #000;
+            border: 2px solid #000;
+            padding: 8px 12px;
+            border-radius: 0;
+            cursor: pointer;
+            font-weight: 700;
+            flex-shrink: 0;
+            align-self: flex-end;
+            white-space: nowrap;
+        }
+
+        .send-btn:hover {
+            filter: brightness(0.95);
+        }
+
+        .voice-btn {
+            background: #FF2D76;
+            color: white;
+            border: 2px solid #000;
+            padding: 8px 12px;
+            border-radius: 0;
+            cursor: pointer;
+            font-weight: 700;
+            flex-shrink: 0;
+            align-self: flex-end;
+            white-space: nowrap;
+        }
+
+        .voice-btn:hover {
+            filter: brightness(1.1);
+        }
+
+        .voice-picker {
+            position: absolute;
+            bottom: 70px;
+            left: 20px;
+            background: white;
+            border: 2px solid #000;
+            border-radius: 0;
+            box-shadow: 4px 4px #808080;
+            display: none;
+            z-index: 1000;
+            min-width: 200px;
+        }
+
+        .voice-picker.show {
+            display: block;
+        }
+
+        .voice-picker-header {
+            padding: 10px 12px;
+            background: #C0C0C0;
+            border-bottom: 2px solid #000;
+            font-weight: 700;
+            font-size: 12px;
+        }
+
+        .voice-picker-body {
+            padding: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .voice-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border: 1px solid #ddd;
+            margin-bottom: 4px;
+            background: white;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .voice-item:hover {
+            background: #f0f0f0;
+        }
+
+        .voice-item-icon {
+            font-size: 16px;
+        }
+
+        /* Text Snippets Styles */
+        .snippets-container {
+            position: fixed;
+            left: -100%;
+            top: 0;
+            bottom: 0;
+            display: flex;
+            z-index: 3500;
+            transition: left 0.3s ease;
+        }
+
+        .snippets-container.show {
+            left: 0;
+        }
+
+        .snippets-panel {
+            width: 300px;
+            background: #e5e5e5;
+            border-right: 2px solid #000;
+            padding: 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+
+        .snippets-viewer {
+            background: #f5f5f5;
+            border-right: 2px solid #000;
+            display: none;
+            flex-direction: column;
+            width: 500px;
+            min-width: 300px;
+            max-width: 1000px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .snippets-viewer.has-content {
+            display: flex;
+        }
+
+        .snippet-resize-handle {
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 10px;
+            cursor: ew-resize;
+            background: transparent;
+            z-index: 10;
+        }
+
+        .snippet-resize-handle:hover {
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        .snippet-tabs {
+            display: flex;
+            background: #dcdcdc;
+            border-bottom: 2px solid #000;
+            overflow-x: auto;
+            flex-shrink: 0;
+            scrollbar-width: thin;
+        }
+
+        .snippet-tabs::-webkit-scrollbar {
+            height: 6px;
+        }
+
+        .snippet-tabs::-webkit-scrollbar-track {
+            background: #c0c0c0;
+        }
+
+        .snippet-tabs::-webkit-scrollbar-thumb {
+            background: #808080;
+        }
+
+        .snippet-tab {
+            padding: 8px 12px;
+            border-right: 1px solid #000;
+            cursor: pointer;
+            background: #c0c0c0;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }
+
+        .snippet-tab.active {
+            background: #f5f5f5;
+            font-weight: 700;
+        }
+
+        .snippet-tab:hover {
+            background: #d0d0d0;
+        }
+
+        .snippet-tab.active:hover {
+            background: #f5f5f5;
+        }
+
+        .snippet-tab-close {
+            padding: 0 4px;
+            margin-left: 4px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .snippet-tab-close:hover {
+            color: red;
+        }
+
+        .snippet-content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: none;
+            flex-direction: column;
+        }
+
+        .snippet-content-area.active {
+            display: flex;
+        }
+
+        .snippet-editor-title {
+            margin: 0 0 12px 0;
+            font-size: 18px;
+            font-weight: 700;
+            padding: 8px;
+            border: 1px solid #000;
+            background: #fff;
+        }
+
+        .snippet-editor-textarea {
+            width: 100%;
+            height: 400px;
+            padding: 12px;
+            border: 1px solid #000;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+            background: #fff;
+        }
+
+        .snippet-editor-actions {
+            margin-top: 12px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .snippet-editor-actions button {
+            padding: 8px 16px;
+            border: 2px solid #000;
+            background: #e0e0e0;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .snippet-editor-actions button:hover {
+            filter: brightness(0.95);
+        }
+
+        body.snippets-open .container {
+            margin-left: 0;
+            transition: margin-left 0.3s ease;
+        }
+
+        .snippets-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #000;
+        }
+
+        .snippets-header h3 {
+            margin: 0;
+            font-size: 16px;
+        }
+
+        .snippet-controls {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .snippet-controls button {
+            flex: 1;
+            padding: 8px 12px;
+            background: #e0e0e0;
+            border: 2px solid #000;
+            font-size: 12px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .snippet-controls button:hover {
+            filter: brightness(0.95);
+        }
+
+        .snippet-tree {
+            margin-top: 12px;
+        }
+
+        .snippet-folder,
+        .snippet-item {
+            padding: 8px 10px;
+            margin: 4px 0;
+            background: #fff;
+            border: 1px solid #000;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .snippet-folder>span:first-child,
+        .snippet-item>span:first-child {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-right: 8px;
+        }
+
+        .snippet-folder:hover,
+        .snippet-item:hover {
+            background: #f5f5f5;
+        }
+
+        .snippet-item.selected {
+            background: #c0c0c0;
+            font-weight: 700;
+        }
+
+        .snippet-folder {
+            font-weight: 600;
+        }
+
+        .snippet-folder-children {
+            margin-left: 20px;
+        }
+
+        .snippet-actions {
+            display: none;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .snippet-folder:hover .snippet-actions,
+        .snippet-item:hover .snippet-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .snippet-actions button {
+            padding: 2px 6px;
+            border: 1px solid #000;
+            background: #fff;
+            font-size: 10px;
+            cursor: pointer;
+        }
+
+        .snippets-toggle {
+            position: fixed;
+            left: 20px;
+            bottom: 20px;
+            background: #e0e0e0;
+            color: #000;
+            border: 2px solid #000;
+            padding: 10px 16px;
+            border-radius: 0;
+            cursor: pointer;
+            font-weight: 700;
+            z-index: 3400;
+            font-size: 13px;
+            display: none;
+        }
+
+        .snippets-toggle.show {
+            display: block;
+        }
+
+        .snippets-toggle:hover {
+            filter: brightness(0.95);
+        }
+
+        .snippet-export-section {
+            margin-top: 20px;
+            padding-top: 12px;
+            border-top: 2px solid #000;
+        }
+
+        .snippet-export-section button {
+            width: 100%;
+            padding: 8px 12px;
+            background: #e0e0e0;
+            border: 2px solid #000;
+            margin-bottom: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .snippet-export-section button:hover {
+            filter: brightness(0.95);
+        }
+
+        .snippet-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 3000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .snippet-modal.show {
+            display: flex;
+        }
+
+        .snippet-modal-content {
+            background: #e5e5e5;
+            border: 2px solid #000;
+            padding: 24px;
+            min-width: 500px;
+            max-width: 800px;
+            width: 80vw;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .snippet-modal-content h3 {
+            margin: 0 0 16px 0;
+            font-size: 16px;
+        }
+
+        .snippet-modal-content input,
+        .snippet-modal-content textarea {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #000;
+            margin-bottom: 16px;
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        .snippet-modal-content textarea {
+            min-height: 300px;
+            resize: vertical;
+            flex: 1;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        }
+
+        .snippet-modal-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .snippet-modal-actions button {
+            flex: 1;
+            padding: 10px 16px;
+            border: 2px solid #000;
+            background: #e0e0e0;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .snippet-modal-actions button:hover {
+            filter: brightness(0.95);
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 25px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .link-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .link-actions {
+                margin-top: 10px;
+                width: 100%;
+                flex-wrap: wrap;
+            }
+
+            .btn-copy,
+            .btn-delete,
+            .btn-chat {
+                flex: 1;
+                min-width: 80px;
+            }
+
+            .snippets-panel {
+                width: 250px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container" id="appRoot" style="display:none;">
+        <div style="display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:6px;">
+            <div>
+                <h1 style="margin:0;">Lovense Control Panel</h1>
+                <p class="subtitle" style="margin:0;">Админ-панель для генерации ссылок и приглашений</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button id="btnInvite" class="btn-generate" style="width:auto;padding:8px 12px;">Generate invite
+                    code</button>
+                <button id="btnWheelCode" class="btn-generate" style="width:auto;padding:8px 12px;">Wheel code</button>
+                <button id="btnUsers" class="btn-generate"
+                    style="width:auto;padding:8px 12px;display:none;">Users</button>
+                <button id="btnLogs" class="btn-generate"
+                    style="width:auto;padding:8px 12px;display:none;">Logs</button>
+            </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:start;">
+            <div style="border:1px solid #000;background:#fff;min-height:140px;padding:8px;">
+                <div style="font-weight:700;margin-bottom:6px;">Online users</div>
+                <ul id="onlineList"
+                    style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:12px;">
+                </ul>
+            </div>
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="totalLinks">0</div>
+                    <div class="stat-label">Всего ссылок</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="todayLinks">0</div>
+                    <div class="stat-label">Сегодня</div>
+                </div>
+            </div>
+        </div>
+
+        <button class="btn-generate" onclick="generateLink()">
+            Сгенерировать новую ссылку
+        </button>
+
+        <div style="margin-top:12px;color:#555;font-size:13px;">
+            Длительность сессии:
+            <select id="durationSelect" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
+                <option value="3">3 минуты</option>
+                <option value="5">5 минут</option>
+                <option value="7">7 минут</option>
+                <option value="10">10 минут</option>
+                <option value="20" selected>20 минут</option>
+                <option value="30">30 минут</option>
+                <option value="60">60 минут</option>
+                <option value="infinity">♾️ Бесконечно</option>
+            </select>
+        </div>
+
+        <div class="links-section">
+            <h2 class="links-title">Сгенерированные ссылки:</h2>
+            <div id="linksList">
+                <div class="no-links">Пока нет созданных ссылок. Нажмите кнопку выше!</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- Socket.io для реального времени -->
+    <script src="/socket.io/socket.io.js"></script>
+
+    <!-- Модальное окно генерации кода колеса -->
+    <div class="chat-modal" id="wheelCodeModal">
+        <div class="chat-window">
+            <div class="chat-header">
+                <h3>Генерация кода колеса</h3>
+                <button class="close-chat" onclick="closeWheelCodeModal()">×</button>
+            </div>
+
+            <div style="padding:20px;">
+                <div style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:8px;font-weight:700;">Выберите приз:</label>
+                    <select id="prizeSelect" style="width:100%;padding:8px;border:1px solid #000;font-size:14px;">
+                        <option value="Lovense">Lovense</option>
+                        <option value="Threesome">Threesome</option>
+                        <option value="Fucklist">Fucklist</option>
+                        <option value="Sexting">Sexting</option>
+                        <option value="Custom">Custom</option>
+                        <option value="Videocall">Videocall</option>
+                        <option value="Anal">Anal</option>
+                        <option value="Pussy">Pussy</option>
+                        <option value="Nudes">Nudes</option>
+                        <option value="Squirt">Squirt</option>
+                    </select>
+                </div>
+
+                <div style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:8px;font-weight:700;">Код (8 символов):</label>
+                    <input type="text" id="wheelCodeInput"
+                        style="width:100%;padding:8px;border:1px solid #000;font-size:14px;text-align:center;"
+                        maxlength="8" placeholder="Автогенерация">
+                </div>
+
+                <div style="display:flex;gap:10px;">
+                    <button onclick="generateWheelCode()"
+                        style="flex:1;padding:10px;background:#C0C0C0;border:2px outset #C0C0C0;font-weight:700;">Сгенерировать</button>
+                    <button onclick="closeWheelCodeModal()"
+                        style="flex:1;padding:10px;background:#C0C0C0;border:2px outset #C0C0C0;font-weight:700;">Отмена</button>
+                </div>
+
+                <div id="wheelCodeResult"
+                    style="margin-top:15px;padding:10px;background:#f0f0f0;border:1px solid #000;display:none;">
+                    <div style="font-weight:700;margin-bottom:5px;">Код создан:</div>
+                    <div id="wheelCodeDisplay" style="font-family:monospace;font-size:16px;font-weight:700;"></div>
+                    <button onclick="copyWheelCode()"
+                        style="margin-top:8px;padding:6px 12px;background:#C0C0C0;border:1px solid #000;font-size:12px;">Копировать</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно чата -->
+    <div class="chat-modal" id="chatModal">
+        <div class="chat-window">
+            <div class="chat-header">
+                <h3>Чат с пользователем</h3>
+                <button class="close-chat" onclick="closeChat()">×</button>
+            </div>
+
+            <!-- График контроля -->
+            <div class="control-monitor">
+                <div class="monitor-title">Мониторинг контроля в реальном времени</div>
+                <div class="graph-container">
+                    <canvas id="monitorCanvas" width="600" height="150"></canvas>
+                    <div class="intensity-display" id="intensityDisplay">0%</div>
+                </div>
+            </div>
+
+            <div class="chat-messages" id="chatMessages"></div>
+            <div class="chat-input-area" style="position: relative;">
+                <!-- Voice message picker -->
+                <div class="voice-picker" id="voicePicker">
+                    <div class="voice-picker-header">Голосовые сообщения</div>
+                    <div class="voice-picker-body" id="voicePickerBody">
+                        <div style="padding: 10px; text-align: center; color: #999;">Загрузка...</div>
+                    </div>
+                </div>
+
+                <button class="voice-btn" onclick="toggleVoicePicker()">🎤</button>
+                <textarea id="chatInput" placeholder="Введите сообщение..." onkeydown="handleChatKeyPress(event)"
+                    rows="1"></textarea>
+                <button class="send-btn" onclick="sendChatMessage()">Отправить</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Система регистрации с инвайт-кодом и паролем
+        const socket = io();
+        let currentNickname = localStorage.getItem('nickname') || '';
+
+        // Show choice modal: Login or Register
+        async function showAuthChoiceModal() {
+            return new Promise((resolve) => {
+                const modal = document.createElement('div');
+                modal.style.cssText = `
+                    position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                    background: rgba(0,0,0,0.5); z-index: 1000; display: flex; 
+                    align-items: center; justify-content: center;
+                `;
+
+                const form = document.createElement('div');
+                form.style.cssText = `
+                    background: #C0C0C0; border: 2px solid #000; padding: 20px; 
+                    box-shadow: 4px 4px #808080; min-width: 300px; text-align: center;
+                `;
+
+                form.innerHTML = `
+                    <h3 style="margin: 0 0 20px 0; font-family: 'MS Sans Serif', sans-serif;">Welcome!</h3>
+                    <p style="margin: 0 0 20px 0; font-family: 'MS Sans Serif', sans-serif; font-size: 12px;">Choose an option to continue</p>
+                    <div style="display: flex; gap: 10px; flex-direction: column;">
+                        <button id="btnChoiceLogin" style="padding: 10px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif; font-weight: bold;">🔑 Login</button>
+                        <button id="btnChoiceRegister" style="padding: 10px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif; font-weight: bold;">📝 Register (need invite code)</button>
+                    </div>
+                `;
+
+                modal.appendChild(form);
+                document.body.appendChild(modal);
+
+                form.querySelector('#btnChoiceLogin').onclick = async () => {
+                    document.body.removeChild(modal);
+                    await showLoginModal();
+                    resolve();
+                };
+
+                form.querySelector('#btnChoiceRegister').onclick = async () => {
+                    document.body.removeChild(modal);
+                    await showRegistrationModal();
+                    resolve();
+                };
+            });
+        }
+
+        // Login modal
+        async function showLoginModal() {
+            return new Promise((resolve) => {
+                const modal = document.createElement('div');
+                modal.style.cssText = `
+                    position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                    background: rgba(0,0,0,0.5); z-index: 1000; display: flex; 
+                    align-items: center; justify-content: center;
+                `;
+
+                const form = document.createElement('div');
+                form.style.cssText = `
+                    background: #C0C0C0; border: 2px solid #000; padding: 20px; 
+                    box-shadow: 4px 4px #808080; min-width: 300px;
+                `;
+
+                form.innerHTML = `
+                    <h3 style="margin: 0 0 15px 0; font-family: 'MS Sans Serif', sans-serif;">🔑 Login</h3>
+                    <div style="margin-bottom: 10px;">
+                        <label style="display: block; margin-bottom: 5px; font-family: 'MS Sans Serif', sans-serif;">Nickname:</label>
+                        <input type="text" id="loginNickname" style="width: 100%; padding: 4px; border: 1px solid #000; font-family: 'MS Sans Serif', sans-serif;" />
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; font-family: 'MS Sans Serif', sans-serif;">Password:</label>
+                        <input type="password" id="loginPassword" style="width: 100%; padding: 4px; border: 1px solid #000; font-family: 'MS Sans Serif', sans-serif;" />
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="loginSubmit" style="flex: 1; padding: 6px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif;">Login</button>
+                        <button id="loginBack" style="flex: 1; padding: 6px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif;">Back</button>
+                    </div>
+                `;
+
+                modal.appendChild(form);
+                document.body.appendChild(modal);
+
+                const nicknameInput = form.querySelector('#loginNickname');
+                const passwordInput = form.querySelector('#loginPassword');
+                const submitBtn = form.querySelector('#loginSubmit');
+                const backBtn = form.querySelector('#loginBack');
+
+                submitBtn.onclick = async () => {
+                    const nickname = nicknameInput.value.trim();
+                    const password = passwordInput.value;
+
+                    if (!nickname || !password) {
+                        alert('Please enter nickname and password');
+                        return;
+                    }
+
+                    try {
+                        const res = await fetch('/api/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ nickname, password })
+                        });
+
+                        const data = await res.json();
+
+                        if (!res.ok) {
+                            if (data.error === 'invalid_credentials') {
+                                alert('Invalid nickname or password');
+                            } else if (data.error === 'password_not_set') {
+                                alert('Your account has no password. Please contact admin.');
+                            } else {
+                                alert('Login failed');
+                            }
+                            return;
+                        }
+
+                        // Успешный логин
+                        currentNickname = nickname;
+                        localStorage.setItem('nickname', nickname);
+                        document.body.removeChild(modal);
+                        socket.emit('identify', nickname);
+                        resolve();
+
+                    } catch (e) {
+                        alert('Login error');
+                    }
+                };
+
+                backBtn.onclick = async () => {
+                    document.body.removeChild(modal);
+                    await showAuthChoiceModal();
+                    resolve();
+                };
+
+                nicknameInput.focus();
+            });
+        }
+
+        // Registration modal with password
+        async function showRegistrationModal() {
+            return new Promise((resolve) => {
+                const modal = document.createElement('div');
+                modal.style.cssText = `
+                    position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                    background: rgba(0,0,0,0.5); z-index: 1000; display: flex; 
+                    align-items: center; justify-content: center;
+                `;
+
+                const form = document.createElement('div');
+                form.style.cssText = `
+                    background: #C0C0C0; border: 2px solid #000; padding: 20px; 
+                    box-shadow: 4px 4px #808080; min-width: 300px;
+                `;
+
+                form.innerHTML = `
+                    <h3 style="margin: 0 0 15px 0; font-family: 'MS Sans Serif', sans-serif;">📝 Registration</h3>
+                    <div style="margin-bottom: 10px;">
+                        <label style="display: block; margin-bottom: 5px; font-family: 'MS Sans Serif', sans-serif;">Nickname:</label>
+                        <input type="text" id="regNickname" style="width: 100%; padding: 4px; border: 1px solid #000; font-family: 'MS Sans Serif', sans-serif;" />
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="display: block; margin-bottom: 5px; font-family: 'MS Sans Serif', sans-serif;">Password (min 4 chars):</label>
+                        <input type="password" id="regPassword" style="width: 100%; padding: 4px; border: 1px solid #000; font-family: 'MS Sans Serif', sans-serif;" />
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; font-family: 'MS Sans Serif', sans-serif;">Invite Code:</label>
+                        <input type="text" id="regCode" style="width: 100%; padding: 4px; border: 1px solid #000; font-family: 'MS Sans Serif', sans-serif;" />
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="regSubmit" style="flex: 1; padding: 6px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif;">Register</button>
+                        <button id="regBack" style="flex: 1; padding: 6px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif;">Back</button>
+                    </div>
+                `;
+
+                modal.appendChild(form);
+                document.body.appendChild(modal);
+
+                const nicknameInput = form.querySelector('#regNickname');
+                const passwordInput = form.querySelector('#regPassword');
+                const codeInput = form.querySelector('#regCode');
+                const submitBtn = form.querySelector('#regSubmit');
+                const backBtn = form.querySelector('#regBack');
+
+                submitBtn.onclick = async () => {
+                    const nickname = nicknameInput.value.trim();
+                    const password = passwordInput.value;
+                    const code = codeInput.value.trim();
+
+                    if (!nickname || !password || !code) {
+                        alert('Please fill all fields');
+                        return;
+                    }
+
+                    if (password.length < 4) {
+                        alert('Password must be at least 4 characters');
+                        return;
+                    }
+
+                    try {
+                        const res = await fetch('/api/register', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ nickname, password, code })
+                        });
+
+                        const data = await res.json();
+
+                        if (!res.ok) {
+                            if (data.error === 'nickname_taken') {
+                                alert('Nickname already taken');
+                            } else if (data.error === 'invalid_or_used_code') {
+                                alert('Invalid or already used invite code');
+                            } else if (data.error === 'password_too_short') {
+                                alert('Password must be at least 4 characters');
+                            } else {
+                                alert('Registration failed');
+                            }
+                            return;
+                        }
+
+                        // Успешная регистрация
+                        currentNickname = nickname;
+                        localStorage.setItem('nickname', nickname);
+                        document.body.removeChild(modal);
+                        socket.emit('identify', nickname);
+                        resolve();
+
+                    } catch (e) {
+                        alert('Registration error');
+                    }
+                };
+
+                backBtn.onclick = async () => {
+                    document.body.removeChild(modal);
+                    await showAuthChoiceModal();
+                    resolve();
+                };
+
+                nicknameInput.focus();
+            });
+        }
+        let currentRole = 'reader'; // Global role storage
+
+        async function ensureRegistration() {
+            // verify with server: only show UI if registered
+            const app = document.getElementById('appRoot');
+            async function checkAuth() {
+                const nick = localStorage.getItem('nickname') || '';
+                if (!nick) return { ok: false, role: null };
+                try {
+                    const res = await fetch('/api/auth/check', {
+                        headers: { 'X-Nickname': nick }
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        return { ok: true, role: data.role || 'reader' };
+                    }
+                    return { ok: false, role: null };
+                } catch (_) {
+                    return { ok: false, role: null };
+                }
+            }
+
+            let authResult = await checkAuth();
+            if (!authResult.ok) {
+                localStorage.removeItem('nickname'); // Clear invalid session
+                await showAuthChoiceModal();
+                authResult = await checkAuth();
+            }
+            if (authResult.ok) {
+                currentNickname = localStorage.getItem('nickname') || '';
+                currentRole = authResult.role || 'reader';
+                localStorage.setItem('role', currentRole);
+
+                socket.emit('identify', currentNickname);
+                if (app) app.style.display = 'block';
+
+                // Показываем кнопку Snippets после успешной регистрации
+                const snippetsToggle = document.querySelector('.snippets-toggle');
+                if (snippetsToggle) snippetsToggle.classList.add('show');
+
+                // Показываем кнопку Logs только для админов
+                if (currentRole === 'admin') {
+                    const btnLogs = document.getElementById('btnLogs');
+                    if (btnLogs) {
+                        btnLogs.style.display = 'block';
+                        btnLogs.onclick = () => window.open('/logs.html', '_blank');
+                    }
+
+                    // Показываем кнопку Users для админов
+                    const btnUsers = document.getElementById('btnUsers');
+                    if (btnUsers) {
+                        btnUsers.style.display = 'block';
+                        btnUsers.onclick = () => showUsersModal();
+                    }
+                }
+
+                // Скрываем кнопку Generate Invite для не-админов
+                if (currentRole !== 'admin') {
+                    const btnInvite = document.getElementById('btnInvite');
+                    if (btnInvite) btnInvite.style.display = 'none';
+                }
+
+                // Загружаем snippets СРАЗУ после успешной регистрации
+                loadSnippets();
+
+                // Применяем ограничения для readers
+                applyRoleRestrictions();
+            }
+        }
+
+        function applyRoleRestrictions() {
+            if (currentRole === 'reader') {
+                // Disable snippet editing buttons for readers
+                document.querySelectorAll('.snippet-edit-btn, .snippet-delete-btn, .folder-edit-btn, .folder-delete-btn, .add-snippet-btn, .add-folder-btn').forEach(btn => {
+                    btn.style.display = 'none';
+                });
+            }
+        }
+
+        // Users management modal for admins
+        async function showUsersModal() {
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                background: rgba(0,0,0,0.5); z-index: 1000; display: flex; 
+                align-items: center; justify-content: center;
+            `;
+
+            const container = document.createElement('div');
+            container.style.cssText = `
+                background: #C0C0C0; border: 2px solid #000; padding: 20px; 
+                box-shadow: 4px 4px #808080; min-width: 400px; max-width: 600px;
+                max-height: 80vh; overflow-y: auto;
+            `;
+
+            container.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                    <h3 style="margin:0;font-family:'MS Sans Serif',sans-serif;">👥 User Management</h3>
+                    <button id="closeUsersModal" style="padding:4px 8px;background:#C0C0C0;border:2px outset #C0C0C0;">✕</button>
+                </div>
+                <div id="usersList" style="font-family:'MS Sans Serif',sans-serif;font-size:12px;">Loading...</div>
+            `;
+
+            modal.appendChild(container);
+            document.body.appendChild(modal);
+
+            container.querySelector('#closeUsersModal').onclick = () => document.body.removeChild(modal);
+            modal.onclick = (e) => { if (e.target === modal) document.body.removeChild(modal); };
+
+            // Load users
+            try {
+                const res = await fetch('/api/users', {
+                    headers: { 'X-Nickname': currentNickname }
+                });
+
+                if (!res.ok) {
+                    container.querySelector('#usersList').innerHTML = '<p style="color:red;">Failed to load users</p>';
+                    return;
+                }
+
+                const data = await res.json();
+                const usersList = container.querySelector('#usersList');
+
+                if (data.users.length === 0) {
+                    usersList.innerHTML = '<p>No users found</p>';
+                    return;
+                }
+
+                usersList.innerHTML = `
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead>
+                            <tr style="background:#808080;color:white;">
+                                <th style="padding:6px;text-align:left;border:1px solid #000;">Nickname</th>
+                                <th style="padding:6px;text-align:left;border:1px solid #000;">Role</th>
+                                <th style="padding:6px;text-align:left;border:1px solid #000;">Registered</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody"></tbody>
+                    </table>
+                `;
+
+                const tbody = usersList.querySelector('#usersTableBody');
+                data.users.forEach(user => {
+                    const tr = document.createElement('tr');
+                    const isSuperAdmin = user.nickname === '02ashes';
+                    const dateStr = new Date(user.registered_at).toLocaleDateString();
+
+                    tr.innerHTML = `
+                        <td style="padding:6px;border:1px solid #000;">${user.nickname}${isSuperAdmin ? ' 👑' : ''}</td>
+                        <td style="padding:6px;border:1px solid #000;">
+                            ${isSuperAdmin ? '<span style="color:gold;font-weight:bold;">admin</span>' : `
+                                <select class="role-select" data-nickname="${user.nickname}" style="padding:2px;">
+                                    <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>admin</option>
+                                    <option value="user" ${user.role === 'user' ? 'selected' : ''}>user</option>
+                                    <option value="reader" ${user.role === 'reader' ? 'selected' : ''}>reader</option>
+                                </select>
+                            `}
+                        </td>
+                        <td style="padding:6px;border:1px solid #000;">${dateStr}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+                // Add change handlers for role selects
+                tbody.querySelectorAll('.role-select').forEach(select => {
+                    select.addEventListener('change', async (e) => {
+                        const targetNickname = e.target.dataset.nickname;
+                        const newRole = e.target.value;
+
+                        try {
+                            const res = await fetch('/api/user/role', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'X-Nickname': currentNickname },
+                                body: JSON.stringify({ targetNickname, newRole })
+                            });
+
+                            if (res.ok) {
+                                e.target.style.background = '#90EE90';
+                                setTimeout(() => e.target.style.background = '', 1000);
+                            } else {
+                                const err = await res.json();
+                                alert('Error: ' + (err.error || 'Unknown error'));
+                                // Revert selection
+                                showUsersModal();
+                            }
+                        } catch (err) {
+                            alert('Network error');
+                        }
+                    });
+                });
+
+            } catch (err) {
+                container.querySelector('#usersList').innerHTML = '<p style="color:red;">Error loading users</p>';
+            }
+        }
+
+        ensureRegistration();
+
+
+        socket.on('online-update', (list) => {
+            const ul = document.getElementById('onlineList');
+            if (!ul) return;
+            ul.innerHTML = list.map(name => `<li>${name}</li>`).join('');
+        });
+
+        document.getElementById('btnInvite').addEventListener('click', async () => {
+            if (!currentNickname) {
+                await showRegistrationModal();
+                if (!currentNickname) return;
+            }
+
+            try {
+                const res = await fetch('/api/invite/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nickname: currentNickname })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    if (data && data.error === 'no_invites_left') return showToast('No invites left');
+                    if (data && data.error === 'not_registered') return showToast('Register first');
+                    return showToast('Failed to generate invite');
+                }
+                showToast('Invite code: ' + data.code);
+                navigator.clipboard && navigator.clipboard.writeText(data.code).catch(() => { });
+            } catch (e) {
+                showToast('Error generating invite');
+            }
+        });
+
+        document.getElementById('btnWheelCode').addEventListener('click', () => {
+            document.getElementById('wheelCodeModal').classList.add('show');
+            // Очищаем поле кода и скрываем результат предыдущего
+            document.getElementById('wheelCodeInput').value = '';
+            document.getElementById('wheelCodeResult').style.display = 'none';
+            document.getElementById('prizeSelect').value = 'Lovense';
+        });
+
+        // Генерация случайного кода
+        function generateRandomCode() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let code = '';
+            for (let i = 0; i < 8; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+        }
+
+        // Генерация кода колеса
+        async function generateWheelCode() {
+            const prize = document.getElementById('prizeSelect').value;
+            let code = document.getElementById('wheelCodeInput').value.trim().toUpperCase();
+
+            // Если код не введен, генерируем случайный
+            if (!code) {
+                code = generateRandomCode();
+                document.getElementById('wheelCodeInput').value = code;
+            }
+
+            if (code.length !== 8) {
+                alert('Код должен содержать 8 символов!');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/wheel/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Nickname': currentNickname
+                    },
+                    body: JSON.stringify({ code, prize })
+                });
+
+                const data = await res.json();
+
+                if (!res.ok) {
+                    alert(data.error || 'Ошибка создания кода');
+                    return;
+                }
+
+                // Показываем результат
+                document.getElementById('wheelCodeDisplay').textContent = code;
+                document.getElementById('wheelCodeResult').style.display = 'block';
+                showToast('Код колеса создан: ' + code);
+
+                // Автоматически закрываем окно через 2 секунды
+                setTimeout(() => {
+                    closeWheelCodeModal();
+                }, 2000);
+
+            } catch (e) {
+                alert('Ошибка создания кода');
+            }
+        }
+
+        // Копирование кода колеса
+        function copyWheelCode() {
+            const code = document.getElementById('wheelCodeDisplay').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                showToast('Код скопирован: ' + code);
+            }).catch(() => {
+                showToast('Ошибка копирования');
+            });
+        }
+
+        // Закрытие модального окна кода колеса
+        function closeWheelCodeModal() {
+            document.getElementById('wheelCodeModal').classList.remove('show');
+            document.getElementById('wheelCodeResult').style.display = 'none';
+            // Очищаем поля при закрытии
+            document.getElementById('wheelCodeInput').value = '';
+            document.getElementById('prizeSelect').value = 'Lovense';
+        }
+
+        // Загрузка ссылок из localStorage
+        let links = JSON.parse(localStorage.getItem('lovenseLinks')) || [];
+
+        // Генерация случайного ID
+        function generateId() {
+            const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+            let id = '';
+            for (let i = 0; i < 8; i++) {
+                id += chars[Math.floor(Math.random() * chars.length)];
+            }
+            return id;
+        }
+
+        // Показ уведомления
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // Генерация новой ссылки
+        async function generateLink() {
+            const id = generateId();
+            const url = `${window.location.origin}/t2/${id}?share_type=103`;
+            const durationValue = document.getElementById('durationSelect').value;
+
+            let expiresAt = null;
+            let durationMin = null;
+
+            if (durationValue === 'infinity') {
+                // Бесконечная ссылка
+                expiresAt = null;
+                durationMin = Infinity;
+            } else {
+                // Ограниченная по времени ссылка
+                const minutes = parseInt(durationValue, 10) || 20;
+                expiresAt = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+                durationMin = minutes;
+            }
+
+            const link = {
+                id: id,
+                url: url,
+                created: new Date().toISOString(),
+                expiresAt: expiresAt,
+                durationMin: durationMin
+            };
+
+            links.unshift(link);
+            localStorage.setItem('lovenseLinks', JSON.stringify(links));
+
+            // Сообщаем серверу о создании сессии и времени окончания
+            try {
+                await fetch('/api/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Nickname': currentNickname
+                    },
+                    body: JSON.stringify({ sessionId: id, expiresAt })
+                });
+            } catch (e) { }
+
+            renderLinks();
+            updateStats();
+            // Перезапускаем обновление если создана ссылка с временем
+            if (expiresAt) startLinkUpdates();
+            showToast(expiresAt ? 'Ссылка успешно создана!' : 'Бесконечная ссылка создана!');
+        }
+
+        // Копирование ссылки
+        function copyLink(url) {
+            navigator.clipboard.writeText(url).then(() => {
+                showToast('Ссылка скопирована в буфер обмена!');
+            }).catch(() => {
+                // Fallback для старых браузеров
+                const textArea = document.createElement('textarea');
+                textArea.value = url;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showToast('Ссылка скопирована!');
+            });
+        }
+
+        // Удаление ссылки
+        function deleteLink(id) {
+            if (confirm('Вы уверены, что хотите удалить эту ссылку?')) {
+                links = links.filter(link => link.id !== id);
+                localStorage.setItem('lovenseLinks', JSON.stringify(links));
+                renderLinks();
+                updateStats();
+                showToast('🗑️ Ссылка удалена!');
+            }
+        }
+
+        // Форматирование даты создания
+        function formatDate(isoString) {
+            const date = new Date(isoString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+
+            if (diffMins < 1) return 'только что';
+            if (diffMins < 60) return `${diffMins} мин. назад`;
+
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return `${diffHours} ч. назад`;
+
+            return date.toLocaleDateString('ru-RU', {
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        // Форматирование времени до истечения
+        function formatTimeUntilExpiry(expiresAt) {
+            // Бесконечная ссылка
+            if (!expiresAt || expiresAt === null) {
+                return '<span style="color: #ff1744; font-weight: 700;">никогда</span>';
+            }
+
+            const now = new Date();
+            const expiry = new Date(expiresAt);
+            const diffMs = expiry - now;
+
+            if (diffMs <= 0) return 'истекла';
+
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffSecs = Math.floor((diffMs % 60000) / 1000);
+
+            if (diffMins < 1) return `${diffSecs} сек.`;
+            if (diffMins < 60) return `${diffMins} мин.`;
+
+            const diffHours = Math.floor(diffMins / 60);
+            return `${diffHours} ч. ${diffMins % 60} мин.`;
+        }
+
+        // Отрисовка списка ссылок
+        function renderLinks() {
+            const linksList = document.getElementById('linksList');
+
+            if (links.length === 0) {
+                linksList.innerHTML = '<div class="no-links">Пока нет созданных ссылок. Нажмите кнопку выше!</div>';
+                return;
+            }
+
+            linksList.innerHTML = links.map(link => `
+                <div class="link-item" data-link-id="${link.id}">
+                    <div style="flex: 1;">
+                        <a href="${link.url}" target="_blank" class="link-url">${link.url}</a>
+                        <div style="font-size: 11px; color: #999; margin-top: 5px;">
+                            Создана: ${formatDate(link.created)} · Истекает через: <span class="time-remaining">${formatTimeUntilExpiry(link.expiresAt)}</span>
+                        </div>
+                    </div>
+                    <div class="link-actions">
+                        <button class="btn-chat" onclick="openChat('${link.id}')">Чат</button>
+                        <button class="btn-copy" onclick="copyLink('${link.url}')">Копировать</button>
+                        <button class="btn-delete" onclick="deleteLinkAndRevoke('${link.id}')">Удалить</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Обновление статистики
+        function updateStats() {
+            document.getElementById('totalLinks').textContent = links.length;
+
+            const today = new Date().toDateString();
+            const todayLinks = links.filter(link => {
+                return new Date(link.created).toDateString() === today;
+            }).length;
+            document.getElementById('todayLinks').textContent = todayLinks;
+        }
+
+        // Оптимизированное обновление времени истечения
+        let linkUpdateInterval = null;
+
+        function startLinkUpdates() {
+            if (linkUpdateInterval) clearInterval(linkUpdateInterval);
+
+            // Обновляем только время истечения, а не всю структуру
+            linkUpdateInterval = setInterval(() => {
+                // Обновляем только если есть ссылки с ограниченным временем
+                const hasTimedLinks = links.some(link => link.expiresAt !== null);
+                if (!hasTimedLinks) {
+                    clearInterval(linkUpdateInterval);
+                    linkUpdateInterval = null;
+                    return;
+                }
+
+                // Обновляем только элементы времени, не перерисовывая все
+                links.forEach((link, index) => {
+                    if (link.expiresAt) {
+                        const timeEl = document.querySelector(`[data-link-id="${link.id}"] .time-remaining`);
+                        if (timeEl) {
+                            timeEl.innerHTML = formatTimeUntilExpiry(link.expiresAt);
+                        }
+                    }
+                });
+            }, 1000);
+        }
+
+        // Инициализация при загрузке
+        window.onload = () => {
+            renderLinks();
+            updateStats();
+            startLinkUpdates();
+        };
+        // Удаление ссылки + удаление истории на сервере
+        async function deleteLinkAndRevoke(id) {
+            const link = links.find(l => l.id === id);
+            if (!link) return;
+
+            if (!confirm('Вы уверены, что хотите удалить эту ссылку? Сессия и ВСЯ ИСТОРИЯ ЧАТА будут удалены НАВСЕГДА!')) {
+                return;
+            }
+
+            try {
+                // Удаляем сессию и историю на сервере
+                const res = await fetch('/api/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Nickname': currentNickname
+                    },
+                    body: JSON.stringify({ sessionId: id })
+                });
+
+                if (!res.ok) {
+                    throw new Error('Server delete failed');
+                }
+
+                // Удаляем локально
+                links = links.filter(link => link.id !== id);
+                localStorage.setItem('lovenseLinks', JSON.stringify(links));
+                renderLinks();
+                updateStats();
+                showToast('Ссылка и история удалены');
+            } catch (e) {
+                showToast('Не удалось удалить сессию на сервере');
+            }
+        }
+
+
+        // === ФУНКЦИИ ЧАТА ===
+        let currentChatSessionId = null;
+        let previousChatSessionId = null;
+        let monitorDataPoints = [];
+        let monitorCanvas = null;
+        let monitorCtx = null;
+        let currentIntensity = 0;
+        let monitorGraphInterval = null;
+        let displayedMessageIds = new Set(); // Для отслеживания показанных сообщений
+
+        // Используем глобальный socket вместо создания нового для каждого чата
+        function initializeChatHandlers() {
+            socket.on('session-data', (data) => {
+                if (currentChatSessionId && data.sessionId === currentChatSessionId) {
+                    currentIntensity = data.intensity || 0;
+                    loadMessages(data.messages || []);
+                }
+            });
+
+            // Обработчик новых сообщений - фильтруем по текущей сессии
+            socket.on('new-message', (message) => {
+                if (currentChatSessionId && message.sessionId === currentChatSessionId) {
+                    // Проверяем, не показывали ли мы уже это сообщение (по ID)
+                    if (!displayedMessageIds.has(message.id)) {
+                        displayMessage(message);
+                        displayedMessageIds.add(message.id);
+                    }
+                }
+            });
+
+            // Обработчик изменения интенсивности - фильтруем по текущей сессии
+            socket.on('intensity-changed', (intensity) => {
+                // Интенсивность приходит через broadcast, нужно проверять через sessionId
+                // Но сервер не передает sessionId в этом событии, поэтому обновляем всегда
+                if (currentChatSessionId) {
+                    currentIntensity = intensity;
+                    updateIntensityDisplay(intensity);
+                }
+            });
+        }
+
+        function openChat(sessionId) {
+            // Если уже открыт чат - сначала покинуть предыдущую сессию
+            if (currentChatSessionId && previousChatSessionId !== currentChatSessionId) {
+                socket.emit('leave-session', currentChatSessionId);
+            }
+
+            previousChatSessionId = currentChatSessionId;
+            currentChatSessionId = sessionId;
+            document.getElementById('chatModal').classList.add('show');
+
+            // Очищаем предыдущие данные
+            document.getElementById('chatMessages').innerHTML = '';
+            displayedMessageIds.clear(); // Очищаем список показанных сообщений
+            currentIntensity = 0;
+            updateIntensityDisplay(0);
+
+            socket.emit('join-session', sessionId, 'admin');
+
+            // Инициализация графика
+            monitorCanvas = document.getElementById('monitorCanvas');
+            monitorCtx = monitorCanvas.getContext('2d');
+            monitorDataPoints = [];
+            for (let i = 0; i < 50; i++) {
+                monitorDataPoints.push(0);
+            }
+
+            // Останавливаем предыдущий интервал если есть
+            if (monitorGraphInterval) {
+                clearInterval(monitorGraphInterval);
+            }
+
+            // Обновляем график постоянно
+            monitorGraphInterval = setInterval(updateMonitorGraph, 100);
+        }
+
+        function closeChat() {
+            document.getElementById('chatModal').classList.remove('show');
+
+            // Покидаем комнату сессии
+            if (currentChatSessionId) {
+                socket.emit('leave-session', currentChatSessionId);
+            }
+
+            currentChatSessionId = null;
+
+            // Останавливаем обновление графика
+            if (monitorGraphInterval) {
+                clearInterval(monitorGraphInterval);
+                monitorGraphInterval = null;
+            }
+        }
+
+        // Инициализируем обработчики чата при загрузке
+        initializeChatHandlers();
+
+        function updateIntensityDisplay(intensity) {
+            const intensityEl = document.getElementById('intensityDisplay');
+            intensityEl.textContent = intensity + '%';
+
+            // Добавляем анимацию при активности
+            if (intensity > 0) {
+                intensityEl.classList.add('active');
+            } else {
+                intensityEl.classList.remove('active');
+            }
+        }
+
+        function updateMonitorGraph() {
+            if (!currentChatSessionId) return;
+
+            // Добавляем точку на график
+            monitorDataPoints.push(currentIntensity);
+            if (monitorDataPoints.length > 50) {
+                monitorDataPoints.shift();
+            }
+
+            // Рисуем график
+            drawMonitorGraph();
+        }
+
+        function drawMonitorGraph() {
+            if (!monitorCtx) return;
+
+            const canvas = monitorCanvas;
+            const ctx = monitorCtx;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Сетка
+            ctx.strokeStyle = '#f0f0f0';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 5; i++) {
+                const y = (canvas.height / 4) * i;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+
+            // Линия графика
+            if (monitorDataPoints.length > 1) {
+                ctx.strokeStyle = '#FF2D76';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+
+                monitorDataPoints.forEach((point, index) => {
+                    const x = (canvas.width / (monitorDataPoints.length - 1)) * index;
+                    const y = canvas.height - (point / 100 * canvas.height);
+
+                    if (index === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                });
+
+                ctx.stroke();
+            }
+        }
+
+        function loadMessages(messages) {
+            const chatContainer = document.getElementById('chatMessages');
+            chatContainer.innerHTML = '';
+            displayedMessageIds.clear(); // Очищаем перед загрузкой истории
+
+            messages.forEach(msg => {
+                displayMessage(msg);
+                if (msg.id) displayedMessageIds.add(msg.id); // Запоминаем ID
+            });
+        }
+
+        function displayMessage(msg) {
+            const chatContainer = document.getElementById('chatMessages');
+            const time = new Date(msg.timestamp).toLocaleTimeString('ru-RU', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            let messageHtml = '';
+
+            // Системные сообщения (действия пользователя)
+            if (msg.from === 'system') {
+                messageHtml = `
+                    <div class="message system">
+                        <div>${escapeHtml(msg.text)}</div>
+                        <div class="message-time">${time}</div>
+                    </div>
+                `;
+            } else if (msg.type === 'voice') {
+                // Голосовое сообщение
+                const className = msg.from === 'admin' ? 'admin' : 'controller';
+                const label = msg.from === 'admin' ? 'Вы' : 'Пользователь';
+                const voiceUrl = `/voice/${msg.voiceFile}`;
+
+                messageHtml = `
+                    <div class="message ${className}">
+                        <div><strong>${label}:</strong></div>
+                        <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
+                            <audio controls style="max-width: 250px; height: 32px;">
+                                <source src="${voiceUrl}" type="audio/ogg">
+                            </audio>
+                            <span style="font-size: 11px; color: #666;">${msg.duration}</span>
+                        </div>
+                        <div class="message-time">${time}</div>
+                    </div>
+                `;
+            } else {
+                // Обычное текстовое сообщение
+                const className = msg.from === 'admin' ? 'admin' : 'controller';
+                const label = msg.from === 'admin' ? 'Вы' : 'Пользователь';
+
+                messageHtml = `
+                    <div class="message ${className}">
+                        <div><strong>${label}:</strong> ${escapeHtml(msg.text)}</div>
+                        <div class="message-time">${time}</div>
+                    </div>
+                `;
+            }
+
+            chatContainer.innerHTML += messageHtml;
+
+            // Автоскролл вниз
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function sendChatMessage() {
+            if (!currentChatSessionId) return;
+
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+
+            if (message) {
+                const chatMessage = {
+                    id: Date.now(),
+                    sessionId: currentChatSessionId,
+                    text: message,
+                    from: 'admin',
+                    timestamp: new Date().toISOString()
+                };
+
+                // Отправляем через глобальный Socket.io
+                socket.emit('chat-message', {
+                    sessionId: currentChatSessionId,
+                    message: chatMessage
+                });
+
+                // Отображаем локально у админа сразу и запоминаем ID
+                displayMessage(chatMessage);
+                displayedMessageIds.add(chatMessage.id);
+
+                input.value = '';
+                input.style.height = 'auto'; // Reset height after sending
+            }
+        }
+
+        function handleChatKeyPress(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendChatMessage();
+            }
+        }
+
+        // Auto-resize textarea
+        const chatInput = document.getElementById('chatInput');
+        if (chatInput) {
+            chatInput.addEventListener('input', function () {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Закрытие модального окна по клику вне окна
+        document.getElementById('chatModal').addEventListener('click', function (e) {
+            if (e.target === this) {
+                closeChat();
+            }
+        });
+
+        // === ГОЛОСОВЫЕ СООБЩЕНИЯ ===
+        let availableVoices = [];
+
+        // Загрузка списка голосовых сообщений
+        async function loadVoiceMessages() {
+            try {
+                const res = await fetch('/api/voice/list', {
+                    headers: { 'X-Nickname': currentNickname }
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    availableVoices = data.voices;
+                    renderVoicePicker();
+                }
+            } catch (e) { }
+        }
+
+        // Отрисовка списка голосовых
+        function renderVoicePicker() {
+            const body = document.getElementById('voicePickerBody');
+            if (!availableVoices || availableVoices.length === 0) {
+                body.innerHTML = '<div style="padding: 10px; text-align: center; color: #999;">Нет голосовых</div>';
+                return;
+            }
+
+            body.innerHTML = availableVoices.map(voice => `
+                <div class="voice-item" onclick="sendVoiceMessage('${voice.id}', '${voice.file}', '${voice.duration}')">
+                    <span class="voice-item-icon">🎤</span>
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600;">${voice.name}</div>
+                        <div style="font-size: 10px; color: #666;">${voice.duration}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Переключение picker
+        function toggleVoicePicker() {
+            const picker = document.getElementById('voicePicker');
+            picker.classList.toggle('show');
+
+            // Загружаем список при первом открытии
+            if (picker.classList.contains('show') && availableVoices.length === 0) {
+                loadVoiceMessages();
+            }
+        }
+
+        function sendVoiceMessage(voiceId, voiceFile, duration) {
+            if (!currentChatSessionId) return;
+
+            const voiceMessage = {
+                id: Date.now(),
+                sessionId: currentChatSessionId,
+                type: 'voice',
+                voiceFile: voiceFile,
+                duration: duration,
+                from: 'admin',
+                timestamp: new Date().toISOString()
+            };
+
+            socket.emit('chat-message', {
+                sessionId: currentChatSessionId,
+                message: voiceMessage
+            });
+
+            displayMessage(voiceMessage);
+            displayedMessageIds.add(voiceMessage.id);
+
+            document.getElementById('voicePicker').classList.remove('show');
+            showToast('Голосовое сообщение отправлено');
+        }
+
+        // Закрытие picker при клике вне его
+        document.addEventListener('click', function (e) {
+            const picker = document.getElementById('voicePicker');
+            const voiceBtn = document.querySelector('.voice-btn');
+
+            if (picker && voiceBtn && !picker.contains(e.target) && !voiceBtn.contains(e.target)) {
+                picker.classList.remove('show');
+            }
+        });
+
+        // === TEXT SNIPPETS СИСТЕМА ===
+        let snippetsData = {
+            folders: {},
+            snippets: {},
+            structure: []
+        };
+        let currentSnippetId = null;
+        let snippetAction = null;
+        let snippetParentId = null;
+        let openSnippets = []; // Массив открытых сниппетов
+        let activeSnippetId = null; // ID активного сниппета
+
+        // Локальное состояние UI (не синхронизируется между пользователями)
+        let expandedFolders = {}; // {folderId: true/false}
+
+        // Загрузка и сохранение expanded состояния в localStorage
+        function loadExpandedState() {
+            try {
+                const saved = localStorage.getItem('snippetsExpandedState');
+                if (saved) {
+                    expandedFolders = JSON.parse(saved);
+                }
+            } catch (e) {
+                expandedFolders = {};
+            }
+        }
+
+        function saveExpandedState() {
+            try {
+                localStorage.setItem('snippetsExpandedState', JSON.stringify(expandedFolders));
+            } catch (e) {
+                console.error('Failed to save expanded state:', e);
+            }
+        }
+
+        // Загрузка snippets при инициализации
+        async function loadSnippets() {
+            try {
+                console.log('Loading snippets for user:', currentNickname);
+                const res = await fetch('/api/snippets/list', {
+                    headers: { 'X-Nickname': currentNickname }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    snippetsData = data.snippets || { folders: {}, snippets: {}, structure: [] };
+                    console.log('Snippets loaded:', Object.keys(snippetsData.snippets || {}).length, 'snippets,', Object.keys(snippetsData.folders || {}).length, 'folders');
+                    loadExpandedState(); // Восстанавливаем состояние открытых папок
+                    renderSnippetsTree();
+                } else {
+                    console.error('Failed to load snippets, status:', res.status);
+                }
+            } catch (e) {
+                console.error('Failed to load snippets:', e);
+            }
+        }
+
+        // Переключение панели snippets
+        function toggleSnippetsPanel() {
+            const container = document.getElementById('snippetsContainer');
+            container.classList.toggle('show');
+            document.body.classList.toggle('snippets-open');
+            updateContainerMargin();
+        }
+
+        // Обновление отступа контейнера и чата в зависимости от ширины snippets
+        function updateContainerMargin() {
+            const container = document.getElementById('snippetsContainer');
+            const viewer = document.getElementById('snippetsViewer');
+            const panel = document.querySelector('.snippets-panel');
+            const mainContainer = document.querySelector('.container');
+            const chatModal = document.getElementById('chatModal');
+
+            if (container && container.classList.contains('show')) {
+                let totalWidth = 300; // Ширина панели списка
+
+                if (viewer && viewer.classList.contains('has-content')) {
+                    totalWidth += viewer.offsetWidth;
+                }
+
+                mainContainer.style.marginLeft = totalWidth + 'px';
+
+                // Сдвигаем чат тоже
+                if (chatModal) {
+                    chatModal.classList.add('snippets-open');
+                    chatModal.style.setProperty('--snippets-width', totalWidth + 'px');
+                }
+            } else {
+                mainContainer.style.marginLeft = '0px';
+
+                // Возвращаем чат на место
+                if (chatModal) {
+                    chatModal.classList.remove('snippets-open');
+                    chatModal.style.setProperty('--snippets-width', '0px');
+                }
+            }
+        }
+
+        // Отслеживание изменения размера viewer
+        const snippetsViewerResizeObserver = new ResizeObserver(() => {
+            updateContainerMargin();
+        });
+
+        // Инициализация наблюдателя после загрузки DOM
+        document.addEventListener('DOMContentLoaded', function () {
+            const viewer = document.getElementById('snippetsViewer');
+            if (viewer) {
+                snippetsViewerResizeObserver.observe(viewer);
+            }
+
+            // Инициализация ручного изменения размера
+            initSnippetResize();
+        });
+
+        // Ручное изменение размера панели
+        function initSnippetResize() {
+            const handle = document.getElementById('snippetResizeHandle');
+            const viewer = document.getElementById('snippetsViewer');
+
+            if (!handle || !viewer) return;
+
+            let isResizing = false;
+            let startX = 0;
+            let startWidth = 0;
+
+            handle.addEventListener('mousedown', function (e) {
+                isResizing = true;
+                startX = e.clientX;
+                startWidth = viewer.offsetWidth;
+
+                document.body.style.cursor = 'ew-resize';
+                document.body.style.userSelect = 'none';
+
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', function (e) {
+                if (!isResizing) return;
+
+                const delta = e.clientX - startX;
+                const newWidth = startWidth + delta;
+
+                const minWidth = 300;
+                const maxWidth = 1000;
+
+                if (newWidth >= minWidth && newWidth <= maxWidth) {
+                    viewer.style.width = newWidth + 'px';
+                }
+            });
+
+            document.addEventListener('mouseup', function () {
+                if (isResizing) {
+                    isResizing = false;
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                }
+            });
+        }
+
+        // Рендеринг дерева snippets
+        function renderSnippetsTree() {
+            const tree = document.getElementById('snippetTree');
+            if (!tree) return;
+            tree.innerHTML = '';
+
+            if (!snippetsData.structure || snippetsData.structure.length === 0) {
+                tree.innerHTML = '<div style="padding:10px;color:#999;font-size:12px;text-align:center;">Нет сниппетов</div>';
+                return;
+            }
+
+            snippetsData.structure.forEach(id => {
+                if (snippetsData.folders[id]) {
+                    tree.appendChild(renderSnippetFolder(id));
+                } else if (snippetsData.snippets[id]) {
+                    tree.appendChild(renderSnippetItem(id));
+                }
+            });
+        }
+
+        // Рендеринг папки
+        function renderSnippetFolder(folderId) {
+            const folder = snippetsData.folders[folderId];
+            if (!folder) return document.createElement('div');
+
+            // Используем локальное состояние expanded
+            const isExpanded = expandedFolders[folderId] || false;
+
+            const div = document.createElement('div');
+
+            const folderEl = document.createElement('div');
+            folderEl.className = 'snippet-folder';
+            folderEl.innerHTML = `
+                <span onclick="toggleSnippetFolder('${folderId}')" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                    ${isExpanded ? '▼' : '▶'} 📁 ${escapeHtml(folder.name)}
+                </span>
+                <span class="snippet-actions">
+                    <button onclick="event.stopPropagation(); createSnippetInFolder('${folderId}')">+📄</button>
+                    <button onclick="event.stopPropagation(); renameSnippetFolder('${folderId}')">✏️</button>
+                    <button onclick="event.stopPropagation(); deleteSnippetFolder('${folderId}')">🗑️</button>
+                </span>
+            `;
+
+            div.appendChild(folderEl);
+
+            if (isExpanded) {
+                const children = getSnippetChildren(folderId);
+                if (children.length > 0) {
+                    const childrenDiv = document.createElement('div');
+                    childrenDiv.className = 'snippet-folder-children';
+                    children.forEach(childId => {
+                        if (snippetsData.snippets[childId]) {
+                            childrenDiv.appendChild(renderSnippetItem(childId));
+                        }
+                    });
+                    div.appendChild(childrenDiv);
+                }
+            }
+
+            return div;
+        }
+
+        // Рендеринг сниппета
+        function renderSnippetItem(snippetId) {
+            const snippet = snippetsData.snippets[snippetId];
+            if (!snippet) return document.createElement('div');
+
+            const div = document.createElement('div');
+            div.className = `snippet-item ${currentSnippetId === snippetId ? 'selected' : ''}`;
+            div.innerHTML = `
+                <span onclick="openSnippetViewer('${snippetId}')" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                    📄 ${escapeHtml(snippet.name)}
+                </span>
+                <span class="snippet-actions">
+                    <button onclick="event.stopPropagation(); copySnippetToClipboard('${snippetId}')">📋</button>
+                    <button onclick="event.stopPropagation(); deleteSnippetItem('${snippetId}')">🗑️</button>
+                </span>
+            `;
+            return div;
+        }
+
+        function getSnippetChildren(parentId) {
+            const children = [];
+            Object.values(snippetsData.snippets).forEach(snippet => {
+                if (snippet.parentId === parentId) {
+                    children.push(snippet.id);
+                }
+            });
+            return children;
+        }
+
+        function toggleSnippetFolder(folderId) {
+            const folder = snippetsData.folders[folderId];
+            if (folder) {
+                // Переключаем локальное состояние, НЕ синхронизируем с другими пользователями
+                expandedFolders[folderId] = !expandedFolders[folderId];
+                saveExpandedState(); // Сохраняем только локально
+                renderSnippetsTree(); // Перерисовываем UI
+            }
+        }
+
+        // Создание папки (автоматически без модального окна)
+        function createSnippetFolder() {
+            createFolderWithDefaultName(null);
+        }
+
+        // Генерация уникального имени для новой папки
+        function generateUniqueFolderName(parentId = null) {
+            const baseName = 'New Folder';
+            const existingNames = new Set();
+
+            // Собираем все существующие имена папок
+            Object.values(snippetsData.folders).forEach(folder => {
+                if (folder.parentId === parentId) {
+                    existingNames.add(folder.name);
+                }
+            });
+
+            // Если базовое имя свободно - используем его
+            if (!existingNames.has(baseName)) {
+                return baseName;
+            }
+
+            // Иначе ищем первый свободный номер
+            let counter = 2;
+            while (existingNames.has(`${baseName}${counter}`)) {
+                counter++;
+            }
+            return `${baseName}${counter}`;
+        }
+
+        // Создание папки с автоматическим именем
+        async function createFolderWithDefaultName(parentId = null) {
+            const name = generateUniqueFolderName(parentId);
+            const id = generateId();
+
+            snippetsData.folders[id] = {
+                id: id,
+                name: name,
+                parentId: parentId
+            };
+
+            // Открываем папку локально для текущего пользователя
+            expandedFolders[id] = true;
+            saveExpandedState();
+
+            if (!parentId) {
+                snippetsData.structure.push(id);
+            }
+
+            await saveSnippets();
+            showToast('Папка создана');
+        }
+
+        // Создание сниппета (автоматически без модального окна)
+        function createNewSnippet() {
+            createSnippetWithDefaultName(null);
+        }
+
+        function createSnippetInFolder(folderId) {
+            createSnippetWithDefaultName(folderId);
+        }
+
+        // Генерация уникального имени для нового сниппета
+        function generateUniqueSnippetName(parentId = null) {
+            const baseName = 'New Snippet';
+            const existingNames = new Set();
+
+            // Собираем все существующие имена в этой папке
+            Object.values(snippetsData.snippets).forEach(snippet => {
+                if (snippet.parentId === parentId) {
+                    existingNames.add(snippet.name);
+                }
+            });
+
+            // Если базовое имя свободно - используем его
+            if (!existingNames.has(baseName)) {
+                return baseName;
+            }
+
+            // Иначе ищем первый свободный номер
+            let counter = 2;
+            while (existingNames.has(`${baseName}${counter}`)) {
+                counter++;
+            }
+            return `${baseName}${counter}`;
+        }
+
+        // Создание сниппета с автоматическим именем
+        async function createSnippetWithDefaultName(parentId = null) {
+            const name = generateUniqueSnippetName(parentId);
+            const id = generateId();
+
+            snippetsData.snippets[id] = {
+                id: id,
+                name: name,
+                content: '',
+                parentId: parentId
+            };
+
+            if (!parentId) {
+                snippetsData.structure.push(id);
+            }
+
+            await saveSnippets();
+
+            // Открываем созданный сниппет сразу
+            openSnippetViewer(id);
+
+            // Фокусируемся на поле названия для редактирования
+            setTimeout(() => {
+                const contentArea = document.getElementById(`snippet-content-${id}`);
+                if (contentArea) {
+                    const titleInput = contentArea.querySelector('.snippet-editor-title');
+                    if (titleInput) {
+                        titleInput.select();
+                    }
+                }
+            }, 100);
+        }
+
+        // Модальное окно
+        function showSnippetModal(title, placeholder, value, withTextarea = false) {
+            const modal = document.getElementById('snippetModal');
+            document.getElementById('snippetModalTitle').textContent = title;
+            document.getElementById('snippetModalInput').placeholder = placeholder;
+            document.getElementById('snippetModalInput').value = value;
+
+            const textarea = document.getElementById('snippetModalTextarea');
+            const confirmBtn = document.querySelector('#snippetModal .snippet-modal-actions button:last-child');
+
+            if (withTextarea) {
+                textarea.style.display = 'block';
+                textarea.value = '';
+                // Меняем текст кнопки в зависимости от действия
+                if (snippetAction === 'edit-snippet') {
+                    confirmBtn.textContent = 'Сохранить';
+                } else {
+                    confirmBtn.textContent = 'Создать';
+                }
+            } else {
+                textarea.style.display = 'none';
+                confirmBtn.textContent = 'Создать';
+            }
+
+            modal.classList.add('show');
+            document.getElementById('snippetModalInput').focus();
+        }
+
+        function closeSnippetModal() {
+            document.getElementById('snippetModal').classList.remove('show');
+        }
+
+        async function confirmSnippetModal() {
+            const name = document.getElementById('snippetModalInput').value.trim();
+            if (!name) return;
+
+            if (snippetAction === 'create-folder') {
+                const id = generateId();
+                snippetsData.folders[id] = {
+                    id: id,
+                    name: name,
+                    parentId: snippetParentId
+                };
+
+                // Открываем папку локально для текущего пользователя
+                expandedFolders[id] = true;
+                saveExpandedState();
+
+                if (!snippetParentId) {
+                    snippetsData.structure.push(id);
+                }
+
+            } else if (snippetAction === 'create-snippet') {
+                const content = document.getElementById('snippetModalTextarea').value.trim();
+                const id = generateId();
+                snippetsData.snippets[id] = {
+                    id: id,
+                    name: name,
+                    content: content,
+                    parentId: snippetParentId
+                };
+
+                if (!snippetParentId) {
+                    snippetsData.structure.push(id);
+                }
+            } else if (snippetAction === 'edit-snippet') {
+                const snippet = snippetsData.snippets[currentSnippetId];
+                if (snippet) {
+                    snippet.name = name;
+                    snippet.content = document.getElementById('snippetModalTextarea').value;
+                }
+            }
+
+            await saveSnippets();
+            closeSnippetModal();
+        }
+
+        function renameSnippetFolder(folderId) {
+            const folder = snippetsData.folders[folderId];
+            if (!folder) return;
+
+            const newName = prompt('Новое название папки:', folder.name);
+            if (newName && newName.trim()) {
+                folder.name = newName.trim();
+                saveSnippets();
+            }
+        }
+
+        function selectSnippetItem(snippetId) {
+            currentSnippetId = snippetId;
+            renderSnippetsTree();
+        }
+
+        function openSnippetViewer(snippetId) {
+            const snippet = snippetsData.snippets[snippetId];
+            if (!snippet) return;
+
+            // Проверяем, не открыт ли уже этот сниппет
+            if (!openSnippets.includes(snippetId)) {
+                openSnippets.push(snippetId);
+            }
+
+            activeSnippetId = snippetId;
+            renderSnippetTabs();
+            renderSnippetContent(snippetId);
+
+            // Показываем viewer
+            const viewer = document.getElementById('snippetsViewer');
+            viewer.classList.add('has-content');
+            updateContainerMargin();
+        }
+
+        function closeSnippetTab(snippetId) {
+            event.stopPropagation();
+
+            const index = openSnippets.indexOf(snippetId);
+            if (index > -1) {
+                openSnippets.splice(index, 1);
+            }
+
+            // Если закрыли активный сниппет, активируем предыдущий
+            if (activeSnippetId === snippetId) {
+                if (openSnippets.length > 0) {
+                    activeSnippetId = openSnippets[openSnippets.length - 1];
+                } else {
+                    activeSnippetId = null;
+                }
+            }
+
+            renderSnippetTabs();
+
+            // Если больше нет открытых сниппетов, скрываем viewer
+            if (openSnippets.length === 0) {
+                const viewer = document.getElementById('snippetsViewer');
+                viewer.classList.remove('has-content');
+                updateContainerMargin();
+            }
+        }
+
+        function switchToSnippetTab(snippetId) {
+            // Сохраняем текущее состояние перед переключением
+            if (activeSnippetId && activeSnippetId !== snippetId) {
+                saveCurrentSnippetState(activeSnippetId);
+            }
+
+            activeSnippetId = snippetId;
+            renderSnippetTabs();
+        }
+
+        // Сохранение текущего состояния сниппета без отправки на сервер
+        function saveCurrentSnippetState(snippetId) {
+            const contentArea = document.getElementById(`snippet-content-${snippetId}`);
+            if (!contentArea) return;
+
+            const snippet = snippetsData.snippets[snippetId];
+            if (!snippet) return;
+
+            const titleInput = contentArea.querySelector('.snippet-editor-title');
+            const textArea = contentArea.querySelector('.snippet-editor-textarea');
+
+            if (titleInput && textArea) {
+                snippet.name = titleInput.value;
+                snippet.content = textArea.value;
+            }
+        }
+
+        function renderSnippetTabs() {
+            const tabsContainer = document.getElementById('snippetTabs');
+            tabsContainer.innerHTML = '';
+
+            openSnippets.forEach(snippetId => {
+                const snippet = snippetsData.snippets[snippetId];
+                if (!snippet) return;
+
+                const tab = document.createElement('div');
+                tab.className = `snippet-tab ${snippetId === activeSnippetId ? 'active' : ''}`;
+                tab.onclick = () => switchToSnippetTab(snippetId);
+                tab.innerHTML = `
+                    <span>📄 ${escapeHtml(snippet.name)}</span>
+                    <span class="snippet-tab-close" onclick="closeSnippetTab('${snippetId}')">×</span>
+                `;
+                tabsContainer.appendChild(tab);
+            });
+
+            // Убираем active у всех один раз
+            document.querySelectorAll('.snippet-content-area').forEach(area => {
+                area.classList.remove('active');
+            });
+
+            // Рендерим контент для всех открытых сниппетов
+            openSnippets.forEach(snippetId => {
+                renderSnippetContent(snippetId);
+            });
+        }
+
+        function renderSnippetContent(snippetId) {
+            const snippet = snippetsData.snippets[snippetId];
+            if (!snippet) return;
+
+            const contentContainer = document.getElementById('snippetContents');
+
+            // Проверяем, есть ли уже контент для этого сниппета
+            let contentArea = document.getElementById(`snippet-content-${snippetId}`);
+
+            if (!contentArea) {
+                contentArea = document.createElement('div');
+                contentArea.id = `snippet-content-${snippetId}`;
+                contentArea.className = 'snippet-content-area';
+
+                contentArea.innerHTML = `
+                    <input type="text" class="snippet-editor-title" value="${escapeHtml(snippet.name)}" placeholder="Название сниппета" onchange="autoSaveSnippet('${snippetId}')">
+                    <textarea class="snippet-editor-textarea" placeholder="Содержимое сниппета..." oninput="autoSaveSnippet('${snippetId}')">${escapeHtml(snippet.content)}</textarea>
+                    <div class="snippet-editor-actions">
+                        <button onclick="copySnippetToClipboard('${snippetId}')">📋 Копировать</button>
+                    </div>
+                `;
+
+                contentContainer.appendChild(contentArea);
+            }
+            // НЕ обновляем существующий контент - оставляем как есть, чтобы сохранить несохраненные изменения
+
+            // Показываем только активный контент (НЕ убираем active здесь, это сделано в renderSnippetTabs)
+            if (snippetId === activeSnippetId) {
+                contentArea.classList.add('active');
+            }
+        }
+
+        // Автосохранение с debounce (отдельный таймер для каждого сниппета)
+        const autoSaveTimeouts = new Map();
+        function autoSaveSnippet(snippetId) {
+            // Очищаем предыдущий таймер для ЭТОГО сниппета
+            if (autoSaveTimeouts.has(snippetId)) {
+                clearTimeout(autoSaveTimeouts.get(snippetId));
+            }
+
+            // Устанавливаем новый таймер для ЭТОГО сниппета
+            const timeout = setTimeout(() => {
+                saveSnippetContent(snippetId);
+                autoSaveTimeouts.delete(snippetId);
+            }, 1000);
+
+            autoSaveTimeouts.set(snippetId, timeout);
+        }
+
+        function saveSnippetContent(snippetId) {
+            const contentArea = document.getElementById(`snippet-content-${snippetId}`);
+            if (!contentArea) return;
+
+            const snippet = snippetsData.snippets[snippetId];
+            if (!snippet) return;
+
+            const titleInput = contentArea.querySelector('.snippet-editor-title');
+            const textArea = contentArea.querySelector('.snippet-editor-textarea');
+
+            snippet.name = titleInput.value;
+            snippet.content = textArea.value;
+
+            saveSnippets();
+            renderSnippetsTree();
+            renderSnippetTabs();
+        }
+
+        function copySnippetToClipboard(snippetId) {
+            const snippet = snippetsData.snippets[snippetId];
+            if (!snippet) return;
+
+            navigator.clipboard.writeText(snippet.content).then(() => {
+                showToast('Сниппет скопирован в буфер обмена!');
+            }).catch(() => {
+                showToast('Ошибка копирования');
+            });
+        }
+
+        function deleteSnippetItem(snippetId) {
+            if (!confirm('Удалить сниппет?')) return;
+
+            // Закрываем вкладку если она открыта
+            const index = openSnippets.indexOf(snippetId);
+            if (index > -1) {
+                openSnippets.splice(index, 1);
+            }
+
+            // Удаляем контент
+            const contentArea = document.getElementById(`snippet-content-${snippetId}`);
+            if (contentArea) {
+                contentArea.remove();
+            }
+
+            delete snippetsData.snippets[snippetId];
+            snippetsData.structure = snippetsData.structure.filter(id => id !== snippetId);
+
+            if (currentSnippetId === snippetId) {
+                currentSnippetId = null;
+            }
+
+            // Если это был активный сниппет, переключаемся на другой
+            if (activeSnippetId === snippetId) {
+                if (openSnippets.length > 0) {
+                    activeSnippetId = openSnippets[openSnippets.length - 1];
+                } else {
+                    activeSnippetId = null;
+                }
+            }
+
+            saveSnippets();
+            renderSnippetTabs();
+
+            // Если больше нет открытых сниппетов, скрываем viewer
+            if (openSnippets.length === 0) {
+                const viewer = document.getElementById('snippetsViewer');
+                viewer.classList.remove('has-content');
+                updateContainerMargin();
+            }
+        }
+
+        function deleteSnippetFolder(folderId) {
+            if (!confirm('Удалить папку со всем содержимым?')) return;
+
+            // Удаляем все сниппеты в папке
+            Object.keys(snippetsData.snippets).forEach(id => {
+                if (snippetsData.snippets[id].parentId === folderId) {
+                    delete snippetsData.snippets[id];
+                }
+            });
+
+            delete snippetsData.folders[folderId];
+            snippetsData.structure = snippetsData.structure.filter(id => id !== folderId);
+
+            saveSnippets();
+        }
+
+        // Сохранение на сервере
+        async function saveSnippets() {
+            try {
+                const res = await fetch('/api/snippets/save', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Nickname': currentNickname
+                    },
+                    body: JSON.stringify({ snippets: snippetsData })
+                });
+
+                if (res.ok) {
+                    renderSnippetsTree();
+                    showToast('Сниппеты сохранены');
+                } else {
+                    showToast('Ошибка сохранения');
+                }
+            } catch (e) {
+                showToast('Ошибка сохранения');
+            }
+        }
+
+        // Экспорт snippets
+        function exportSnippets() {
+            const blob = new Blob([JSON.stringify(snippetsData, null, 2)], {
+                type: 'application/json'
+            });
+
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `snippets-export-${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+
+            URL.revokeObjectURL(url);
+            showToast('Сниппеты экспортированы');
+        }
+
+        // Импорт snippets
+        function importSnippets(input) {
+            const file = input.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async function (e) {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+
+                    if (confirm('Импортировать сниппеты? Текущие данные будут заменены!')) {
+                        snippetsData = importedData;
+                        await saveSnippets();
+                        showToast('Сниппеты импортированы');
+                    }
+                } catch (error) {
+                    showToast('Ошибка импорта: неверный формат файла');
+                }
+            };
+
+            reader.readAsText(file);
+            input.value = '';
+        }
+
+        // Socket.IO обновления для snippets
+        socket.on('snippets-updated', (data) => {
+            console.log('Snippets updated via socket.io');
+
+            // Обновляем только DATA сниппетов, НЕ затрагивая UI
+            const oldSnippetsData = JSON.parse(JSON.stringify(snippetsData));
+            snippetsData = data.snippets;
+
+            // Восстанавливаем локальное состояние открытых папок (НЕ синхронизируем UI)
+            loadExpandedState();
+
+            // Проверяем, не удалены ли какие-то из открытых сниппетов
+            const deletedSnippets = [];
+            openSnippets.forEach(snippetId => {
+                if (!snippetsData.snippets[snippetId]) {
+                    deletedSnippets.push(snippetId);
+                }
+            });
+
+            // Закрываем удаленные сниппеты
+            deletedSnippets.forEach(snippetId => {
+                console.log(`Snippet ${snippetId} was deleted by another user, closing tab`);
+                const index = openSnippets.indexOf(snippetId);
+                if (index > -1) {
+                    openSnippets.splice(index, 1);
+                }
+
+                // Удаляем контент
+                const contentArea = document.getElementById(`snippet-content-${snippetId}`);
+                if (contentArea) {
+                    contentArea.remove();
+                }
+
+                // Если это был активный сниппет, переключаемся на другой
+                if (activeSnippetId === snippetId) {
+                    if (openSnippets.length > 0) {
+                        activeSnippetId = openSnippets[openSnippets.length - 1];
+                    } else {
+                        activeSnippetId = null;
+                    }
+                }
+            });
+
+            // Если были удалены сниппеты и больше нет открытых, скрываем viewer
+            if (deletedSnippets.length > 0 && openSnippets.length === 0) {
+                const viewer = document.getElementById('snippetsViewer');
+                viewer.classList.remove('has-content');
+                updateContainerMargin();
+                showToast('Некоторые открытые сниппеты были удалены другим пользователем');
+            }
+
+            // Перерисовываем только дерево (список), НЕ затрагивая открытые вкладки
+            renderSnippetsTree();
+
+            // Обновляем содержимое ТОЛЬКО для активной открытой вкладки, если она изменилась
+            if (activeSnippetId && openSnippets.includes(activeSnippetId)) {
+                const newSnippet = snippetsData.snippets[activeSnippetId];
+                const oldSnippet = oldSnippetsData.snippets[activeSnippetId];
+
+                // Обновляем только если контент действительно изменился
+                if (newSnippet && oldSnippet && newSnippet.content !== oldSnippet.content) {
+                    const contentArea = document.getElementById(`snippet-content-${activeSnippetId}`);
+                    if (contentArea) {
+                        const textArea = contentArea.querySelector('.snippet-editor-textarea');
+                        const titleInput = contentArea.querySelector('.snippet-editor-title');
+
+                        // Проверяем, не редактирует ли пользователь прямо сейчас
+                        const isEditing = document.activeElement === textArea || document.activeElement === titleInput;
+
+                        if (!isEditing) {
+                            // Обновляем только если пользователь НЕ редактирует
+                            if (titleInput) titleInput.value = newSnippet.name;
+                            if (textArea) textArea.value = newSnippet.content;
+                            console.log('Snippet content auto-updated from sync');
+                        } else {
+                            console.log('Skipping auto-update: user is currently editing');
+                        }
+                    }
+                }
+            }
+
+            // Обновляем заголовки вкладок (названия могли измениться)
+            renderSnippetTabs();
+        });
+
+        // Периодическая проверка авторизации (каждые 30 секунд)
+        setInterval(async () => {
+            if (!currentNickname) return;
+
+            try {
+                const res = await fetch('/api/auth/check', {
+                    headers: { 'X-Nickname': currentNickname }
+                });
+
+                if (!res.ok) {
+                    // Пользователь больше не авторизован - выкидываем
+                    console.log('User no longer authorized, logging out...');
+                    localStorage.removeItem('nickname');
+                    alert('Ваша учетная запись была удалена или деактивирована. Вы будете перенаправлены на страницу входа.');
+                    window.location.reload();
+                }
+            } catch (e) {
+                console.error('Auth check failed:', e);
+            }
+        }, 30 * 1000); // Каждые 30 секунд
+    </script>
+
+    <!-- Snippets Container -->
+    <div class="snippets-container" id="snippetsContainer">
+        <!-- Snippets Panel (список) -->
+        <div class="snippets-panel" id="snippetsPanel">
+            <div class="snippets-header">
+                <h3>Text Snippets</h3>
+                <button onclick="toggleSnippetsPanel()"
+                    style="padding:4px 8px;border:1px solid #000;background:#fff;cursor:pointer;">×</button>
+            </div>
+
+            <div class="snippet-controls">
+                <button onclick="createSnippetFolder()">+ Папка</button>
+                <button onclick="createNewSnippet()">+ Сниппет</button>
+            </div>
+
+            <div class="snippet-tree" id="snippetTree"></div>
+
+            <div class="snippet-export-section">
+                <button onclick="exportSnippets()">📦 Экспорт</button>
+                <button onclick="document.getElementById('snippetImportFile').click()">📥 Импорт</button>
+                <input type="file" id="snippetImportFile" accept=".json" onchange="importSnippets(this)"
+                    style="display: none;">
+            </div>
+        </div>
+
+        <!-- Snippets Viewer (область просмотра с вкладками) -->
+        <div class="snippets-viewer" id="snippetsViewer">
+            <div class="snippet-resize-handle" id="snippetResizeHandle"></div>
+            <div class="snippet-tabs" id="snippetTabs"></div>
+            <div id="snippetContents"></div>
+        </div>
+    </div>
+
+    <!-- Snippets Toggle Button -->
+    <button class="snippets-toggle" onclick="toggleSnippetsPanel()">Snippets</button>
+
+    <!-- Snippet Modal (для создания) -->
+    <div class="snippet-modal" id="snippetModal" onclick="if(event.target === this) closeSnippetModal()">
+        <div class="snippet-modal-content">
+            <h3 id="snippetModalTitle">Создать сниппет</h3>
+            <input type="text" id="snippetModalInput" placeholder="Название">
+            <textarea id="snippetModalTextarea" placeholder="Содержимое сниппета..." style="display:none;"></textarea>
+            <div class="snippet-modal-actions">
+                <button onclick="closeSnippetModal()">Отмена</button>
+                <button onclick="confirmSnippetModal()">Создать</button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

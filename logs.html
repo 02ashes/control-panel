@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Логи сессий - Lovense Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Tahoma, 'MS Sans Serif', 'Segoe UI', Arial, sans-serif;
+            background: #c0c0c0;
+            min-height: 100vh;
+            padding: 20px;
+            color: #000;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: #e5e5e5;
+            border: 2px solid #000;
+            padding: 24px;
+        }
+
+        h1 {
+            color: #000;
+            margin-bottom: 8px;
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        .subtitle {
+            color: #222;
+            margin-bottom: 18px;
+            font-size: 13px;
+        }
+
+        .stats {
+            background: #e5e5e5;
+            border: 1px solid #000;
+            padding: 10px;
+            margin-bottom: 16px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 8px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #000;
+        }
+
+        .stat-label {
+            color: #111;
+            font-size: 11px;
+            margin-top: 2px;
+        }
+
+        .filters {
+            background: #f5f5f5;
+            border: 1px solid #000;
+            padding: 12px;
+            margin-bottom: 16px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filters input,
+        .filters select {
+            padding: 6px 10px;
+            border: 1px solid #000;
+            font-family: inherit;
+            font-size: 13px;
+        }
+
+        .filters button {
+            padding: 6px 16px;
+            border: 2px solid #000;
+            background: #e0e0e0;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .filters button:hover {
+            filter: brightness(0.95);
+        }
+
+        .sessions-list {
+            background: #fff;
+            border: 1px solid #000;
+            max-height: 800px;
+            overflow-y: auto;
+        }
+
+        .session-item {
+            border-bottom: 1px solid #ddd;
+            padding: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .session-item:hover {
+            background: #f5f5f5;
+        }
+
+        .session-item.active {
+            background: #e3f2fd;
+        }
+
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .session-id {
+            font-family: monospace;
+            font-weight: 700;
+            color: #0000ee;
+        }
+
+        .session-status {
+            padding: 2px 8px;
+            border: 1px solid #000;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .session-status.active {
+            background: #c8e6c9;
+            color: #2e7d32;
+        }
+
+        .session-status.revoked {
+            background: #ffcdd2;
+            color: #c62828;
+        }
+
+        .session-status.deleted {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ef5350;
+        }
+
+        .session-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 8px;
+            font-size: 12px;
+            color: #555;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .info-label {
+            font-weight: 600;
+        }
+
+        .chat-viewer {
+            position: fixed;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 50%;
+            background: #fff;
+            border-left: 2px solid #000;
+            display: none;
+            flex-direction: column;
+            z-index: 1000;
+        }
+
+        .chat-viewer.show {
+            display: flex;
+        }
+
+        .chat-header {
+            padding: 16px;
+            border-bottom: 1px solid #000;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #dcdcdc;
+        }
+
+        .chat-header h2 {
+            font-size: 16px;
+            margin: 0;
+        }
+
+        .close-chat {
+            background: #e0e0e0;
+            border: 2px solid #000;
+            font-size: 16px;
+            color: #000;
+            cursor: pointer;
+            padding: 0 8px;
+            height: 24px;
+        }
+
+        .close-chat:hover {
+            background: #f5f5f5;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .message {
+            padding: 10px 12px;
+            border: 1px solid #000;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+
+        .message.admin {
+            background: #ffffff;
+            align-self: flex-end;
+            margin-left: auto;
+        }
+
+        .message.controller {
+            background: #f2f2f2;
+            align-self: flex-start;
+        }
+
+        .message.system {
+            background: #e3f2fd;
+            align-self: center;
+            text-align: center;
+            font-size: 12px;
+            color: #1565c0;
+            max-width: 90%;
+            white-space: pre-line;
+            font-weight: 600;
+            border: 1px solid #90caf9;
+        }
+
+        .message-time {
+            font-size: 10px;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        .voice-message {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: #e8f5e9;
+            border: 1px solid #000;
+        }
+
+        .voice-play-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: #4CAF50;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .voice-play-btn:hover {
+            transform: scale(1.1);
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+            font-size: 14px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .error-message {
+            background: #ffebee;
+            color: #c62828;
+            padding: 12px;
+            border: 1px solid #ef5350;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
+
+        .export-btn {
+            padding: 8px 16px;
+            border: 2px solid #000;
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 13px;
+            margin-left: auto;
+        }
+
+        .export-btn:hover {
+            filter: brightness(1.1);
+        }
+
+        .cleanup-btn {
+            padding: 8px 16px;
+            border: 2px solid #000;
+            background: #ff9800;
+            color: white;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .cleanup-btn:hover {
+            filter: brightness(1.1);
+        }
+
+        .btn-delete-log {
+            padding: 4px 8px;
+            border: 1px solid #000;
+            background: #f44336;
+            color: white;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 700;
+            margin-left: 8px;
+        }
+
+        .btn-delete-log:hover {
+            filter: brightness(1.1);
+        }
+
+        @media (max-width: 768px) {
+            .chat-viewer {
+                width: 100%;
+            }
+
+            .session-info {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container" id="appRoot" style="display:none;">
+        <h1>Логи сессий</h1>
+        <p class="subtitle">Просмотр истории всех сессий и чатов</p>
+
+        <div id="errorContainer"></div>
+
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-value" id="totalSessions">0</div>
+                <div class="stat-label">Всего сессий</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="activeSessions">0</div>
+                <div class="stat-label">Активные</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="deletedSessions">0</div>
+                <div class="stat-label">Удаленные</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="totalMessages">0</div>
+                <div class="stat-label">Всего сообщений</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="totalUsers">0</div>
+                <div class="stat-label">Пользователей</div>
+            </div>
+        </div>
+
+        <div class="filters">
+            <input type="text" id="searchInput" placeholder="Поиск по ID или никнейму..."
+                style="flex:1;min-width:200px;">
+            <select id="statusFilter">
+                <option value="all">Все статусы</option>
+                <option value="active">Активные</option>
+                <option value="revoked">Отозванные</option>
+                <option value="deleted">Удаленные</option>
+            </select>
+            <select id="viewMode">
+                <option value="sessions">Сессии</option>
+                <option value="registrations">Регистрации</option>
+                <option value="snippets">Логи сниппетов</option>
+            </select>
+            <button onclick="loadData()">Обновить</button>
+            <button class="cleanup-btn" onclick="cleanupAllDeleted()">Очистить все удаленные</button>
+            <button class="export-btn" onclick="exportLogs()">Экспорт</button>
+        </div>
+
+        <div class="sessions-list" id="sessionsList">
+            <div class="loading">Загрузка...</div>
+        </div>
+    </div>
+
+    <!-- Chat Viewer -->
+    <div class="chat-viewer" id="chatViewer">
+        <div class="chat-header">
+            <h2 id="chatTitle">История чата</h2>
+            <button class="close-chat" onclick="closeChatViewer()">×</button>
+        </div>
+        <div class="chat-messages" id="chatMessages"></div>
+    </div>
+
+    <script>
+        let currentNickname = localStorage.getItem('nickname') || '';
+        let allSessions = [];
+        let allRegistrations = [];
+        let allSnippetLogs = [];
+        let currentSessionId = null;
+
+        // Проверка доступа
+        async function checkAccess() {
+            if (!currentNickname) {
+                showError('Требуется авторизация. Пожалуйста, войдите через главную страницу.');
+                return false;
+            }
+
+            try {
+                const res = await fetch('/api/auth/check', {
+                    headers: { 'X-Nickname': currentNickname }
+                });
+
+                if (!res.ok) {
+                    showError('Требуется авторизация. Пожалуйста, войдите через главную страницу.');
+                    return false;
+                }
+
+                const data = await res.json();
+                // Only admins can view logs
+                if (data.role !== 'admin') {
+                    showError('У вас нет доступа к просмотру логов. Требуется роль admin.');
+                    return false;
+                }
+
+                return true;
+            } catch (e) {
+                showError('Ошибка проверки доступа.');
+                return false;
+            }
+        }
+
+        // Функция для вычисления конкретных изменений между двумя текстами
+        function getTextDiff(oldText, newText) {
+            if (!oldText || !newText) return null;
+
+            const oldLines = oldText.split('\n');
+            const newLines = newText.split('\n');
+            const changes = [];
+
+            // Простое сравнение по строкам
+            const maxLines = Math.max(oldLines.length, newLines.length);
+
+            for (let i = 0; i < maxLines; i++) {
+                const oldLine = oldLines[i] || '';
+                const newLine = newLines[i] || '';
+
+                if (oldLine !== newLine) {
+                    if (oldLine && !newLine) {
+                        changes.push({ type: 'removed', line: i + 1, text: oldLine });
+                    } else if (!oldLine && newLine) {
+                        changes.push({ type: 'added', line: i + 1, text: newLine });
+                    } else {
+                        changes.push({ type: 'changed', line: i + 1, oldText: oldLine, newText: newLine });
+                    }
+                }
+            }
+
+            return changes;
+        }
+
+        // Форматирование diff для отображения
+        function formatDiffHtml(oldContent, newContent) {
+            const changes = getTextDiff(oldContent, newContent);
+            if (!changes || changes.length === 0) {
+                return '<div style="color:#666;font-style:italic;">Нет видимых изменений</div>';
+            }
+
+            // Ограничиваем количество показываемых изменений
+            const maxChanges = 10;
+            const displayChanges = changes.slice(0, maxChanges);
+
+            let html = '<div style="font-family:monospace;font-size:11px;">';
+
+            displayChanges.forEach(change => {
+                if (change.type === 'removed') {
+                    html += `<div style="background:#ffebee;color:#c62828;padding:2px 4px;margin:1px 0;">- [строка ${change.line}] ${escapeHtml(change.text.substring(0, 100))}${change.text.length > 100 ? '...' : ''}</div>`;
+                } else if (change.type === 'added') {
+                    html += `<div style="background:#e8f5e9;color:#2e7d32;padding:2px 4px;margin:1px 0;">+ [строка ${change.line}] ${escapeHtml(change.text.substring(0, 100))}${change.text.length > 100 ? '...' : ''}</div>`;
+                } else if (change.type === 'changed') {
+                    html += `<div style="background:#ffebee;color:#c62828;padding:2px 4px;margin:1px 0;">- [строка ${change.line}] ${escapeHtml(change.oldText.substring(0, 100))}${change.oldText.length > 100 ? '...' : ''}</div>`;
+                    html += `<div style="background:#e8f5e9;color:#2e7d32;padding:2px 4px;margin:1px 0;">+ [строка ${change.line}] ${escapeHtml(change.newText.substring(0, 100))}${change.newText.length > 100 ? '...' : ''}</div>`;
+                }
+            });
+
+            if (changes.length > maxChanges) {
+                html += `<div style="color:#666;font-style:italic;margin-top:4px;">... ещё ${changes.length - maxChanges} изменений</div>`;
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function showError(message) {
+            const container = document.getElementById('errorContainer');
+            container.innerHTML = `<div class="error-message">${message}</div>`;
+        }
+
+        async function loadSessions() {
+            try {
+                const res = await fetch('/api/logs/sessions', {
+                    headers: { 'X-Nickname': currentNickname }
+                });
+
+                if (!res.ok) {
+                    throw new Error('Failed to load sessions');
+                }
+
+                const data = await res.json();
+                allSessions = data.sessions || [];
+
+                console.log('Loaded sessions:', allSessions.length);
+                console.log('Deleted sessions:', allSessions.filter(s => s.deleted_at).length);
+
+                renderSessions();
+                updateStats();
+            } catch (e) {
+                showError('Ошибка загрузки сессий: ' + e.message);
+            }
+        }
+
+        async function loadRegistrations() {
+            try {
+                const res = await fetch('/api/logs/registrations', {
+                    headers: { 'X-Nickname': currentNickname }
+                });
+
+                if (!res.ok) {
+                    throw new Error('Failed to load registrations');
+                }
+
+                const data = await res.json();
+                allRegistrations = data.registrations || [];
+                renderRegistrations();
+                updateStats();
+            } catch (e) {
+                showError('Ошибка загрузки регистраций: ' + e.message);
+            }
+        }
+
+        async function loadSnippetLogs() {
+            try {
+                const res = await fetch('/api/logs/snippets', {
+                    headers: { 'X-Nickname': currentNickname }
+                });
+
+                if (!res.ok) {
+                    throw new Error('Failed to load snippet logs');
+                }
+
+                const data = await res.json();
+                allSnippetLogs = data.logs || [];
+                renderSnippetLogs();
+                updateStats();
+            } catch (e) {
+                showError('Ошибка загрузки логов сниппетов: ' + e.message);
+            }
+        }
+
+        async function loadData() {
+            const viewMode = document.getElementById('viewMode').value;
+            if (viewMode === 'sessions') {
+                await loadSessions();
+            } else if (viewMode === 'registrations') {
+                await loadRegistrations();
+            } else if (viewMode === 'snippets') {
+                await loadSnippetLogs();
+            }
+        }
+
+        function renderSessions() {
+            const container = document.getElementById('sessionsList');
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const statusFilter = document.getElementById('statusFilter').value;
+
+            let filtered = allSessions.filter(session => {
+                const matchesSearch = !searchTerm ||
+                    session.id.toLowerCase().includes(searchTerm) ||
+                    session.creator_nickname.toLowerCase().includes(searchTerm);
+
+                // Более явная проверка deleted_at
+                const isDeleted = session.deleted_at !== null && session.deleted_at !== undefined && session.deleted_at !== '';
+
+                // PostgreSQL возвращает BOOLEAN (true/false), а не INTEGER (0/1)
+                const isActive = session.is_active === true || session.is_active === 1;
+                const isRevoked = session.revoked === true || session.revoked === 1;
+
+                const matchesStatus = statusFilter === 'all' ||
+                    (statusFilter === 'active' && isActive && !isRevoked && !isDeleted) ||
+                    (statusFilter === 'revoked' && isRevoked && !isDeleted) ||
+                    (statusFilter === 'deleted' && isDeleted);
+
+                return matchesSearch && matchesStatus;
+            });
+
+            console.log('Filtered sessions:', filtered.length);
+            console.log('Filter:', statusFilter);
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="no-data">Нет сессий для отображения</div>';
+                return;
+            }
+
+            container.innerHTML = filtered.map(session => {
+                let status, statusText;
+
+                // PostgreSQL возвращает BOOLEAN (true/false), а не INTEGER (0/1)
+                const isActive = session.is_active === true || session.is_active === 1;
+                const isRevoked = session.revoked === true || session.revoked === 1;
+
+                if (session.deleted_at) {
+                    status = 'deleted';
+                    statusText = 'Удалена';
+                } else if (isRevoked) {
+                    status = 'revoked';
+                    statusText = 'Отозвана';
+                } else if (isActive) {
+                    status = 'active';
+                    statusText = 'Активна';
+                } else {
+                    status = 'inactive';
+                    statusText = 'Неактивна';
+                }
+
+                const createdDate = new Date(session.created_at);
+                const expiresDate = session.expires_at ? new Date(session.expires_at) : null;
+                const deletedDate = session.deleted_at ? new Date(session.deleted_at) : null;
+
+                return `
+                    <div class="session-item">
+                        <div class="session-header">
+                            <span class="session-id" onclick="viewChat('${session.id}')" style="cursor:pointer;">${session.id}</span>
+                            <div>
+                                <span class="session-status ${status}">${statusText}</span>
+                                <button class="btn-delete-log" onclick="event.stopPropagation(); deleteSessionFromLogs('${session.id}')">Удалить</button>
+                            </div>
+                        </div>
+                        <div class="session-info">
+                            <div class="info-item">
+                                <span class="info-label">Создатель:</span>
+                                <span>${session.creator_nickname}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Создана:</span>
+                                <span>${formatDate(createdDate)}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Истекает:</span>
+                                <span>${expiresDate ? formatDate(expiresDate) : 'Никогда'}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Сообщений:</span>
+                                <span>${session.message_count || 0}</span>
+                            </div>
+                            ${deletedDate ? `
+                            <div class="info-item">
+                                <span class="info-label">Удалена:</span>
+                                <span style="color:#c62828;">${formatDate(deletedDate)}</span>
+                            </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderRegistrations() {
+            const container = document.getElementById('sessionsList');
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+
+            let filtered = allRegistrations.filter(reg => {
+                return !searchTerm ||
+                    reg.nickname.toLowerCase().includes(searchTerm) ||
+                    (reg.invited_by && reg.invited_by.toLowerCase().includes(searchTerm));
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="no-data">Нет регистраций для отображения</div>';
+                return;
+            }
+
+            container.innerHTML = filtered.map(reg => {
+                const registeredDate = new Date(reg.registered_at);
+                const isMasterCode = reg.invited_by === 'MASTER_CODE';
+
+                return `
+                    <div class="session-item" style="cursor: default;">
+                        <div class="session-header">
+                            <span class="session-id">${reg.nickname}</span>
+                            <div>
+                                <span class="session-status ${isMasterCode ? 'active' : 'inactive'}">${isMasterCode ? 'Мастер-код' : 'Инвайт'}</span>
+                                <button class="btn-delete-log" onclick="event.stopPropagation(); deleteUser('${reg.nickname}')">Удалить юзера</button>
+                            </div>
+                        </div>
+                        <div class="session-info">
+                            <div class="info-item">
+                                <span class="info-label">Пригласил:</span>
+                                <span>${reg.invited_by || 'Неизвестно'}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Код:</span>
+                                <span style="font-family:monospace;">${reg.invite_code}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Дата регистрации:</span>
+                                <span>${formatDate(registeredDate)}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderSnippetLogs() {
+            const container = document.getElementById('sessionsList');
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+
+            let filtered = allSnippetLogs.filter(log => {
+                const matchesSearch = !searchTerm ||
+                    log.user_nickname.toLowerCase().includes(searchTerm) ||
+                    (log.item_name && log.item_name.toLowerCase().includes(searchTerm));
+                return matchesSearch;
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="no-data">Нет логов для отображения</div>';
+                return;
+            }
+
+            container.innerHTML = filtered.map(log => {
+                const timestamp = new Date(log.timestamp);
+
+                let actionText = '';
+                let actionColor = '#000';
+                switch (log.action) {
+                    case 'create':
+                        actionText = 'Создан';
+                        actionColor = '#2e7d32';
+                        break;
+                    case 'edit':
+                        actionText = 'Изменен';
+                        actionColor = '#1976d2';
+                        break;
+                    case 'delete':
+                        actionText = 'Удален';
+                        actionColor = '#c62828';
+                        break;
+                    default:
+                        actionText = log.action;
+                }
+
+                const itemTypeIcon = log.item_type === 'snippet' ? '📄' : '📁';
+                const itemTypeName = log.item_type === 'snippet' ? 'Сниппет' : 'Папка';
+
+                return `
+                    <div class="session-item">
+                        <div class="session-header">
+                            <span class="session-id">
+                                ${itemTypeIcon} ${escapeHtml(log.item_name || 'Без названия')}
+                            </span>
+                            <span class="session-status" style="background:#e0e0e0;color:${actionColor};">${actionText}</span>
+                        </div>
+                        <div class="session-info">
+                            <div class="info-item">
+                                <span class="info-label">Тип:</span>
+                                <span>${itemTypeName}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Пользователь:</span>
+                                <span><strong>${escapeHtml(log.user_nickname)}</strong></span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Дата:</span>
+                                <span>${formatDate(timestamp)}</span>
+                            </div>
+                            ${log.details ? `
+                            <div class="info-item" style="grid-column: 1 / -1;">
+                                <span class="info-label">Детали:</span>
+                                <span>${escapeHtml(log.details)}</span>
+                            </div>
+                            ` : ''}
+                            ${log.old_content && log.new_content ? `
+                            <div class="info-item" style="grid-column: 1 / -1;">
+                                <span class="info-label">Изменения:</span>
+                                <div style="background:#f5f5f5;padding:8px;margin-top:4px;border:1px solid #ccc;max-height:200px;overflow-y:auto;">
+                                    ${formatDiffHtml(log.old_content, log.new_content)}
+                                </div>
+                            </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function viewChat(sessionId) {
+            currentSessionId = sessionId;
+
+            try {
+                const res = await fetch(`/api/sessions/${sessionId}/messages`, {
+                    headers: { 'X-Nickname': currentNickname }
+                });
+
+                if (!res.ok) {
+                    throw new Error('Failed to load messages');
+                }
+
+                const data = await res.json();
+                const creatorNickname = data.session?.creator_nickname;
+                renderMessages(data.messages || [], creatorNickname);
+
+                document.getElementById('chatTitle').textContent = `Чат сессии: ${sessionId} (создатель: ${creatorNickname || 'неизвестно'})`;
+                document.getElementById('chatViewer').classList.add('show');
+            } catch (e) {
+                alert('Ошибка загрузки чата: ' + e.message);
+            }
+        }
+
+        function renderMessages(messages, creatorNickname) {
+            const container = document.getElementById('chatMessages');
+
+            if (messages.length === 0) {
+                container.innerHTML = '<div class="no-data">Нет сообщений в этой сессии</div>';
+                return;
+            }
+
+            container.innerHTML = messages.map(msg => {
+                const time = new Date(msg.timestamp).toLocaleString('ru-RU', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+
+                if (msg.from === 'system') {
+                    return `
+                        <div class="message system">
+                            <div>${escapeHtml(msg.text)}</div>
+                            <div class="message-time">${time}</div>
+                        </div>
+                    `;
+                } else if (msg.type === 'voice') {
+                    const className = msg.from === 'admin' ? 'admin' : 'controller';
+                    const label = msg.from === 'admin' ? creatorNickname || 'Админ' : 'Пользователь';
+                    const voiceUrl = `/voice/${msg.voiceFile}`;
+                    const audioId = 'audio_' + msg.id + '_' + msg.sessionId;
+
+                    return `
+                        <div class="message ${className}">
+                            <div><strong>${label}:</strong></div>
+                            <div class="voice-message">
+                                <button class="voice-play-btn" data-audio-id="${audioId}" onclick="playAudio('${voiceUrl}', '${audioId}')">
+                                    ▶
+                                </button>
+                                <span>Голосовое сообщение (${msg.duration})</span>
+                            </div>
+                            <div class="message-time">${time}</div>
+                        </div>
+                    `;
+                } else {
+                    const className = msg.from === 'admin' ? 'admin' : 'controller';
+                    const label = msg.from === 'admin' ? creatorNickname || 'Админ' : 'Пользователь';
+
+                    return `
+                        <div class="message ${className}">
+                            <div><strong>${label}:</strong> ${escapeHtml(msg.text)}</div>
+                            <div class="message-time">${time}</div>
+                        </div>
+                    `;
+                }
+            }).join('');
+
+            // Scroll to bottom
+            setTimeout(() => {
+                container.scrollTop = container.scrollHeight;
+            }, 100);
+        }
+
+        function closeChatViewer() {
+            document.getElementById('chatViewer').classList.remove('show');
+            currentSessionId = null;
+        }
+
+        function updateStats() {
+            const viewMode = document.getElementById('viewMode').value;
+
+            if (viewMode === 'sessions') {
+                const total = allSessions.length;
+                const active = allSessions.filter(s => {
+                    const isDeleted = s.deleted_at !== null && s.deleted_at !== undefined && s.deleted_at !== '';
+                    // PostgreSQL возвращает BOOLEAN (true/false), а не INTEGER (0/1)
+                    const isActive = s.is_active === true || s.is_active === 1;
+                    const isRevoked = s.revoked === true || s.revoked === 1;
+                    return isActive && !isRevoked && !isDeleted;
+                }).length;
+                const deleted = allSessions.filter(s => {
+                    return s.deleted_at !== null && s.deleted_at !== undefined && s.deleted_at !== '';
+                }).length;
+                const totalMessages = allSessions.reduce((sum, s) => sum + (parseInt(s.message_count, 10) || 0), 0);
+
+                document.getElementById('totalSessions').textContent = total;
+                document.getElementById('activeSessions').textContent = active;
+                document.getElementById('deletedSessions').textContent = deleted;
+                document.getElementById('totalMessages').textContent = totalMessages;
+                document.getElementById('totalUsers').textContent = allRegistrations.length;
+            } else if (viewMode === 'snippets') {
+                const created = allSnippetLogs.filter(l => l.action === 'create').length;
+                const edited = allSnippetLogs.filter(l => l.action === 'edit').length;
+                const deleted = allSnippetLogs.filter(l => l.action === 'delete').length;
+
+                document.getElementById('totalSessions').textContent = allSnippetLogs.length;
+                document.getElementById('activeSessions').textContent = `${created} созданий`;
+                document.getElementById('deletedSessions').textContent = `${edited} изменений`;
+                document.getElementById('totalMessages').textContent = `${deleted} удалений`;
+                document.getElementById('totalUsers').textContent = allRegistrations.length;
+            } else {
+                document.getElementById('totalSessions').textContent = allSessions.length;
+                document.getElementById('activeSessions').textContent = '-';
+                document.getElementById('deletedSessions').textContent = '-';
+                document.getElementById('totalMessages').textContent = '-';
+                document.getElementById('totalUsers').textContent = allRegistrations.length;
+            }
+        }
+
+        function formatDate(date) {
+            return date.toLocaleString('ru-RU', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Хранилище аудио плееров для каждого голосового сообщения
+        const audioPlayers = new Map();
+
+        function playAudio(url, buttonId) {
+            // Генерируем уникальный ID если не передан
+            if (!buttonId) {
+                buttonId = 'audio_' + url.replace(/[^a-zA-Z0-9]/g, '_');
+            }
+
+            // Получаем или создаем аудио плеер
+            let audio = audioPlayers.get(buttonId);
+
+            if (!audio) {
+                audio = new Audio(url);
+                audioPlayers.set(buttonId, audio);
+
+                // Обработчик окончания воспроизведения
+                audio.addEventListener('ended', () => {
+                    const btn = document.querySelector(`button[data-audio-id="${buttonId}"]`);
+                    if (btn) {
+                        btn.innerHTML = '▶';
+                        btn.classList.remove('playing');
+                    }
+                });
+            }
+
+            // Получаем кнопку
+            const btn = document.querySelector(`button[data-audio-id="${buttonId}"]`);
+
+            // Переключаем воспроизведение/паузу
+            if (audio.paused) {
+                audio.play();
+                if (btn) {
+                    btn.innerHTML = '⏸';
+                    btn.classList.add('playing');
+                }
+            } else {
+                audio.pause();
+                if (btn) {
+                    btn.innerHTML = '▶';
+                    btn.classList.remove('playing');
+                }
+            }
+        }
+
+        async function exportLogs() {
+            try {
+                // Экспортируем все сессии с их сообщениями
+                const exportData = {
+                    exportDate: new Date().toISOString(),
+                    exportedBy: currentNickname,
+                    sessions: []
+                };
+
+                for (const session of allSessions) {
+                    const res = await fetch(`/api/sessions/${session.id}/messages`, {
+                        headers: { 'X-Nickname': currentNickname }
+                    });
+
+                    if (res.ok) {
+                        const data = await res.json();
+                        exportData.sessions.push({
+                            session: data.session,
+                            messages: data.messages
+                        });
+                    }
+                }
+
+                const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+                    type: 'application/json'
+                });
+
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `lovense-logs-${new Date().toISOString().split('T')[0]}.json`;
+                a.click();
+
+                URL.revokeObjectURL(url);
+                console.log('Логи экспортированы');
+            } catch (e) {
+                console.error('Ошибка экспорта:', e);
+            }
+        }
+
+        // Фильтры
+        document.getElementById('searchInput').addEventListener('input', () => {
+            const viewMode = document.getElementById('viewMode').value;
+            if (viewMode === 'sessions') {
+                renderSessions();
+            } else {
+                renderRegistrations();
+            }
+        });
+        document.getElementById('statusFilter').addEventListener('change', renderSessions);
+        document.getElementById('viewMode').addEventListener('change', loadData);
+
+        // Инициализация
+        (async function () {
+            const hasAccess = await checkAccess();
+            if (hasAccess) {
+                document.getElementById('appRoot').style.display = 'block';
+                await loadSessions();
+                await loadRegistrations();
+            }
+        })();
+
+        // Автообновление каждые 30 секунд
+        setInterval(() => {
+            if (document.getElementById('appRoot').style.display === 'block') {
+                loadData();
+            }
+        }, 30000);
+
+        // === CLEANUP FUNCTIONS ===
+
+        async function cleanupAllDeleted() {
+            try {
+                const res = await fetch('/api/logs/cleanup-all', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Nickname': currentNickname
+                    }
+                });
+
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    throw new Error(errorData.error || 'Cleanup failed');
+                }
+
+                const data = await res.json();
+                console.log(`Очистка выполнена. Удалено сессий: ${data.deleted}`);
+
+                await loadData();
+            } catch (e) {
+                console.error('Ошибка очистки:', e);
+                console.error('Cleanup error:', e);
+            }
+        }
+
+        async function deleteSessionFromLogs(sessionId) {
+            if (!confirm(`Вы уверены, что хотите удалить сессию ${sessionId}?\n\nЭто действие необратимо и удалит:\n- Саму сессию\n- Все сообщения\n- Все логи этой сессии`)) {
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/logs/delete-session', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Nickname': currentNickname
+                    },
+                    body: JSON.stringify({ sessionId })
+                });
+
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({}));
+                    throw new Error(errorData.message || errorData.error || 'Delete failed');
+                }
+
+                console.log(`Сессия ${sessionId} успешно удалена из логов`);
+                alert(`Сессия ${sessionId} успешно удалена!`);
+                await loadData();
+            } catch (e) {
+                console.error('Ошибка удаления:', e);
+                alert('Ошибка удаления сессии: ' + e.message + '\n\nПроверьте консоль для деталей.');
+            }
+        }
+
+        async function deleteUser(nickname) {
+            if (!confirm(`Вы уверены, что хотите удалить пользователя ${nickname}?\n\nЭто действие необратимо!\n\nПользователь будет выкинут с сайта в течение 30 секунд.`)) {
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/users/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Nickname': currentNickname
+                    },
+                    body: JSON.stringify({ nickname })
+                });
+
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({}));
+                    throw new Error(errorData.message || errorData.error || 'Delete failed');
+                }
+
+                console.log(`Пользователь ${nickname} успешно удален`);
+                alert(`Пользователь ${nickname} успешно удален!\n\nОн будет выкинут с сайта в течение 30 секунд.`);
+                await loadData();
+            } catch (e) {
+                console.error('Ошибка удаления пользователя:', e);
+                alert('Ошибка удаления пользователя: ' + e.message);
+            }
+        }
+    </script>
+</body>
+
+</html>

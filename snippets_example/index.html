@@ -1,0 +1,1779 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Text Snippets - Firebase Sync</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  
+  * { 
+    box-sizing: border-box; 
+    margin: 0;
+    padding: 0;
+  }
+  
+  :root {
+    --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --secondary-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    --dark-gradient: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+    --glass-bg: rgba(255, 255, 255, 0.25);
+    --glass-border: rgba(255, 255, 255, 0.18);
+    --text-primary: #2c3e50;
+    --text-secondary: #7f8c8d;
+    --text-light: rgba(255, 255, 255, 0.9);
+    --shadow-soft: 0 8px 32px rgba(31, 38, 135, 0.37);
+    --shadow-hover: 0 12px 40px rgba(31, 38, 135, 0.5);
+    --border-radius: 16px;
+    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  body { 
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; 
+    margin: 0; 
+    display: flex; 
+    height: 100vh; 
+    background: var(--primary-gradient);
+    background-attachment: fixed;
+    overflow: hidden;
+    color: var(--text-primary);
+  }
+  
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+      radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+      radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.3) 0%, transparent 50%),
+      radial-gradient(circle at 40% 40%, rgba(120, 219, 255, 0.2) 0%, transparent 50%);
+    pointer-events: none;
+  }
+  
+  /* Login Screen */
+  #login-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--primary-gradient);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+  }
+  
+  #login-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    padding: 40px;
+    border-radius: var(--border-radius);
+    width: 90%;
+    max-width: 400px;
+    box-shadow: var(--shadow-hover);
+    border: 1px solid var(--glass-border);
+    text-align: center;
+    animation: slideInDown 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  #login-card h1 {
+    font-size: 28px;
+    margin-bottom: 16px;
+    color: var(--text-light);
+    font-weight: 700;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  }
+  
+  #login-card p {
+    margin-bottom: 32px;
+    color: var(--text-light);
+    opacity: 0.8;
+    font-size: 16px;
+  }
+  
+  #invite-code-input {
+    width: 100%;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.9);
+    font-size: 16px;
+    text-align: center;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    transition: var(--transition);
+  }
+  
+  #invite-code-input:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.2);
+  }
+  
+  #login-btn {
+    width: 100%;
+    padding: 16px;
+    border: none;
+    background: var(--secondary-gradient);
+    color: var(--text-light);
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    box-shadow: var(--shadow-soft);
+  }
+  
+  #login-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
+  }
+  
+  #login-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+  }
+  
+  #connection-status {
+    margin-top: 16px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  
+  .status-connecting { color: #ffd43b; }
+  .status-connected { color: #51cf66; }
+  .status-error { color: #ff6b6b; }
+  
+  /* Main App */
+  #main-app {
+    width: 100%;
+    height: 100%;
+    display: none;
+  }
+  
+  #sidebar { 
+    width: 320px; 
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: 0 var(--border-radius) var(--border-radius) 0;
+    padding: 24px;
+    overflow-y: auto;
+    box-shadow: var(--shadow-soft);
+    position: relative;
+    z-index: 2;
+    animation: slideInLeft 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  #sidebar::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  #sidebar::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+  }
+  
+  #sidebar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 10px;
+  }
+  
+  #sidebar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.5);
+  }
+  
+  #sidebar h3 {
+    margin: 0 0 24px 0;
+    padding: 16px 20px;
+    background: var(--secondary-gradient);
+    color: var(--text-light);
+    text-align: center;
+    border-radius: var(--border-radius);
+    font-weight: 600;
+    font-size: 18px;
+    box-shadow: var(--shadow-soft);
+    animation: fadeInUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) 0.2s both;
+  }
+  
+  #controls {
+    margin-bottom: 20px;
+    display: flex;
+    gap: 12px;
+    animation: fadeInUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) 0.3s both;
+  }
+  
+  #controls button {
+    flex: 1;
+    padding: 12px 16px;
+    border: none;
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    color: var(--text-primary);
+    cursor: pointer;
+    border-radius: 12px;
+    font-weight: 500;
+    font-size: 14px;
+    transition: var(--transition);
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 4px 16px rgba(31, 38, 135, 0.2);
+  }
+  
+  #controls button:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
+    background: rgba(255, 255, 255, 0.4);
+  }
+  
+  #controls button:active {
+    transform: translateY(0);
+  }
+  
+  #search {
+    width: 100%;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text-primary);
+    transition: var(--transition);
+    animation: fadeInUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) 0.4s both;
+  }
+  
+  #search::placeholder {
+    color: var(--text-secondary);
+  }
+  
+  #search:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.5);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.35);
+  }
+  
+  #tree { 
+    font-size: 14px;
+    animation: fadeInUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) 0.5s both;
+  }
+  
+  #editor { 
+    flex: 1; 
+    padding: 24px; 
+    display: flex; 
+    flex-direction: column;
+    position: relative;
+    z-index: 1;
+    animation: slideInRight 0.6s cubic-bezier(0.4, 0, 0.2, 1) 0.2s both;
+  }
+  
+  .tree-item {
+    padding: 12px 16px;
+    cursor: pointer;
+    border-radius: 10px;
+    margin: 4px 0;
+    transition: var(--transition);
+    position: relative;
+    backdrop-filter: blur(5px);
+    border: 1px solid transparent;
+  }
+  
+  .tree-item:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateX(4px);
+    border-color: var(--glass-border);
+    box-shadow: 0 4px 16px rgba(31, 38, 135, 0.15);
+  }
+  
+  .tree-item.selected {
+    background: var(--secondary-gradient);
+    color: var(--text-light);
+    font-weight: 500;
+    box-shadow: var(--shadow-soft);
+    animation: pulse 2s infinite;
+  }
+  
+  .tree-item.folder {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  
+  .tree-item.snippet {
+    margin-left: 20px;
+    color: var(--text-primary);
+    position: relative;
+  }
+  
+  .tree-item.snippet::before {
+    content: '';
+    position: absolute;
+    left: -12px;
+    top: 50%;
+    width: 2px;
+    height: 20px;
+    background: var(--secondary-gradient);
+    border-radius: 1px;
+    transform: translateY(-50%);
+    opacity: 0.6;
+  }
+  
+  .tree-item .actions {
+    opacity: 0;
+    transition: var(--transition);
+    display: flex;
+    gap: 4px;
+  }
+  
+  .tree-item:hover .actions {
+    opacity: 1;
+  }
+  
+  .tree-item .actions button {
+    padding: 6px 8px;
+    border: none;
+    background: rgba(255, 255, 255, 0.9);
+    cursor: pointer;
+    font-size: 12px;
+    border-radius: 6px;
+    transition: var(--transition);
+    color: var(--text-primary);
+    backdrop-filter: blur(10px);
+  }
+  
+  .tree-item .actions button:hover {
+    background: rgba(255, 255, 255, 1);
+    transform: scale(1.1);
+  }
+  
+  .folder-children {
+    margin-left: 20px;
+    border-left: 2px solid var(--glass-border);
+    padding-left: 16px;
+    position: relative;
+  }
+  
+  .folder-children::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--secondary-gradient);
+    border-radius: 1px;
+    opacity: 0.5;
+  }
+  
+  #snippet-title {
+    font-size: 32px;
+    margin: 0 0 8px 0;
+    padding-left: 0;
+    color: var(--text-light);
+    font-weight: 700;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    animation: fadeInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    text-align: left;
+  }
+  
+  #snippet-editor {
+    display: none;
+    padding: 0;
+    margin: 0;
+    text-align: left;
+  }
+  
+  #save-status {
+    color: var(--text-light);
+    font-size: 14px;
+    margin-bottom: 16px;
+    padding-left: 0;
+    height: 20px;
+    line-height: 20px;
+    font-weight: 500;
+    opacity: 0.8;
+    text-align: left;
+  }
+  
+  #snippet-text {
+    width: 100%;
+    max-width: 100%;
+    padding: 24px;
+    border: 2px solid var(--glass-border);
+    border-radius: var(--border-radius);
+    font-size: 16px;
+    resize: both;
+    height: 500px;
+    min-height: 300px;
+    min-width: 400px;
+    max-height: 80vh;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    color: var(--text-primary);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease, background 0.3s ease, transform 0.2s ease;
+    box-shadow: var(--shadow-soft);
+    line-height: 1.7;
+    animation: fadeInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1) 0.2s both;
+    position: relative;
+    overflow: auto;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    margin: 0;
+    margin-left: 0 !important;
+    left: 0;
+    align-self: flex-start;
+    display: block;
+  }
+  
+  #snippet-text::placeholder {
+    color: var(--text-secondary);
+  }
+  
+  #snippet-text:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.7);
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.15), var(--shadow-hover);
+    background: rgba(255, 255, 255, 0.4);
+    transform: scale(1.01);
+  }
+  
+  #snippet-text:hover {
+    border-color: rgba(255, 255, 255, 0.4);
+    box-shadow: 0 6px 25px rgba(31, 38, 135, 0.25);
+    background: rgba(255, 255, 255, 0.3);
+  }
+  
+  #snippet-text::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  #snippet-text::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+  }
+  
+  #snippet-text::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 10px;
+  }
+  
+  #snippet-text::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.5);
+  }
+  
+  #snippet-text::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  
+
+  
+  .empty-state {
+    text-align: center;
+    color: var(--text-light);
+    padding: 80px 20px;
+    animation: fadeIn 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  .empty-state h3 {
+    font-size: 28px;
+    margin-bottom: 16px;
+    font-weight: 600;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  }
+  
+  .empty-state p {
+    font-size: 16px;
+    opacity: 0.8;
+    font-weight: 400;
+  }
+  
+  .modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px);
+    z-index: 1000;
+    animation: fadeIn 0.3s ease-out;
+  }
+  
+  .modal-content {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    margin: 15% auto;
+    padding: 32px;
+    border-radius: var(--border-radius);
+    width: 90%;
+    max-width: 400px;
+    box-shadow: var(--shadow-hover);
+    border: 1px solid var(--glass-border);
+    animation: slideInDown 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    color: var(--text-primary);
+  }
+  
+  .modal-content #modal-title {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 20px;
+    color: var(--text-primary);
+  }
+  
+  .modal input {
+    width: 100%;
+    padding: 14px 16px;
+    margin: 16px 0 24px 0;
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.8);
+    font-size: 14px;
+    font-family: inherit;
+    transition: var(--transition);
+    color: var(--text-primary);
+  }
+  
+  .modal input:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.2);
+  }
+  
+  .modal button {
+    padding: 12px 20px;
+    margin: 0 8px 0 0;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    cursor: pointer;
+    border-radius: 10px;
+    font-weight: 500;
+    transition: var(--transition);
+    color: var(--text-primary);
+    backdrop-filter: blur(10px);
+  }
+  
+  .modal button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(31, 38, 135, 0.2);
+  }
+  
+  .modal button.primary {
+    background: var(--secondary-gradient);
+    color: var(--text-light);
+    border: none;
+  }
+  
+  .sync-indicator {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 8px 12px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    color: var(--text-light);
+    font-size: 12px;
+    font-weight: 500;
+    z-index: 1000;
+    opacity: 0;
+    transition: var(--transition);
+  }
+  
+  .sync-indicator.show { opacity: 1; }
+  .sync-indicator.realtime { 
+    background: var(--secondary-gradient); 
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+  
+  .user-indicator {
+    position: fixed;
+    top: 60px;
+    right: 20px;
+    padding: 6px 10px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    color: var(--text-light);
+    font-size: 11px;
+    z-index: 1000;
+  }
+  
+  .online-users {
+    position: fixed;
+    top: 100px;
+    right: 20px;
+    padding: 8px 12px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    color: var(--text-light);
+    font-size: 11px;
+    z-index: 1000;
+    min-width: 120px;
+  }
+  
+  .lore-character {
+    padding: 10px 12px;
+    cursor: pointer;
+    border-radius: 8px;
+    margin: 3px 0;
+    transition: var(--transition);
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(10px);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  
+  .lore-character:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: translateX(4px);
+    box-shadow: 0 4px 12px rgba(31, 38, 135, 0.15);
+  }
+  
+  .lore-character.selected {
+    background: var(--secondary-gradient);
+    color: var(--text-light);
+    box-shadow: var(--shadow-soft);
+  }
+  
+  .lore-section-btn {
+    width: 100%;
+    padding: 12px 16px;
+    border: none;
+    background: var(--secondary-gradient);
+    color: var(--text-light);
+    border-radius: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-bottom: 12px;
+    transition: var(--transition);
+    font-size: 14px;
+    box-shadow: var(--shadow-soft);
+  }
+  
+  .lore-section-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
+  }
+  
+  .lore-section-btn:active {
+    transform: translateY(0);
+  }
+  
+  .export-section {
+    margin-top: 32px;
+    padding: 24px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border-radius: var(--border-radius);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-soft);
+    animation: fadeInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1) 0.6s both;
+  }
+  
+  .export-section h4 {
+    margin: 0 0 16px 0;
+    color: var(--text-light);
+    font-weight: 600;
+    font-size: 16px;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+  
+  .export-section button {
+    padding: 10px 16px;
+    margin: 6px 8px 6px 0;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    cursor: pointer;
+    border-radius: 8px;
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--text-primary);
+    transition: var(--transition);
+    backdrop-filter: blur(10px);
+  }
+  
+  .export-section button:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.4);
+    box-shadow: 0 4px 12px rgba(31, 38, 135, 0.2);
+  }
+  
+  /* Анимации */
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes fadeInUp {
+    from { 
+      opacity: 0; 
+      transform: translateY(30px); 
+    }
+    to { 
+      opacity: 1; 
+      transform: translateY(0); 
+    }
+  }
+  
+  @keyframes slideInLeft {
+    from { 
+      opacity: 0; 
+      transform: translateX(-50px); 
+    }
+    to { 
+      opacity: 1; 
+      transform: translateX(0); 
+    }
+  }
+  
+  @keyframes slideInRight {
+    from { 
+      opacity: 0; 
+      transform: translateX(50px); 
+    }
+    to { 
+      opacity: 1; 
+      transform: translateX(0); 
+    }
+  }
+  
+  @keyframes slideInDown {
+    from { 
+      opacity: 0; 
+      transform: translateY(-50px) scale(0.95); 
+    }
+    to { 
+      opacity: 1; 
+      transform: translateY(0) scale(1); 
+    }
+  }
+  
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+  }
+  
+  /* Адаптивность */
+  @media (max-width: 768px) {
+    body {
+      flex-direction: column;
+    }
+    
+    #sidebar {
+      width: 100%;
+      height: 40vh;
+      border-radius: 0 0 var(--border-radius) var(--border-radius);
+    }
+    
+    #editor {
+      flex: 1;
+      padding: 16px;
+    }
+    
+    #snippet-title {
+      font-size: 24px;
+    }
+  }
+</style>
+</head>
+<body>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-database-compat.js"></script>
+
+  <!-- Sync Indicator -->
+  <div id="sync-indicator" class="sync-indicator">
+    🔄 Синхронизация...
+  </div>
+  
+  <!-- User Indicator -->
+  <div id="user-indicator" class="user-indicator">
+    👤 <span id="user-id">guest</span>
+  </div>
+  
+  <!-- Online Users -->
+  <div id="online-users" class="online-users">
+    👥 <span id="online-count">0</span> онлайн
+  </div>
+
+  <!-- Login Screen -->
+  <div id="login-screen">
+    <div id="login-card">
+      <h1>📝 Text Snippets</h1>
+      <p>🌐 Firebase Realtime Sync • Введите инвайт-код</p>
+      <input type="text" id="invite-code-input" placeholder="INVITE-CODE" maxlength="12">
+      <button id="login-btn" onclick="loginWithInviteCode()">Подключиться</button>
+      <div id="connection-status" class="status-connecting">🔄 Подключение...</div>
+    </div>
+  </div>
+
+  <!-- Main Application -->
+  <div id="main-app">
+    <div id="sidebar">
+      <h3>📝 Text Snippets <span style="font-size: 12px; opacity: 0.7;">🔥 Firebase</span></h3>
+      
+      <div id="controls">
+        <button onclick="createFolder()">+ Папка</button>
+        <button onclick="createSnippet()">+ Сниппет</button>
+      </div>
+      
+      <div id="lore-section" style="margin-bottom: 20px;">
+        <button onclick="toggleLoreSection()" class="lore-section-btn">
+          📚 ЛОР АНКЕТ ▼
+        </button>
+        <div id="lore-characters" style="display: block; margin-left: 16px;">
+          <div class="lore-character" onclick="selectLoreCharacter('lera-lynn')" data-char="lera-lynn">
+            <span>👤 Lera Lynn</span>
+          </div>
+          <div class="lore-character" onclick="selectLoreCharacter('mirana')" data-char="mirana">
+            <span>👤 Mirana</span>
+          </div>
+          <div class="lore-character" onclick="selectLoreCharacter('moonlace')" data-char="moonlace">
+            <span>👤 Moonlace</span>
+          </div>
+          <div class="lore-character" onclick="selectLoreCharacter('hina')" data-char="hina">
+            <span>👤 Hina</span>
+          </div>
+          <div class="lore-character" onclick="selectLoreCharacter('misu')" data-char="misu">
+            <span>👤 Misu</span>
+          </div>
+          <div class="lore-character" onclick="selectLoreCharacter('jane')" data-char="jane">
+            <span>👤 Jane</span>
+          </div>
+        </div>
+      </div>
+      
+      <input type="text" id="search" placeholder="Поиск..." onkeyup="searchItems()">
+      
+      <div id="tree"></div>
+      
+      <div style="margin-top: 20px; text-align: center;">
+        <button onclick="logout()" style="padding: 8px 16px; background: rgba(255,255,255,0.2); color: var(--text-light); border: none; border-radius: 8px; cursor: pointer; transition: var(--transition);">
+          Отключиться
+        </button>
+        <div style="margin-top: 8px; font-size: 11px; color: var(--text-light); opacity: 0.6;">
+          🔥 Firebase Sync
+        </div>
+      </div>
+    </div>
+    
+    <div id="editor">
+      <div id="empty-state" class="empty-state">
+        <h3>Выберите сниппет</h3>
+        <p>🔥 Firebase Realtime Sync • Мгновенная синхронизация</p>
+      </div>
+      
+            <div id="snippet-editor">
+        <h2 id="snippet-title">Название сниппета</h2>
+        <div id="save-status"></div>
+        <textarea id="snippet-text" placeholder="Введите текст сниппета..."></textarea>
+      </div>
+      
+      <div class="export-section">
+        <h4>Управление данными</h4>
+        <button onclick="exportData()">Экспорт</button>
+        <button onclick="document.getElementById('import-file').click()">Импорт</button>
+
+        <button onclick="refreshFromFirebase()" class="secondary">🔄 Обновить</button>
+        <input type="file" id="import-file" accept=".json" onchange="importData(this)" style="display: none;">
+      </div>
+    </div>
+  </div>
+  
+  <!-- Модальное окно -->
+  <div id="modal" class="modal">
+    <div class="modal-content">
+      <div id="modal-title">Заголовок</div>
+      <input type="text" id="modal-input" placeholder="Введите название">
+      <div>
+        <button onclick="closeModal()">Отмена</button>
+        <button class="primary" onclick="confirmModal()">Создать</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+// Firebase конфигурация
+const firebaseConfig = {
+  apiKey: "AIzaSyADvtUMRPwHsAS_f8qhevD2HwtMhIGlMwI",
+  authDomain: "kideki02ashes.firebaseapp.com",
+  databaseURL: "https://kideki02ashes-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "kideki02ashes",
+  storageBucket: "kideki02ashes.firebasestorage.app",
+  messagingSenderId: "949607215159",
+  appId: "1:949607215159:web:bcca405a9e8d816be04fb2"
+};
+
+// Инвайт-коды
+const VALID_INVITE_CODES = [
+  'PASTE1337'
+];
+
+// Переменные
+let app = null;
+let database = null;
+let dataRef = null;
+let usersRef = null;
+let presenceRef = null;
+let isAuthenticated = false;
+let currentUser = null;
+let currentInviteCode = null;
+
+// Данные приложения
+let data = {
+  folders: {},
+  snippets: {},
+  structure: [],
+  loreProfiles: {}
+};
+
+let currentSnippetId = null;
+let currentLoreCharacter = null;
+let currentAction = null;
+let currentParentId = null;
+let autoSaveTimer = null;
+let loreExpanded = true;
+
+// Инициализация
+document.addEventListener('DOMContentLoaded', function() {
+  initializeFirebase();
+  generateUserId();
+  
+  document.getElementById('invite-code-input').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+      loginWithInviteCode();
+    }
+  });
+});
+
+function generateUserId() {
+  currentUser = 'user_' + Math.random().toString(36).substr(2, 9);
+  document.getElementById('user-id').textContent = currentUser;
+}
+
+function initializeFirebase() {
+  updateConnectionStatus('connecting', '🔄 Инициализация...');
+  
+  if (typeof firebase === 'undefined') {
+    updateConnectionStatus('error', '❌ Firebase SDK не загружен');
+    return;
+  }
+  
+  try {
+    if (firebase.apps.length === 0) {
+      app = firebase.initializeApp(firebaseConfig);
+    } else {
+      app = firebase.app();
+    }
+    
+    database = firebase.database();
+    updateConnectionStatus('connected', '✅ Firebase готов');
+    
+  } catch (error) {
+    updateConnectionStatus('error', `❌ Ошибка: ${error.message}`);
+  }
+}
+
+function updateConnectionStatus(status, message) {
+  const statusEl = document.getElementById('connection-status');
+  statusEl.textContent = message;
+  statusEl.className = `status-${status}`;
+}
+
+function loginWithInviteCode() {
+  const inviteCode = document.getElementById('invite-code-input').value.trim().toUpperCase();
+  const loginBtn = document.getElementById('login-btn');
+  
+  if (!inviteCode) {
+    updateConnectionStatus('error', '❌ Введите инвайт-код');
+    return;
+  }
+
+  loginBtn.disabled = true;
+  loginBtn.textContent = 'Подключение...';
+
+  if (VALID_INVITE_CODES.includes(inviteCode)) {
+    currentInviteCode = inviteCode;
+    isAuthenticated = true;
+    
+    updateConnectionStatus('connecting', '✅ Подключение к Firebase...');
+    
+    setTimeout(() => {
+      setupFirebaseConnection();
+    }, 1000);
+    
+  } else {
+    updateConnectionStatus('error', '❌ Неверный инвайт-код');
+    loginBtn.disabled = false;
+    loginBtn.textContent = 'Подключиться';
+  }
+}
+
+function setupFirebaseConnection() {
+  if (!database) {
+    updateConnectionStatus('error', '❌ Firebase не инициализирован');
+    return;
+  }
+  
+  updateConnectionStatus('connecting', '🔧 Настройка соединения...');
+  
+  try {
+    dataRef = database.ref('snippets-data');
+    usersRef = database.ref('online-users');
+    presenceRef = database.ref('.info/connected');
+    
+    testFirebaseConnection();
+    
+  } catch (error) {
+    updateConnectionStatus('error', '❌ Ошибка настройки: ' + error.message);
+  }
+}
+
+function testFirebaseConnection() {
+  updateConnectionStatus('connecting', '🧪 Тестирование соединения...');
+  
+  const testRef = database.ref('connection-test');
+  
+  testRef.set({ 
+    timestamp: Date.now(),
+    user: currentUser,
+    test: 'connection-check'
+  })
+  .then(() => {
+    return testRef.once('value');
+  })
+  .then((snapshot) => {
+    testRef.remove();
+    initializeFirebaseApp();
+  })
+  .catch((error) => {
+    updateConnectionStatus('error', `❌ Ошибка: ${error.message}`);
+    
+    if (error.code === 'PERMISSION_DENIED') {
+      alert('❌ Нет доступа к базе данных!\n\nОткройте Firebase Console → Realtime Database → Правила\nУстановите: {"rules": {".read": true, ".write": true}}');
+    }
+  });
+}
+
+function initializeFirebaseApp() {
+  updateConnectionStatus('connected', '✅ Firebase подключен!');
+  
+  setupFirebaseListeners();
+  setupUserPresence();
+  loadFromFirebase();
+  showMainApp();
+  
+  showSyncIndicator('🔥 Firebase Sync активен!', true);
+}
+
+function setupFirebaseListeners() {
+  if (!dataRef) return;
+  
+  dataRef.on('value', function(snapshot) {
+    const newData = snapshot.val();
+    
+    if (newData) {
+      if (JSON.stringify(data) !== JSON.stringify(newData)) {
+        data = newData;
+        // Убеждаемся что loreProfiles существует при каждом обновлении
+        if (!data.loreProfiles) {
+          data.loreProfiles = {
+            'lera-lynn': { name: 'Lera Lynn', content: '' },
+            'mirana': { name: 'Mirana', content: '' },
+            'moonlace': { name: 'Moonlace', content: '' },
+            'hina': { name: 'Hina', content: '' },
+            'misu': { name: 'Misu', content: '' },
+            'jane': { name: 'Jane', content: '' }
+          };
+        }
+        renderTree();
+        showSyncIndicator('🔄 Данные обновлены', true);
+        updateCurrentEditor();
+      }
+    } else {
+      initializeDefaultData();
+      saveToFirebase(false);
+    }
+  }, function(error) {
+    showSyncIndicator('❌ Ошибка синхронизации');
+  });
+}
+
+function setupUserPresence() {
+  if (!usersRef || !presenceRef) return;
+  
+  presenceRef.on('value', function(snapshot) {
+    if (snapshot.val() === true) {
+      const userRef = usersRef.child(currentUser);
+      
+      userRef.set({
+        name: currentUser,
+        inviteCode: currentInviteCode,
+        lastSeen: firebase.database.ServerValue.TIMESTAMP,
+        status: 'online'
+      });
+      
+      userRef.onDisconnect().remove();
+    }
+  });
+  
+  usersRef.on('value', function(snapshot) {
+    const users = snapshot.val();
+    const count = users ? Object.keys(users).length : 0;
+    updateOnlineCount(count);
+  });
+}
+
+function saveToFirebase(showNotification = true) {
+  if (dataRef) {
+    dataRef.set(data)
+      .then(() => {
+        if (showNotification) {
+          showSyncIndicator('💾 Сохранено', true);
+        }
+      })
+      .catch((error) => {
+        showSyncIndicator('❌ Ошибка сохранения');
+      });
+  }
+}
+
+function loadFromFirebase() {
+  if (dataRef) {
+    dataRef.once('value')
+      .then((snapshot) => {
+        const firebaseData = snapshot.val();
+        if (firebaseData) {
+          data = firebaseData;
+          // Убеждаемся что все необходимые свойства существуют
+          if (!data.loreProfiles) {
+            data.loreProfiles = {
+              'lera-lynn': { name: 'Lera Lynn', content: '' },
+              'mirana': { name: 'Mirana', content: '' },
+              'moonlace': { name: 'Moonlace', content: '' },
+              'hina': { name: 'Hina', content: '' },
+              'misu': { name: 'Misu', content: '' },
+              'jane': { name: 'Jane', content: '' }
+            };
+          }
+        } else {
+          initializeDefaultData();
+          saveToFirebase(false);
+        }
+        renderTree();
+        showSyncIndicator('📥 Данные загружены', true);
+      })
+      .catch((error) => {
+        initializeDefaultData();
+        renderTree();
+      });
+  }
+}
+
+function updateCurrentEditor() {
+  if (currentSnippetId && data.snippets[currentSnippetId]) {
+    const currentText = document.getElementById('snippet-text').value;
+    const savedText = data.snippets[currentSnippetId].content;
+    
+    if (currentText !== savedText && currentText.trim() !== '' && savedText !== currentText) {
+      showSyncIndicator('⚠️ Данные обновлены другим пользователем');
+    }
+  }
+  
+  if (currentLoreCharacter && data.loreProfiles && data.loreProfiles[currentLoreCharacter]) {
+    const currentText = document.getElementById('snippet-text').value;
+    const savedText = data.loreProfiles[currentLoreCharacter].content;
+    
+    if (currentText !== savedText && savedText !== currentText) {
+      showSyncIndicator('⚠️ Лор анкета обновлена другим пользователем');
+    }
+  }
+}
+
+function showMainApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('main-app').style.display = 'flex';
+}
+
+function logout() {
+  if (confirm('Отключиться от Firebase?')) {
+    if (usersRef && currentUser) {
+      usersRef.child(currentUser).remove();
+    }
+    
+    if (dataRef) dataRef.off();
+    if (usersRef) usersRef.off();
+    if (presenceRef) presenceRef.off();
+    
+    isAuthenticated = false;
+    currentInviteCode = null;
+    
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('main-app').style.display = 'none';
+    updateConnectionStatus('connecting', '🔄 Отключено');
+  }
+}
+
+function updateOnlineCount(count) {
+  document.getElementById('online-count').textContent = count;
+}
+
+function showSyncIndicator(text = 'Синхронизация...', isRealtime = false) {
+  const indicator = document.getElementById('sync-indicator');
+  indicator.textContent = text;
+  indicator.classList.add('show');
+  
+  if (isRealtime) {
+    indicator.classList.add('realtime');
+  }
+  
+  setTimeout(() => {
+    indicator.classList.remove('show');
+    if (isRealtime) {
+      indicator.classList.remove('realtime');
+    }
+  }, 3000);
+}
+
+function initializeDefaultData() {
+  data = {
+    folders: {
+      'shared': { id: 'shared', name: '📝 Общие сниппеты', parentId: null, expanded: true },
+      'lore': { id: 'lore', name: '📚 Лор база', parentId: null, expanded: true }
+    },
+    snippets: {
+      'welcome': { 
+        id: 'welcome', 
+        name: 'Добро пожаловать!', 
+        content: "🔥 Firebase Realtime Sync работает!\n\n✨ Особенности:\n• Мгновенная синхронизация между всеми устройствами\n• Видите изменения других пользователей в реальном времени\n• Работает через интернет\n• Автоматическое сохранение\n\n💡 Советы:\n• Координируйтесь с другими пользователями\n• Используйте описательные названия\n• Все изменения видны всем мгновенно\n\nУдачной работы! 🚀",
+        parentId: 'shared'
+      }
+    },
+    structure: ['shared', 'lore'],
+    loreProfiles: {
+      'lera-lynn': { name: 'Lera Lynn', content: '' },
+      'mirana': { name: 'Mirana', content: '' },
+      'moonlace': { name: 'Moonlace', content: '' },
+      'hina': { name: 'Hina', content: '' },
+      'misu': { name: 'Misu', content: '' },
+      'jane': { name: 'Jane', content: '' }
+    }
+  };
+}
+
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+// UI функции
+function renderTree() {
+  const tree = document.getElementById('tree');
+  tree.innerHTML = '';
+  
+  data.structure.forEach(id => {
+    if (data.folders[id]) {
+      tree.appendChild(renderFolder(id));
+    } else if (data.snippets[id]) {
+      tree.appendChild(renderSnippet(id));
+    }
+  });
+}
+
+function renderFolder(folderId) {
+  const folder = data.folders[folderId];
+  if (!folder) return document.createElement('div');
+  
+  const div = document.createElement('div');
+  
+  const folderEl = document.createElement('div');
+  folderEl.className = 'tree-item folder';
+  folderEl.onclick = () => toggleFolder(folderId);
+  folderEl.style.cursor = 'pointer';
+  folderEl.innerHTML = `
+    <span>
+      ${folder.expanded ? '▼' : '▶'} 📁 ${folder.name}
+    </span>
+    <div class="actions">
+      <button onclick="event.stopPropagation(); createFolder('${folderId}')">+📁</button>
+      <button onclick="event.stopPropagation(); createSnippet('${folderId}')">+📄</button>
+      <button onclick="event.stopPropagation(); renameFolder('${folderId}')">✏️</button>
+      <button onclick="event.stopPropagation(); deleteFolder('${folderId}')">🗑️</button>
+    </div>
+  `;
+  
+  div.appendChild(folderEl);
+  
+  if (folder.expanded) {
+    const children = getChildren(folderId);
+    if (children.length > 0) {
+      const childrenDiv = document.createElement('div');
+      childrenDiv.className = 'folder-children';
+      children.forEach(childId => {
+        if (data.folders[childId]) {
+          childrenDiv.appendChild(renderFolder(childId));
+        } else if (data.snippets[childId]) {
+          childrenDiv.appendChild(renderSnippet(childId));
+        }
+      });
+      div.appendChild(childrenDiv);
+    }
+  }
+  
+  return div;
+}
+
+function renderSnippet(snippetId) {
+  const snippet = data.snippets[snippetId];
+  if (!snippet) return document.createElement('div');
+  
+  const div = document.createElement('div');
+  div.className = `tree-item snippet ${currentSnippetId === snippetId ? 'selected' : ''}`;
+  div.onclick = () => selectSnippet(snippetId);
+  div.innerHTML = `
+    <span>📄 ${snippet.name}</span>
+    <div class="actions">
+      <button onclick="event.stopPropagation(); renameSnippet('${snippetId}')">✏️</button>
+      <button onclick="event.stopPropagation(); deleteSnippet('${snippetId}')">🗑️</button>
+    </div>
+  `;
+  return div;
+}
+
+function getChildren(parentId) {
+  const children = [];
+  
+  Object.values(data.folders).forEach(folder => {
+    if (folder.parentId === parentId) {
+      children.push(folder.id);
+    }
+  });
+  
+  Object.values(data.snippets).forEach(snippet => {
+    if (snippet.parentId === parentId) {
+      children.push(snippet.id);
+    }
+  });
+  
+  return children;
+}
+
+function toggleFolder(folderId) {
+  const folder = data.folders[folderId];
+  if (folder) {
+    folder.expanded = !folder.expanded;
+    saveToFirebase();
+    renderTree();
+  }
+}
+
+// CRUD операции
+function createFolder(parentId = null) {
+  currentAction = 'create-folder';
+  currentParentId = parentId;
+  showModal('Создать папку', 'Введите название папки');
+}
+
+function createSnippet(parentId = null) {
+  currentAction = 'create-snippet';
+  currentParentId = parentId;
+  showModal('Создать сниппет', 'Введите название сниппета');
+}
+
+function showModal(title, placeholder) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-input').placeholder = placeholder;
+  document.getElementById('modal-input').value = '';
+  document.getElementById('modal').style.display = 'block';
+  document.getElementById('modal-input').focus();
+}
+
+function closeModal() {
+  document.getElementById('modal').style.display = 'none';
+}
+
+function confirmModal() {
+  const name = document.getElementById('modal-input').value.trim();
+  if (!name) return;
+  
+  if (currentAction === 'create-folder') {
+    const id = generateId();
+    data.folders[id] = {
+      id: id,
+      name: name,
+      parentId: currentParentId,
+      expanded: true
+    };
+    
+    if (!currentParentId) {
+      data.structure.push(id);
+    }
+    
+  } else if (currentAction === 'create-snippet') {
+    const id = generateId();
+    data.snippets[id] = {
+      id: id,
+      name: name,
+      content: '',
+      parentId: currentParentId
+    };
+    
+    if (!currentParentId) {
+      data.structure.push(id);
+    }
+    
+    selectSnippet(id);
+  }
+  
+  saveToFirebase();
+  renderTree();
+  closeModal();
+}
+
+function renameFolder(folderId) {
+  const folder = data.folders[folderId];
+  if (!folder) return;
+  
+  const newName = prompt('Новое название папки:', folder.name);
+  if (newName && newName.trim()) {
+    folder.name = newName.trim();
+    saveToFirebase();
+    renderTree();
+  }
+}
+
+function renameSnippet(snippetId = null) {
+  const id = snippetId || currentSnippetId;
+  if (!id) return;
+  
+  const snippet = data.snippets[id];
+  if (!snippet) return;
+  
+  const newName = prompt('Новое название сниппета:', snippet.name);
+  if (newName && newName.trim()) {
+    snippet.name = newName.trim();
+    if (currentSnippetId === id) {
+      document.getElementById('snippet-title').textContent = snippet.name;
+    }
+    saveToFirebase();
+    renderTree();
+  }
+}
+
+function deleteFolder(folderId) {
+  if (!confirm('Удалить папку со всем содержимым?\n\n⚠️ Изменение увидят все пользователи!')) return;
+  
+  function deleteChildren(parentId) {
+    Object.keys(data.folders).forEach(id => {
+      if (data.folders[id].parentId === parentId) {
+        deleteChildren(id);
+        delete data.folders[id];
+      }
+    });
+    
+    Object.keys(data.snippets).forEach(id => {
+      if (data.snippets[id].parentId === parentId) {
+        delete data.snippets[id];
+      }
+    });
+  }
+  
+  deleteChildren(folderId);
+  delete data.folders[folderId];
+  data.structure = data.structure.filter(id => id !== folderId);
+  
+  saveToFirebase();
+  renderTree();
+  
+  if (currentSnippetId === folderId) {
+    showEmptyState();
+  }
+}
+
+function deleteSnippet(snippetId = null) {
+  const id = snippetId || currentSnippetId;
+  if (!id) return;
+  
+  if (!confirm('Удалить сниппет?\n\n⚠️ Изменение увидят все пользователи!')) return;
+  
+  delete data.snippets[id];
+  data.structure = data.structure.filter(structId => structId !== id);
+  
+  saveToFirebase();
+  renderTree();
+  
+  if (currentSnippetId === id) {
+    showEmptyState();
+  }
+}
+
+function deleteCurrentContent() {
+  if (currentSnippetId) {
+    deleteSnippet();
+  } else if (currentLoreCharacter && data.loreProfiles && data.loreProfiles[currentLoreCharacter]) {
+    if (confirm('Очистить лор анкету?')) {
+      data.loreProfiles[currentLoreCharacter].content = '';
+      document.getElementById('snippet-text').value = '';
+      saveToFirebase();
+    }
+  }
+}
+
+// Редактор
+function selectSnippet(snippetId) {
+  saveCurrentContent(false);
+  
+  currentSnippetId = snippetId;
+  currentLoreCharacter = null;
+  
+  const snippet = data.snippets[snippetId];
+  if (!snippet) return;
+  
+  document.getElementById('snippet-title').textContent = snippet.name;
+  document.getElementById('snippet-text').value = snippet.content;
+  
+  showEditor();
+  renderTree();
+  updateSaveStatus();
+  
+  setupAutoSave();
+}
+
+function selectLoreCharacter(charId) {
+  saveCurrentContent(false);
+  
+  currentLoreCharacter = charId;
+  currentSnippetId = null;
+  
+  // Убеждаемся что loreProfiles существует
+  if (!data.loreProfiles) {
+    data.loreProfiles = {};
+  }
+  
+  if (!data.loreProfiles[charId]) {
+    const charNames = {
+      'lera-lynn': 'Lera Lynn',
+      'mirana': 'Mirana', 
+      'moonlace': 'Moonlace',
+      'hina': 'Hina',
+      'misu': 'Misu',
+      'jane': 'Jane'
+    };
+    data.loreProfiles[charId] = { name: charNames[charId] || charId, content: '' };
+  }
+  
+  const character = data.loreProfiles[charId];
+  
+  document.getElementById('snippet-title').textContent = `📚 ${character.name}`;
+  document.getElementById('snippet-text').value = character.content;
+  
+  showEditor();
+  updateLoreSelection();
+  updateSaveStatus('Лор анкета');
+  
+  setupAutoSave();
+}
+
+function updateLoreSelection() {
+  document.querySelectorAll('.lore-character').forEach(el => {
+    el.classList.remove('selected');
+  });
+  
+  if (currentLoreCharacter) {
+    const selectedEl = document.querySelector(`[data-char="${currentLoreCharacter}"]`);
+    if (selectedEl) {
+      selectedEl.classList.add('selected');
+    }
+  }
+}
+
+function toggleLoreSection() {
+  const loreCharacters = document.getElementById('lore-characters');
+  const btn = document.querySelector('.lore-section-btn');
+  
+  loreExpanded = !loreExpanded;
+  
+  if (loreExpanded) {
+    loreCharacters.style.display = 'block';
+    btn.textContent = '📚 ЛОР АНКЕТ ▼';
+  } else {
+    loreCharacters.style.display = 'none';
+    btn.textContent = '📚 ЛОР АНКЕТ ▶';
+  }
+}
+
+function showEditor() {
+  document.getElementById('empty-state').style.display = 'none';
+  const editor = document.getElementById('snippet-editor');
+  if (editor) {
+    editor.style.display = 'block';
+  }
+}
+
+function showEmptyState() {
+  document.getElementById('empty-state').style.display = 'block';
+  const editor = document.getElementById('snippet-editor');
+  editor.style.display = 'none';
+  currentSnippetId = null;
+  currentLoreCharacter = null;
+  renderTree();
+  updateLoreSelection();
+  clearAutoSave();
+}
+
+function setupAutoSave() {
+  clearAutoSave();
+  
+  const textArea = document.getElementById('snippet-text');
+  textArea.addEventListener('input', function() {
+    clearAutoSave();
+    autoSaveTimer = setTimeout(() => {
+      saveCurrentContent(false);
+    }, 2000);
+    
+    updateSaveStatus(currentLoreCharacter ? 'Лор анкета' : 'Сниппет', '⏱️ Автосохранение через 2с...');
+  });
+}
+
+function clearAutoSave() {
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+  }
+}
+
+function saveCurrentContent(showNotification = true) {
+  const textArea = document.getElementById('snippet-text');
+  const content = textArea.value;
+  
+  if (currentSnippetId && data.snippets[currentSnippetId]) {
+    data.snippets[currentSnippetId].content = content;
+    updateSaveStatus('Сниппет', showNotification ? '💾 Сохранено' : '');
+  } else if (currentLoreCharacter && data.loreProfiles && data.loreProfiles[currentLoreCharacter]) {
+    data.loreProfiles[currentLoreCharacter].content = content;
+    updateSaveStatus('Лор анкета', showNotification ? '💾 Сохранено' : '');
+  }
+  
+  saveToFirebase(showNotification);
+  clearAutoSave();
+}
+
+function updateSaveStatus(type = 'Контент', status = '') {
+  document.getElementById('save-status').textContent = status ? `${type}: ${status}` : '';
+}
+
+// Утилиты
+function copyToClipboard() {
+  const textArea = document.getElementById('snippet-text');
+  textArea.select();
+  document.execCommand('copy');
+  
+  showSyncIndicator('📋 Скопировано в буфер обмена');
+}
+
+function searchItems() {
+  const query = document.getElementById('search').value.toLowerCase().trim();
+  const items = document.querySelectorAll('.tree-item');
+  
+  items.forEach(item => {
+    const text = item.textContent.toLowerCase();
+    const shouldShow = !query || text.includes(query);
+    item.style.display = shouldShow ? 'block' : 'none';
+  });
+}
+
+// Экспорт/импорт
+function exportData() {
+  const exportData = {
+    ...data,
+    exportDate: new Date().toISOString(),
+    version: '1.0'
+  };
+  
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
+    type: 'application/json' 
+  });
+  
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `snippets-export-${new Date().toISOString().split('T')[0]}.json`;
+  a.click();
+  
+  URL.revokeObjectURL(url);
+  showSyncIndicator('📦 Данные экспортированы');
+}
+
+function importData(input) {
+  const file = input.files[0];
+  if (!file) return;
+  
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const importedData = JSON.parse(e.target.result);
+      
+      if (confirm('Импортировать данные?\n\n⚠️ Текущие данные будут заменены!')) {
+        data = {
+          folders: importedData.folders || {},
+          snippets: importedData.snippets || {},
+          structure: importedData.structure || [],
+          loreProfiles: importedData.loreProfiles || {}
+        };
+        
+        saveToFirebase();
+        renderTree();
+        showEmptyState();
+        showSyncIndicator('📥 Данные импортированы');
+      }
+    } catch (error) {
+      alert('Ошибка импорта: неверный формат файла');
+    }
+  };
+  
+  reader.readAsText(file);
+  input.value = '';
+}
+
+// Функция clearAllData удалена
+
+function refreshFromFirebase() {
+  loadFromFirebase();
+  showSyncIndicator('🔄 Принудительное обновление');
+}
+
+// Обработчики клавиш
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.key === 's') {
+    e.preventDefault();
+    saveCurrentContent(true);
+  }
+});
+
+// Очистка при закрытии страницы
+window.addEventListener('beforeunload', function() {
+  saveCurrentContent(false);
+  
+  if (usersRef && currentUser) {
+    usersRef.child(currentUser).remove();
+  }
+});
+</script>
+</body>
+</html> 
