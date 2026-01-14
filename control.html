@@ -37295,6 +37295,66 @@
       overflow: hidden !important;
     }
   </style>
+  <style id="mobile-fixes">
+    /* Mobile viewport fixes */
+    #MobileContainer {
+      overflow-x: hidden !important;
+      width: 100vw !important;
+      max-width: 100vw !important;
+    }
+
+    #MobileContainer * {
+      max-width: 100vw;
+    }
+
+    /* Ensure pc-main doesn't overflow */
+    #MobileContainer .pc-main {
+      width: 100% !important;
+      max-width: 100vw !important;
+      overflow-x: hidden !important;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Equal width for control and chat sections */
+    #MobileContainer .pc-left,
+    #MobileContainer .pc-center {
+      width: 100% !important;
+      max-width: 100vw !important;
+      float: none !important;
+    }
+
+    /* Prevent page scrolling when dragging the intensity slider */
+    #MobileContainer .balls-wrap,
+    #MobileContainer .ball,
+    #MobileContainer .balls-inner,
+    #MobileContainer .ball-list,
+    #MobileContainer .drag-btn {
+      touch-action: none !important;
+    }
+
+    /* Ensure chat takes remaining height */
+    #MobileContainer .pc-center {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #MobileContainer .pc-center-top {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    /* Prevent body scroll on mobile */
+    body#MobileContainer {
+      overflow-x: hidden !important;
+      overscroll-behavior: none;
+    }
+
+    html:has(body#MobileContainer) {
+      overflow-x: hidden !important;
+    }
+  </style>
 </head>
 
 <body style="overflow: scroll; font-size: 12px;" id="PcContainer">
@@ -37848,6 +37908,7 @@
       window.addEventListener('resize', calcBounds);
     }
     function startDrag(e) {
+      e.preventDefault(); // Prevent page scrolling on mobile
       calcBounds(); // Recalculate on drag start
       dragging = true;
       sX = e.clientX || e.touches[0].clientX;
