@@ -37312,16 +37312,20 @@
       width: 100% !important;
       max-width: 100vw !important;
       overflow-x: hidden !important;
-      display: flex;
-      flex-direction: column;
+      display: flex !important;
+      flex-direction: column !important;
+      height: auto !important;
+      min-height: 100vh;
     }
 
-    /* Equal width for control and chat sections */
-    #MobileContainer .pc-left,
-    #MobileContainer .pc-center {
+    /* Control section with slider - fixed height */
+    #MobileContainer .pc-left {
       width: 100% !important;
       max-width: 100vw !important;
       float: none !important;
+      flex-shrink: 0 !important;
+      min-height: 350px !important;
+      height: auto !important;
     }
 
     /* Prevent page scrolling when dragging the intensity slider */
