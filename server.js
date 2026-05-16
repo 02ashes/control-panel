@@ -1581,6 +1581,8 @@ app.post('/api/cases/open', requireRegistration, async (req, res) => {
             newCase = ng.rows[0];
         }
 
+        io.to('cases-admin').emit('cases-changed', { reason: 'opened' });
+
         return res.json({
             ok: true,
             prize: {
@@ -1616,6 +1618,7 @@ app.post('/api/cases/grant', requireRegistration, requireLogAccess, async (req, 
             );
         }
         console.log(`Cases granted: ${n}x tier ${t} to ${workerNickname} by ${req.user.nickname}`);
+        io.to('user:' + workerNickname).emit('cases-changed', { reason: 'granted' });
         return res.json({ ok: true, granted: n });
     } catch (err) {
         console.error('Case grant error:', err);
@@ -1646,10 +1649,12 @@ app.post('/api/cases/deliver', requireRegistration, requireLogAccess, async (req
     try {
         const r = await pool.query(
             `UPDATE case_openings SET delivered = true, delivered_by = $1, delivered_at = NOW()
-             WHERE id = $2 AND delivered = false RETURNING id`,
+             WHERE id = $2 AND delivered = false RETURNING id, worker_nickname`,
             [req.user.nickname, openingId]
         );
         if (r.rowCount === 0) return res.status(404).json({ error: 'not_found_or_done' });
+        io.to('user:' + r.rows[0].worker_nickname).emit('cases-changed', { reason: 'delivered' });
+        io.to('cases-admin').emit('cases-changed', { reason: 'delivered' });
         return res.json({ ok: true });
     } catch (err) {
         console.error('Case deliver error:', err);
@@ -1858,8 +1863,14 @@ io.on('connection', (socket) => {
         if (typeof nickname === 'string' && nickname.trim()) {
             onlineUsers.add(nickname);
             socket.data.nickname = nickname;
+            socket.join('user:' + nickname);
             io.emit('online-update', Array.from(onlineUsers));
         }
+    });
+
+    // Подписка админа на живые обновления кейсов
+    socket.on('cases-admin-join', () => {
+        socket.join('cases-admin');
     });
 
     socket.on('join-session', (sessionId, role) => {
