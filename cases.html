@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎁 Кейсы</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #0e1015;
+            --card: #181b22;
+            --card2: #1f232d;
+            --line: #2a2f3c;
+            --text: #e7e9ee;
+            --muted: #939bb0;
+            --accent: #ff3d8b;
+            --accent2: #9b51e0;
+            --common: #8b93a7;
+            --rare: #b14aff;
+            --legendary: #ffc23c;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding-bottom: 60px;
+        }
+
+        a { color: var(--accent); }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 22px;
+            border-bottom: 1px solid var(--line);
+            background: #12141a;
+            position: sticky;
+            top: 0;
+            z-index: 20;
+        }
+
+        .brand { font-size: 1.4rem; font-weight: 800; }
+
+        .who { font-size: .9rem; color: var(--muted); }
+
+        .who b { color: var(--text); }
+
+        .wrap { max-width: 1080px; margin: 0 auto; padding: 22px; }
+
+        section {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        h2 { font-size: 1.15rem; margin-bottom: 14px; }
+
+        h3 { font-size: 1rem; margin: 18px 0 10px; color: var(--muted); }
+
+        .muted { color: var(--muted); font-size: .9rem; }
+
+        .btn {
+            display: inline-block;
+            background: linear-gradient(45deg, var(--accent), var(--accent2));
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            padding: 11px 20px;
+            font-family: inherit;
+            font-weight: 700;
+            font-size: .95rem;
+            cursor: pointer;
+            text-decoration: none;
+            transition: transform .12s ease, opacity .12s ease;
+        }
+
+        .btn:hover:not(:disabled) { transform: translateY(-2px); }
+
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+        .btn.small { padding: 7px 13px; font-size: .85rem; border-radius: 8px; }
+
+        .btn.grey { background: #2c313d; }
+
+        .btn.danger { background: #c0392b; }
+
+        input, select {
+            background: var(--card2);
+            border: 1px solid var(--line);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 9px 11px;
+            font-family: inherit;
+            font-size: .9rem;
+        }
+
+        input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+        /* ===== Gate ===== */
+        .gate {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 22px;
+        }
+
+        .gate-card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 40px;
+            text-align: center;
+            max-width: 420px;
+        }
+
+        .gate-card h1 { font-size: 2rem; margin-bottom: 12px; }
+
+        .gate-card p { color: var(--muted); margin-bottom: 22px; }
+
+        /* ===== Cases grid ===== */
+        .tier-block { margin-bottom: 18px; }
+
+        .cases-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+
+        .case-card {
+            width: 180px;
+            background: linear-gradient(170deg, var(--card2), #14171f);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 18px;
+            text-align: center;
+            position: relative;
+        }
+
+        .case-card.t1 { border-top: 4px solid #5a8dee; }
+        .case-card.t2 { border-top: 4px solid var(--rare); }
+        .case-card.t3 { border-top: 4px solid var(--legendary); }
+
+        .case-emoji { font-size: 3.4rem; line-height: 1; margin-bottom: 8px; }
+
+        .case-title { font-weight: 700; margin-bottom: 4px; }
+
+        .case-sub { font-size: .78rem; color: var(--muted); margin-bottom: 12px; }
+
+        .empty { color: var(--muted); font-size: .92rem; padding: 8px 0; }
+
+        /* ===== Prizes list ===== */
+        .prize-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 11px 13px;
+            background: var(--card2);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
+
+        .prize-row .p-icon { font-size: 1.6rem; }
+
+        .prize-row .p-main { flex: 1; }
+
+        .prize-row .p-name { font-weight: 600; }
+
+        .prize-row .p-meta { font-size: .78rem; color: var(--muted); }
+
+        .badge {
+            font-size: .72rem;
+            padding: 3px 8px;
+            border-radius: 20px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .badge.wait { background: #4a3a12; color: #ffce6b; }
+
+        .badge.done { background: #163a22; color: #6bdc91; }
+
+        .tier-tag {
+            font-size: .72rem;
+            padding: 3px 8px;
+            border-radius: 6px;
+            background: #2c313d;
+            color: var(--muted);
+        }
+
+        /* ===== Reel / opening overlay ===== */
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(6, 7, 10, .94);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            padding: 18px;
+        }
+
+        .open-box {
+            width: 100%;
+            max-width: 900px;
+            text-align: center;
+        }
+
+        .open-title { font-size: 1.2rem; font-weight: 700; margin-bottom: 16px; }
+
+        .reel-viewport {
+            position: relative;
+            overflow: hidden;
+            height: 172px;
+            background: #07090d;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+        }
+
+        .reel-strip {
+            display: flex;
+            height: 100%;
+            align-items: center;
+            will-change: transform;
+        }
+
+        .ri {
+            flex: 0 0 150px;
+            width: 150px;
+            height: 150px;
+            box-sizing: border-box;
+            margin: 0 5px;
+            background: linear-gradient(170deg, #1d212b, #12151c);
+            border: 1px solid var(--line);
+            border-top-width: 4px;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 8px;
+        }
+
+        .ri-icon { font-size: 2.8rem; line-height: 1; }
+
+        .ri-name { font-size: .8rem; font-weight: 600; text-align: center; }
+
+        .rarity-common { border-top-color: var(--common); }
+        .rarity-rare { border-top-color: var(--rare); }
+        .rarity-legendary { border-top-color: var(--legendary); }
+
+        .reel-marker {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 50%;
+            width: 3px;
+            margin-left: -1.5px;
+            background: var(--accent);
+            box-shadow: 0 0 14px var(--accent);
+            z-index: 5;
+        }
+
+        .reel-marker::before,
+        .reel-marker::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            border-left: 9px solid transparent;
+            border-right: 9px solid transparent;
+        }
+
+        .reel-marker::before { top: 0; border-top: 12px solid var(--accent); }
+
+        .reel-marker::after { bottom: 0; border-bottom: 12px solid var(--accent); }
+
+        .result-card {
+            margin-top: 20px;
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-top: 4px solid var(--common);
+            border-radius: 14px;
+            padding: 22px;
+            display: inline-block;
+            min-width: 280px;
+        }
+
+        .result-card.rarity-rare { border-top-color: var(--rare); }
+        .result-card.rarity-legendary { border-top-color: var(--legendary); }
+
+        .rc-title { font-size: .95rem; color: var(--muted); }
+
+        .rc-icon { font-size: 3.6rem; margin: 6px 0; }
+
+        .rc-name { font-size: 1.4rem; font-weight: 800; }
+
+        .rc-msg { font-size: .85rem; color: var(--muted); margin-top: 8px; max-width: 320px; }
+
+        #closeOpenBtn { margin-top: 18px; }
+
+        /* ===== Admin ===== */
+        .admin-tabs {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+
+        .tab {
+            background: var(--card2);
+            border: 1px solid var(--line);
+            color: var(--muted);
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-family: inherit;
+            font-weight: 600;
+            font-size: .85rem;
+            cursor: pointer;
+        }
+
+        .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+        .row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .field { display: flex; flex-direction: column; gap: 4px; }
+
+        .field label { font-size: .76rem; color: var(--muted); }
+
+        .editor-prize {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            background: var(--card2);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 8px;
+        }
+
+        .editor-prize .ico { width: 56px; text-align: center; }
+
+        .editor-prize .nm { flex: 1; min-width: 150px; }
+
+        .weight-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 7px 10px;
+            background: var(--card2);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            margin-bottom: 6px;
+        }
+
+        .weight-row .wn { flex: 1; }
+
+        .weight-row input { width: 80px; }
+
+        .chance { font-size: .76rem; color: var(--muted); width: 56px; text-align: right; }
+
+        .status { font-size: .85rem; margin-left: 6px; }
+
+        .status.ok { color: #6bdc91; }
+
+        .status.err { color: #ff7a7a; }
+
+        .confetti-particle {
+            position: fixed;
+            width: 11px;
+            height: 11px;
+            top: -12px;
+            pointer-events: none;
+            z-index: 200;
+        }
+
+        @keyframes fall {
+            to { transform: translateY(105vh) rotate(680deg); opacity: 0; }
+        }
+
+        @media (max-width: 560px) {
+            .wrap { padding: 14px; }
+            section { padding: 15px; }
+            .case-card { width: 100%; }
+        }
+    </style>
+</head>
+
+<body>
+    <audio id="spinSound" src="spin.mp3" loop preload="auto"></audio>
+    <audio id="winSound" src="win.mp3" preload="auto"></audio>
+
+    <!-- Заглушка для незалогиненных -->
+    <div class="gate" id="gate" style="display:none;">
+        <div class="gate-card">
+            <h1>🎁 Кейсы</h1>
+            <p>Сначала зайди в панель воркера под своим ником, потом возвращайся сюда. Кейсы откроются автоматически.</p>
+            <a class="btn" href="/admin">Открыть панель</a>
+        </div>
+    </div>
+
+    <!-- Основное приложение -->
+    <div id="app" style="display:none;">
+        <header>
+            <div class="brand">🎁 Кейсы</div>
+            <div class="who">Ты: <b id="whoName"></b> &nbsp;·&nbsp; <a href="/admin">панель</a></div>
+        </header>
+
+        <div class="wrap">
+            <section>
+                <h2>Мои кейсы</h2>
+                <div id="casesArea"></div>
+            </section>
+
+            <section>
+                <h2>Мои призы</h2>
+                <div id="prizesArea"></div>
+            </section>
+
+            <!-- Админка -->
+            <section id="adminPanel" style="display:none;">
+                <h2>Админка</h2>
+                <div class="admin-tabs">
+                    <button class="tab active" data-tab="grant">Выдать кейс</button>
+                    <button class="tab" data-tab="pending">Очередь выдачи</button>
+                    <button class="tab" data-tab="editor">Редактор призов</button>
+                    <button class="tab" data-tab="log">Лог</button>
+                </div>
+
+                <div class="tab-panel" id="tab-grant">
+                    <div class="row">
+                        <div class="field">
+                            <label>Воркер</label>
+                            <select id="grantWorker"></select>
+                        </div>
+                        <div class="field">
+                            <label>Тир</label>
+                            <select id="grantTier">
+                                <option value="1">Тир 1</option>
+                                <option value="2">Тир 2</option>
+                                <option value="3">Тир 3</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Сколько</label>
+                            <input type="number" id="grantCount" value="1" min="1" max="50" style="width:80px;">
+                        </div>
+                        <div class="field">
+                            <label>&nbsp;</label>
+                            <button class="btn" id="grantBtn">Выдать</button>
+                        </div>
+                        <span class="status" id="grantStatus"></span>
+                    </div>
+                </div>
+
+                <div class="tab-panel" id="tab-pending" style="display:none;">
+                    <div class="row">
+                        <button class="btn small grey" id="pendingRefresh">Обновить</button>
+                        <span class="muted">Жмёшь «Выдал» после того, как отдал приз воркеру в Телеграм.</span>
+                    </div>
+                    <div id="pendingArea"></div>
+                </div>
+
+                <div class="tab-panel" id="tab-editor" style="display:none;">
+                    <h3>Призы</h3>
+                    <div id="prizeEditor"></div>
+                    <button class="btn small" id="addPrizeBtn">+ Добавить приз</button>
+                    <h3>Веса по тирам (шанс выпадения)</h3>
+                    <div id="weightEditor"></div>
+                </div>
+
+                <div class="tab-panel" id="tab-log" style="display:none;">
+                    <div class="row">
+                        <button class="btn small grey" id="logRefresh">Обновить</button>
+                    </div>
+                    <div id="logArea"></div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Оверлей открытия кейса -->
+    <div class="overlay" id="openOverlay" style="display:none;">
+        <div class="open-box">
+            <div class="open-title">Открываем <span id="openTierName"></span></div>
+            <div class="reel-viewport" id="reelViewport">
+                <div class="reel-marker"></div>
+                <div class="reel-strip" id="reelStrip"></div>
+            </div>
+            <div id="resultCard" class="result-card" style="display:none;"></div>
+            <div><button class="btn" id="closeOpenBtn" style="display:none;">Забрать</button></div>
+        </div>
+    </div>
+
+    <script>
+        // ===== Константы ленты =====
+        const STRIP_LEN = 64;
+        const WIN_INDEX = 56;
+        const CELL = 160; // ширина ячейки: item 150 + margin 5*2
+        const SPIN_MS = 6200;
+
+        const TIER_EMOJI = { 1: '📦', 2: '🎁', 3: '🧰' };
+
+        const NICK = localStorage.getItem('nickname') || '';
+        let ROLE = 'reader';
+        let opening = false;
+
+        const spinSound = document.getElementById('spinSound');
+        const winSound = document.getElementById('winSound');
+        const openOverlay = document.getElementById('openOverlay');
+        const closeOpenBtn = document.getElementById('closeOpenBtn');
+
+        function escapeHtml(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function fmtTime(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            if (isNaN(d)) return '';
+            const p = n => String(n).padStart(2, '0');
+            return p(d.getDate()) + '.' + p(d.getMonth() + 1) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+        }
+
+        // ===== API helper =====
+        async function api(path, method, body) {
+            const opts = { method: method || 'GET', headers: { 'X-Nickname': NICK } };
+            if (body) {
+                opts.headers['Content-Type'] = 'application/json';
+                opts.body = JSON.stringify(body);
+            }
+            const res = await fetch(path, opts);
+            const data = await res.json().catch(() => null);
+            if (!res.ok) {
+                const err = new Error((data && data.error) || 'request_failed');
+                err.status = res.status;
+                err.data = data;
+                throw err;
+            }
+            return data;
+        }
+
+        function showGate() {
+            document.getElementById('gate').style.display = 'flex';
+            document.getElementById('app').style.display = 'none';
+        }
+
+        // ===== Инициализация =====
+        async function init() {
+            if (!NICK) { showGate(); return; }
+            let auth;
+            try { auth = await api('/api/auth/check'); }
+            catch (e) { showGate(); return; }
+            if (!auth || !auth.ok) { showGate(); return; }
+
+            ROLE = auth.role || 'reader';
+            document.getElementById('whoName').textContent = auth.nickname || NICK;
+            document.getElementById('app').style.display = 'block';
+
+            if (ROLE === 'admin') {
+                document.getElementById('adminPanel').style.display = 'block';
+                initAdmin();
+            }
+            loadInventory();
+        }
+
+        // ===== Инвентарь воркера =====
+        async function loadInventory() {
+            let data;
+            try { data = await api('/api/cases/inventory'); }
+            catch (e) { return; }
+            renderCases(data.cases || []);
+            renderPrizes(data.prizes || []);
+        }
+
+        function renderCases(cases) {
+            const area = document.getElementById('casesArea');
+            if (!cases.length) {
+                area.innerHTML = '<div class="empty">Кейсов пока нет. Сделай продажу и получишь кейс 😈</div>';
+                return;
+            }
+            const byTier = { 1: [], 2: [], 3: [] };
+            cases.forEach(c => { if (byTier[c.tier]) byTier[c.tier].push(c); });
+            let html = '';
+            [1, 2, 3].forEach(t => {
+                if (!byTier[t].length) return;
+                html += '<div class="tier-block"><h3>Тир ' + t + '</h3><div class="cases-grid">';
+                byTier[t].forEach(c => {
+                    html += '<div class="case-card t' + t + '">'
+                        + '<div class="case-emoji">' + TIER_EMOJI[t] + '</div>'
+                        + '<div class="case-title">Кейс Тир ' + t + '</div>'
+                        + '<div class="case-sub">' + (c.source === 'case' ? 'выпал из кейса' : 'выдан админом') + '</div>'
+                        + '<button class="btn small" onclick="openCase(' + c.id + ',' + t + ')">Открыть</button>'
+                        + '</div>';
+                });
+                html += '</div></div>';
+            });
+            area.innerHTML = html;
+        }
+
+        function renderPrizes(prizes) {
+            const area = document.getElementById('prizesArea');
+            if (!prizes.length) {
+                area.innerHTML = '<div class="empty">Призов пока нет. Открой кейс 🥰</div>';
+                return;
+            }
+            area.innerHTML = prizes.map(p => {
+                const isTask = p.prize_kind === 'task';
+                const badge = p.delivered
+                    ? '<span class="badge done">' + (isTask ? 'зачтено' : 'выдан') + '</span>'
+                    : '<span class="badge wait">' + (isTask ? 'нужно сделать' : 'ждёт выдачи') + '</span>';
+                return '<div class="prize-row">'
+                    + '<div class="p-icon">' + escapeHtml(p.prize_icon || '🎁') + '</div>'
+                    + '<div class="p-main"><div class="p-name">' + escapeHtml(p.prize_name) + '</div>'
+                    + '<div class="p-meta">' + (isTask ? 'Задание' : 'Приз') + ' · ' + fmtTime(p.opened_at) + '</div></div>'
+                    + '<span class="tier-tag">Тир ' + p.tier + '</span>'
+                    + badge + '</div>';
+            }).join('');
+        }
+
+        // ===== Открытие кейса =====
+        async function openCase(grantId, tier) {
+            if (opening) return;
+            opening = true;
+            document.getElementById('openTierName').textContent = 'Тир ' + tier;
+            document.getElementById('resultCard').style.display = 'none';
+            closeOpenBtn.style.display = 'none';
+            openOverlay.style.display = 'flex';
+
+            let data;
+            try { data = await api('/api/cases/open', 'POST', { grantId: grantId }); }
+            catch (e) {
+                opening = false;
+                openOverlay.style.display = 'none';
+                alert('Не удалось открыть кейс. Обнови страницу и попробуй снова.');
+                loadInventory();
+                return;
+            }
+
+            buildReel(data.pool || [], data.prize);
+            runReel(function () {
+                showResult(data.prize, data.newCase);
+                opening = false;
+            });
+        }
+
+        function buildReel(pool, prize) {
+            const strip = document.getElementById('reelStrip');
+            strip.style.transition = 'none';
+            strip.style.transform = 'translateX(0px)';
+            strip.innerHTML = '';
+            const safePool = pool.length ? pool : [prize];
+            for (let i = 0; i < STRIP_LEN; i++) {
+                const p = (i === WIN_INDEX) ? prize : safePool[Math.floor(Math.random() * safePool.length)];
+                const el = document.createElement('div');
+                el.className = 'ri rarity-' + (p.rarity || 'common');
+                el.innerHTML = '<div class="ri-icon">' + escapeHtml(p.icon || '🎁') + '</div>'
+                    + '<div class="ri-name">' + escapeHtml(p.name) + '</div>';
+                strip.appendChild(el);
+            }
+        }
+
+        function runReel(done) {
+            const strip = document.getElementById('reelStrip');
+            const vpW = document.getElementById('reelViewport').clientWidth;
+            const jitter = Math.random() * 100 - 50;
+            const finalX = vpW / 2 - (WIN_INDEX * CELL + CELL / 2) + jitter;
+
+            strip.offsetHeight; // форс reflow
+            try { spinSound.currentTime = 0; spinSound.play(); } catch (e) {}
+
+            requestAnimationFrame(function () {
+                requestAnimationFrame(function () {
+                    strip.style.transition = 'transform ' + SPIN_MS + 'ms cubic-bezier(.10,.72,.18,1)';
+                    strip.style.transform = 'translateX(' + finalX + 'px)';
+                });
+            });
+
+            let finished = false;
+            function onEnd() {
+                if (finished) return;
+                finished = true;
+                strip.removeEventListener('transitionend', onEnd);
+                try { spinSound.pause(); spinSound.currentTime = 0; } catch (e) {}
+                try { winSound.currentTime = 0; winSound.play(); } catch (e) {}
+                done();
+            }
+            strip.addEventListener('transitionend', onEnd);
+            setTimeout(onEnd, SPIN_MS + 500); // фолбэк, если transitionend не сработал
+        }
+
+        function showResult(prize, newCase) {
+            const card = document.getElementById('resultCard');
+            let title, msg;
+            if (prize.kind === 'case') {
+                title = 'Выпал кейс!';
+                msg = 'Кейс уже в твоём инвентаре, можно сразу крутить.';
+            } else if (prize.kind === 'task') {
+                title = 'Тебе выпало задание';
+                msg = 'Выполни его, админ зачтёт в разделе «Мои призы».';
+            } else {
+                title = 'Тебе выпало';
+                msg = 'Админ выдаст приз. Следи за разделом «Мои призы».';
+            }
+            card.className = 'result-card rarity-' + (prize.rarity || 'common');
+            card.innerHTML = '<div class="rc-title">' + title + '</div>'
+                + '<div class="rc-icon">' + escapeHtml(prize.icon || '🎁') + '</div>'
+                + '<div class="rc-name">' + escapeHtml(prize.name) + '</div>'
+                + '<div class="rc-msg">' + msg + '</div>';
+            card.style.display = 'block';
+            closeOpenBtn.style.display = 'inline-block';
+            if (prize.rarity === 'legendary' || prize.rarity === 'rare') confetti(prize.rarity === 'legendary' ? 110 : 60);
+        }
+
+        closeOpenBtn.addEventListener('click', function () {
+            openOverlay.style.display = 'none';
+            loadInventory();
+        });
+
+        function confetti(count) {
+            const colors = ['#ff3d8b', '#9b51e0', '#ffc23c', '#5a8dee', '#6bdc91'];
+            const frag = document.createDocumentFragment();
+            const els = [];
+            for (let i = 0; i < count; i++) {
+                const c = document.createElement('div');
+                c.className = 'confetti-particle';
+                c.style.left = Math.random() * 100 + 'vw';
+                c.style.background = colors[Math.floor(Math.random() * colors.length)];
+                c.style.borderRadius = Math.random() > .5 ? '50%' : '2px';
+                c.style.animation = 'fall ' + (2.6 + Math.random() * 1.6) + 's linear forwards';
+                c.style.animationDelay = (Math.random() * 0.4) + 's';
+                els.push(c);
+                frag.appendChild(c);
+            }
+            document.body.appendChild(frag);
+            setTimeout(function () { els.forEach(e => e.remove()); }, 4800);
+        }
+
+        // ===== Админка =====
+        let adminConfig = { prizes: [], tiers: { 1: [], 2: [], 3: [] } };
+
+        function initAdmin() {
+            document.querySelectorAll('.admin-tabs .tab').forEach(function (tab) {
+                tab.addEventListener('click', function () {
+                    document.querySelectorAll('.admin-tabs .tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+                    document.getElementById('tab-' + tab.dataset.tab).style.display = 'block';
+                });
+            });
+
+            document.getElementById('grantBtn').addEventListener('click', grantCases);
+            document.getElementById('pendingRefresh').addEventListener('click', loadPending);
+            document.getElementById('logRefresh').addEventListener('click', loadLog);
+            document.getElementById('addPrizeBtn').addEventListener('click', function () {
+                renderPrizeEditorRow(null, true);
+            });
+
+            loadWorkers();
+            loadPending();
+            loadConfig();
+            loadLog();
+        }
+
+        async function loadWorkers() {
+            try {
+                const data = await api('/api/users');
+                const sel = document.getElementById('grantWorker');
+                sel.innerHTML = (data.users || [])
+                    .map(u => '<option value="' + escapeHtml(u.nickname) + '">' + escapeHtml(u.nickname)
+                        + ' (' + escapeHtml(u.role) + ')</option>').join('');
+            } catch (e) {}
+        }
+
+        async function grantCases() {
+            const st = document.getElementById('grantStatus');
+            const worker = document.getElementById('grantWorker').value;
+            const tier = parseInt(document.getElementById('grantTier').value);
+            const count = parseInt(document.getElementById('grantCount').value) || 1;
+            if (!worker) { st.className = 'status err'; st.textContent = 'Выбери воркера'; return; }
+            try {
+                const r = await api('/api/cases/grant', 'POST', { workerNickname: worker, tier: tier, count: count });
+                st.className = 'status ok';
+                st.textContent = 'Выдано: ' + r.granted + ' шт.';
+            } catch (e) {
+                st.className = 'status err';
+                st.textContent = 'Ошибка: ' + (e.data && e.data.error || e.message);
+            }
+        }
+
+        async function loadPending() {
+            const area = document.getElementById('pendingArea');
+            let data;
+            try { data = await api('/api/cases/pending'); }
+            catch (e) { area.innerHTML = '<div class="empty">Ошибка загрузки</div>'; return; }
+            const list = data.pending || [];
+            if (!list.length) {
+                area.innerHTML = '<div class="empty">Очередь пуста, никому ничего не должен 🥰</div>';
+                return;
+            }
+            area.innerHTML = list.map(function (p) {
+                const isTask = p.prize_kind === 'task';
+                return '<div class="prize-row">'
+                    + '<div class="p-icon">' + escapeHtml(p.prize_icon || '🎁') + '</div>'
+                    + '<div class="p-main"><div class="p-name">' + escapeHtml(p.worker_nickname)
+                    + ' &mdash; ' + escapeHtml(p.prize_name) + '</div>'
+                    + '<div class="p-meta">' + (isTask ? 'Задание' : 'Приз') + ' · Тир ' + p.tier
+                    + ' · ' + fmtTime(p.opened_at) + '</div></div>'
+                    + '<button class="btn small" onclick="deliverPrize(' + p.id + ')">'
+                    + (isTask ? 'Зачтено' : 'Выдал') + '</button></div>';
+            }).join('');
+        }
+
+        async function deliverPrize(openingId) {
+            try {
+                await api('/api/cases/deliver', 'POST', { openingId: openingId });
+                loadPending();
+            } catch (e) {
+                alert('Ошибка: ' + (e.data && e.data.error || e.message));
+            }
+        }
+
+        async function loadConfig() {
+            try { adminConfig = await api('/api/cases/admin/config'); }
+            catch (e) { return; }
+            renderPrizeEditor();
+            renderWeightEditor();
+        }
+
+        const KIND_OPTS = [['reward', 'Приз (выдаёт админ)'], ['task', 'Задание воркеру'], ['case', 'Кейс']];
+        const RARITY_OPTS = [['common', 'Обычный'], ['rare', 'Редкий'], ['legendary', 'Легендарный']];
+
+        function selectHtml(opts, val) {
+            return opts.map(o => '<option value="' + o[0] + '"' + (o[0] === val ? ' selected' : '') + '>'
+                + o[1] + '</option>').join('');
+        }
+
+        function renderPrizeEditor() {
+            document.getElementById('prizeEditor').innerHTML = '';
+            adminConfig.prizes.forEach(p => renderPrizeEditorRow(p, false));
+        }
+
+        function renderPrizeEditorRow(p, isNew) {
+            p = p || { id: null, name: '', kind: 'reward', case_tier: null, icon: '🎁', rarity: 'common', is_active: true };
+            const wrap = document.createElement('div');
+            wrap.className = 'editor-prize';
+            wrap.innerHTML =
+                '<div class="field"><label>Иконка</label><input class="ico ep-icon" value="' + escapeHtml(p.icon || '🎁') + '"></div>'
+                + '<div class="field nm"><label>Название</label><input class="ep-name" value="' + escapeHtml(p.name) + '"></div>'
+                + '<div class="field"><label>Тип</label><select class="ep-kind">' + selectHtml(KIND_OPTS, p.kind) + '</select></div>'
+                + '<div class="field"><label>Тир кейса</label><select class="ep-ctier">'
+                + '<option value="">—</option>'
+                + [1, 2, 3].map(t => '<option value="' + t + '"' + (p.case_tier === t ? ' selected' : '') + '>Тир ' + t + '</option>').join('')
+                + '</select></div>'
+                + '<div class="field"><label>Редкость</label><select class="ep-rarity">' + selectHtml(RARITY_OPTS, p.rarity) + '</select></div>'
+                + '<div class="field"><label>Активен</label><input type="checkbox" class="ep-active"' + (p.is_active !== false ? ' checked' : '') + '></div>'
+                + '<div class="field"><label>&nbsp;</label><button class="btn small ep-save">Сохранить</button></div>'
+                + (p.id ? '<div class="field"><label>&nbsp;</label><button class="btn small danger ep-del">Удалить</button></div>' : '');
+            wrap.dataset.id = p.id || '';
+
+            wrap.querySelector('.ep-save').addEventListener('click', function () {
+                savePrize(wrap);
+            });
+            const delBtn = wrap.querySelector('.ep-del');
+            if (delBtn) delBtn.addEventListener('click', function () {
+                if (confirm('Удалить приз «' + p.name + '»? Он пропадёт из всех тиров.')) deletePrize(p.id);
+            });
+
+            const ed = document.getElementById('prizeEditor');
+            if (isNew) ed.appendChild(wrap); else ed.appendChild(wrap);
+        }
+
+        async function savePrize(wrap) {
+            const body = {
+                id: wrap.dataset.id ? parseInt(wrap.dataset.id) : null,
+                name: wrap.querySelector('.ep-name').value,
+                kind: wrap.querySelector('.ep-kind').value,
+                caseTier: wrap.querySelector('.ep-ctier').value || null,
+                icon: wrap.querySelector('.ep-icon').value,
+                rarity: wrap.querySelector('.ep-rarity').value,
+                isActive: wrap.querySelector('.ep-active').checked
+            };
+            try {
+                await api('/api/cases/admin/prize', 'POST', body);
+                loadConfig();
+            } catch (e) {
+                alert('Ошибка: ' + (e.data && e.data.error || e.message));
+            }
+        }
+
+        async function deletePrize(id) {
+            try {
+                await api('/api/cases/admin/prize/delete', 'POST', { id: id });
+                loadConfig();
+            } catch (e) {
+                alert('Ошибка: ' + (e.data && e.data.error || e.message));
+            }
+        }
+
+        function renderWeightEditor() {
+            const area = document.getElementById('weightEditor');
+            area.innerHTML = '';
+            [1, 2, 3].forEach(function (tier) {
+                const weightOf = {};
+                (adminConfig.tiers[tier] || []).forEach(tp => { weightOf[tp.prizeId] = tp.weight; });
+                const active = adminConfig.prizes.filter(p => p.is_active !== false);
+                const total = active.reduce((s, p) => s + (parseInt(weightOf[p.id]) || 0), 0);
+
+                const block = document.createElement('div');
+                block.className = 'tier-block';
+                let rows = '<h3>Тир ' + tier + '</h3>';
+                active.forEach(function (p) {
+                    const w = weightOf[p.id] || 0;
+                    const chance = total > 0 && w > 0 ? Math.round(w / total * 100) + '%' : '—';
+                    rows += '<div class="weight-row" data-prize="' + p.id + '">'
+                        + '<span>' + escapeHtml(p.icon || '🎁') + '</span>'
+                        + '<span class="wn">' + escapeHtml(p.name) + '</span>'
+                        + '<span class="chance">' + chance + '</span>'
+                        + '<input type="number" class="we-input" min="0" value="' + w + '">'
+                        + '</div>';
+                });
+                rows += '<button class="btn small" data-savetier="' + tier + '">Сохранить Тир ' + tier + '</button>';
+                block.innerHTML = rows;
+                block.querySelector('[data-savetier]').addEventListener('click', function () {
+                    saveTierWeights(tier, block);
+                });
+                area.appendChild(block);
+            });
+        }
+
+        async function saveTierWeights(tier, block) {
+            const rows = block.querySelectorAll('.weight-row');
+            const tasks = [];
+            rows.forEach(function (r) {
+                const prizeId = parseInt(r.dataset.prize);
+                const weight = parseInt(r.querySelector('.we-input').value) || 0;
+                tasks.push(api('/api/cases/admin/tier-prize', 'POST', { tier: tier, prizeId: prizeId, weight: weight }));
+            });
+            try {
+                await Promise.all(tasks);
+                loadConfig();
+            } catch (e) {
+                alert('Ошибка сохранения весов: ' + (e.data && e.data.error || e.message));
+            }
+        }
+
+        async function loadLog() {
+            const area = document.getElementById('logArea');
+            let data;
+            try { data = await api('/api/cases/admin/log'); }
+            catch (e) { area.innerHTML = '<div class="empty">Ошибка загрузки</div>'; return; }
+            const log = data.log || [];
+            if (!log.length) {
+                area.innerHTML = '<div class="empty">Открытий пока не было</div>';
+                return;
+            }
+            area.innerHTML = log.map(function (l) {
+                return '<div class="prize-row">'
+                    + '<div class="p-icon">' + escapeHtml(l.prize_icon || '🎁') + '</div>'
+                    + '<div class="p-main"><div class="p-name">' + escapeHtml(l.worker_nickname)
+                    + ' &mdash; ' + escapeHtml(l.prize_name) + '</div>'
+                    + '<div class="p-meta">Тир ' + l.tier + ' · ' + fmtTime(l.opened_at) + '</div></div>'
+                    + '<span class="tier-tag">' + (l.prize_kind === 'case' ? 'кейс'
+                        : l.prize_kind === 'task' ? 'задание' : 'приз') + '</span>'
+                    + '</div>';
+            }).join('');
+        }
+
+        init();
+    </script>
+</body>
+
+</html>

@@ -156,10 +156,71 @@ pool.connect((err, client, release) => {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_snippet_logs_user ON snippet_logs(user_nickname)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_snippet_logs_timestamp ON snippet_logs(timestamp)`);
 
+        // ===== Таблицы системы кейсов =====
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS case_prizes (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'reward',
+                case_tier INT,
+                icon TEXT DEFAULT '🎁',
+                rarity TEXT NOT NULL DEFAULT 'common',
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS case_tier_prizes (
+                id SERIAL PRIMARY KEY,
+                tier INT NOT NULL,
+                prize_id INT NOT NULL REFERENCES case_prizes(id) ON DELETE CASCADE,
+                weight INT NOT NULL DEFAULT 1
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS case_grants (
+                id SERIAL PRIMARY KEY,
+                worker_nickname TEXT NOT NULL,
+                tier INT NOT NULL,
+                granted_by TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'admin',
+                granted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                opened BOOLEAN DEFAULT false,
+                opened_at TIMESTAMP
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS case_openings (
+                id SERIAL PRIMARY KEY,
+                grant_id INT NOT NULL,
+                worker_nickname TEXT NOT NULL,
+                tier INT NOT NULL,
+                prize_id INT,
+                prize_name TEXT NOT NULL,
+                prize_kind TEXT NOT NULL DEFAULT 'reward',
+                prize_icon TEXT DEFAULT '🎁',
+                prize_rarity TEXT NOT NULL DEFAULT 'common',
+                opened_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                delivered BOOLEAN DEFAULT false,
+                delivered_by TEXT,
+                delivered_at TIMESTAMP
+            )
+        `);
+
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_grants_worker ON case_grants(worker_nickname)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_openings_worker ON case_openings(worker_nickname)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_tier_prizes_tier ON case_tier_prizes(tier)`);
+
         console.log('Database tables initialized');
 
         // Загружаем данные из БД при старте
         await loadDataFromDatabase();
+
+        // Засеваем призы кейсов, если пул пуст
+        await seedCasePrizes();
     } catch (err) {
         console.error('Error creating tables:', err);
     }
@@ -189,6 +250,73 @@ async function loadDataFromDatabase() {
         }
     } catch (err) {
         console.error('Error loading data from database:', err);
+    }
+}
+
+// Засев призов кейсов при первом запуске (если пул ещё пуст)
+async function seedCasePrizes() {
+    try {
+        const existing = await pool.query('SELECT COUNT(*) AS c FROM case_prizes');
+        if (parseInt(existing.rows[0].c) > 0) return;
+
+        // kind: reward (выдаёт админ) | task (задание воркеру) | case (выпадает кейс)
+        // rarity: common | rare | legendary (только для цвета в ленте)
+        const prizeDefs = [
+            { key: 'paste',   name: 'Паста от админа',                    kind: 'reward', icon: '📝', rarity: 'common',    caseTier: null },
+            { key: 'ava',     name: 'Кастом ава в тайминг',               kind: 'reward', icon: '🖼️', rarity: 'legendary', caseTier: null },
+            { key: 'algo',    name: 'Прохождение алгоритма',              kind: 'reward', icon: '🧭', rarity: 'rare',      caseTier: null },
+            { key: 'preview', name: 'Кастом превью на бандл',             kind: 'reward', icon: '🎬', rarity: 'rare',      caseTier: null },
+            { key: 'task',    name: 'Задание: написать 20 молчунам',      kind: 'task',   icon: '🎯', rarity: 'common',    caseTier: null },
+            { key: 'case2',   name: 'Кейс Тир 2',                         kind: 'case',   icon: '📦', rarity: 'rare',      caseTier: 2 },
+            { key: 'case3',   name: 'Кейс Тир 3',                         kind: 'case',   icon: '🧰', rarity: 'legendary', caseTier: 3 },
+            { key: 'm1',      name: '$1',  kind: 'reward', icon: '💵', rarity: 'common',    caseTier: null },
+            { key: 'm5',      name: '$5',  kind: 'reward', icon: '💵', rarity: 'common',    caseTier: null },
+            { key: 'm10',     name: '$10', kind: 'reward', icon: '💵', rarity: 'rare',      caseTier: null },
+            { key: 'm15',     name: '$15', kind: 'reward', icon: '💰', rarity: 'rare',      caseTier: null },
+            { key: 'm30',     name: '$30', kind: 'reward', icon: '💎', rarity: 'legendary', caseTier: null }
+        ];
+
+        const idByKey = {};
+        for (const p of prizeDefs) {
+            const r = await pool.query(
+                'INSERT INTO case_prizes (name, kind, case_tier, icon, rarity, is_active, created_at) VALUES ($1,$2,$3,$4,$5,true,NOW()) RETURNING id',
+                [p.name, p.kind, p.caseTier, p.icon, p.rarity]
+            );
+            idByKey[p.key] = r.rows[0].id;
+        }
+
+        // Веса: часто 50, средне 18, редко 7, очень редко 3, супер редко 1
+        const tierMap = [
+            // Тир 1
+            { tier: 1, key: 'paste', weight: 50 },
+            { tier: 1, key: 'ava',   weight: 3 },
+            { tier: 1, key: 'case2', weight: 7 },
+            { tier: 1, key: 'case3', weight: 1 },
+            { tier: 1, key: 'task',  weight: 3 },
+            // Тир 2
+            { tier: 2, key: 'paste',   weight: 50 },
+            { tier: 2, key: 'case3',   weight: 1 },
+            { tier: 2, key: 'algo',    weight: 50 },
+            { tier: 2, key: 'preview', weight: 50 },
+            { tier: 2, key: 'm5',      weight: 7 },
+            // Тир 3 (редкость денег зависит от суммы)
+            { tier: 3, key: 'm1',    weight: 50 },
+            { tier: 3, key: 'm5',    weight: 30 },
+            { tier: 3, key: 'm10',   weight: 15 },
+            { tier: 3, key: 'm15',   weight: 6 },
+            { tier: 3, key: 'm30',   weight: 2 },
+            { tier: 3, key: 'algo',  weight: 50 },
+            { tier: 3, key: 'paste', weight: 50 }
+        ];
+        for (const t of tierMap) {
+            await pool.query(
+                'INSERT INTO case_tier_prizes (tier, prize_id, weight) VALUES ($1,$2,$3)',
+                [t.tier, idByKey[t.key], t.weight]
+            );
+        }
+        console.log('Case prizes seeded');
+    } catch (err) {
+        console.error('Seed case prizes error:', err);
     }
 }
 
@@ -256,6 +384,14 @@ app.get('/t2/:sessionId', (req, res) => {
 
 app.get('/wheel', (req, res) => {
     res.sendFile(path.join(__dirname, 'wheel.html'));
+});
+
+app.get('/cases', (req, res) => {
+    res.sendFile(path.join(__dirname, 'cases.html'));
+});
+
+app.get('/cases.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'cases.html'));
 });
 
 app.get('/logs.html', (req, res) => {
@@ -1336,6 +1472,287 @@ app.post('/api/wheel/result', (req, res) => {
     wheelCodes.set(code, wheelCode);
 
     return res.json({ ok: true });
+});
+
+// ==================== СИСТЕМА КЕЙСОВ ====================
+
+// Взвешенный рандом по весам призов (розыгрыш на сервере)
+function weightedPick(items) {
+    const valid = items.filter(it => Number(it.weight) > 0);
+    if (valid.length === 0) return null;
+    const total = valid.reduce((s, it) => s + Number(it.weight), 0);
+    let r = Math.random() * total;
+    for (const it of valid) {
+        r -= Number(it.weight);
+        if (r < 0) return it;
+    }
+    return valid[valid.length - 1];
+}
+
+// Инвентарь воркера: непрокрученные кейсы + выигранные призы
+app.get('/api/cases/inventory', requireRegistration, async (req, res) => {
+    const nickname = req.user.nickname;
+    try {
+        const cases = await pool.query(
+            'SELECT id, tier, source, granted_at FROM case_grants WHERE worker_nickname = $1 AND opened = false ORDER BY tier ASC, id ASC',
+            [nickname]
+        );
+        const prizes = await pool.query(
+            `SELECT id, tier, prize_name, prize_kind, prize_icon, prize_rarity, opened_at, delivered, delivered_at
+             FROM case_openings
+             WHERE worker_nickname = $1 AND prize_kind <> 'case'
+             ORDER BY opened_at DESC LIMIT 100`,
+            [nickname]
+        );
+        return res.json({ ok: true, cases: cases.rows, prizes: prizes.rows });
+    } catch (err) {
+        console.error('Cases inventory error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Список призов тира (для показа содержимого кейса)
+app.get('/api/cases/pool/:tier', requireRegistration, async (req, res) => {
+    const tier = parseInt(req.params.tier);
+    if (![1, 2, 3].includes(tier)) return res.status(400).json({ error: 'invalid_tier' });
+    try {
+        const r = await pool.query(
+            `SELECT p.id, p.name, p.kind, p.icon, p.rarity, ctp.weight
+             FROM case_tier_prizes ctp JOIN case_prizes p ON p.id = ctp.prize_id
+             WHERE ctp.tier = $1 AND p.is_active = true`,
+            [tier]
+        );
+        return res.json({ ok: true, tier, prizes: r.rows });
+    } catch (err) {
+        console.error('Cases pool error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Открыть кейс (розыгрыш делает сервер)
+app.post('/api/cases/open', requireRegistration, async (req, res) => {
+    const nickname = req.user.nickname;
+    const { grantId } = req.body || {};
+    if (!grantId) return res.status(400).json({ error: 'grantId required' });
+    try {
+        // Атомарно забираем кейс — защита от двойного открытия / накрутки
+        const claim = await pool.query(
+            `UPDATE case_grants SET opened = true, opened_at = NOW()
+             WHERE id = $1 AND worker_nickname = $2 AND opened = false
+             RETURNING id, tier`,
+            [grantId, nickname]
+        );
+        if (claim.rowCount === 0) {
+            return res.status(409).json({ error: 'case_unavailable' });
+        }
+        const tier = claim.rows[0].tier;
+
+        const poolRes = await pool.query(
+            `SELECT p.id, p.name, p.kind, p.case_tier, p.icon, p.rarity, ctp.weight
+             FROM case_tier_prizes ctp JOIN case_prizes p ON p.id = ctp.prize_id
+             WHERE ctp.tier = $1 AND p.is_active = true`,
+            [tier]
+        );
+        if (poolRes.rows.length === 0) {
+            // Пул пуст — возвращаем кейс воркеру
+            await pool.query('UPDATE case_grants SET opened = false, opened_at = NULL WHERE id = $1', [grantId]);
+            return res.status(500).json({ error: 'empty_pool' });
+        }
+
+        const prize = weightedPick(poolRes.rows);
+        const isCase = prize.kind === 'case';
+
+        await pool.query(
+            `INSERT INTO case_openings
+             (grant_id, worker_nickname, tier, prize_id, prize_name, prize_kind, prize_icon, prize_rarity, opened_at, delivered, delivered_by, delivered_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9,$10,$11)`,
+            [grantId, nickname, tier, prize.id, prize.name, prize.kind, prize.icon, prize.rarity,
+             isCase, isCase ? 'system' : null, isCase ? new Date() : null]
+        );
+
+        // Кейс-приз сразу падает в инвентарь, остальное идёт в очередь к админу
+        let newCase = null;
+        if (isCase && [1, 2, 3].includes(prize.case_tier)) {
+            const ng = await pool.query(
+                `INSERT INTO case_grants (worker_nickname, tier, granted_by, source, granted_at)
+                 VALUES ($1,$2,'system','case',NOW()) RETURNING id, tier`,
+                [nickname, prize.case_tier]
+            );
+            newCase = ng.rows[0];
+        }
+
+        return res.json({
+            ok: true,
+            prize: {
+                id: prize.id, name: prize.name, kind: prize.kind,
+                icon: prize.icon, rarity: prize.rarity, caseTier: prize.case_tier
+            },
+            pool: poolRes.rows.map(p => ({ id: p.id, name: p.name, kind: p.kind, icon: p.icon, rarity: p.rarity })),
+            newCase
+        });
+    } catch (err) {
+        console.error('Case open error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Выдать кейсы воркеру (админ)
+app.post('/api/cases/grant', requireRegistration, requireLogAccess, async (req, res) => {
+    const { workerNickname, tier, count } = req.body || {};
+    const t = parseInt(tier);
+    const n = Math.min(50, Math.max(1, parseInt(count) || 1));
+    if (!workerNickname || ![1, 2, 3].includes(t)) {
+        return res.status(400).json({ error: 'workerNickname and valid tier required' });
+    }
+    try {
+        const userCheck = await pool.query('SELECT nickname FROM user_registrations WHERE nickname = $1', [workerNickname]);
+        if (userCheck.rows.length === 0) return res.status(404).json({ error: 'worker_not_found' });
+
+        for (let i = 0; i < n; i++) {
+            await pool.query(
+                `INSERT INTO case_grants (worker_nickname, tier, granted_by, source, granted_at)
+                 VALUES ($1,$2,$3,'admin',NOW())`,
+                [workerNickname, t, req.user.nickname]
+            );
+        }
+        console.log(`Cases granted: ${n}x tier ${t} to ${workerNickname} by ${req.user.nickname}`);
+        return res.json({ ok: true, granted: n });
+    } catch (err) {
+        console.error('Case grant error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Очередь призов на выдачу (админ)
+app.get('/api/cases/pending', requireRegistration, requireLogAccess, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT id, worker_nickname, tier, prize_name, prize_kind, prize_icon, prize_rarity, opened_at
+             FROM case_openings
+             WHERE delivered = false AND prize_kind <> 'case'
+             ORDER BY opened_at ASC`
+        );
+        return res.json({ ok: true, pending: r.rows });
+    } catch (err) {
+        console.error('Cases pending error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Отметить приз выданным / задание зачтённым (админ)
+app.post('/api/cases/deliver', requireRegistration, requireLogAccess, async (req, res) => {
+    const { openingId } = req.body || {};
+    if (!openingId) return res.status(400).json({ error: 'openingId required' });
+    try {
+        const r = await pool.query(
+            `UPDATE case_openings SET delivered = true, delivered_by = $1, delivered_at = NOW()
+             WHERE id = $2 AND delivered = false RETURNING id`,
+            [req.user.nickname, openingId]
+        );
+        if (r.rowCount === 0) return res.status(404).json({ error: 'not_found_or_done' });
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('Case deliver error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Конфиг призов и тиров для редактора (админ)
+app.get('/api/cases/admin/config', requireRegistration, requireLogAccess, async (req, res) => {
+    try {
+        const prizes = await pool.query('SELECT id, name, kind, case_tier, icon, rarity, is_active FROM case_prizes ORDER BY id ASC');
+        const tp = await pool.query('SELECT tier, prize_id, weight FROM case_tier_prizes ORDER BY tier ASC, weight DESC');
+        const tiers = { 1: [], 2: [], 3: [] };
+        tp.rows.forEach(row => { if (tiers[row.tier]) tiers[row.tier].push({ prizeId: row.prize_id, weight: row.weight }); });
+        return res.json({ ok: true, prizes: prizes.rows, tiers });
+    } catch (err) {
+        console.error('Cases config error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Создать / изменить приз (админ)
+app.post('/api/cases/admin/prize', requireRegistration, requireLogAccess, async (req, res) => {
+    let { id, name, kind, caseTier, icon, rarity, isActive } = req.body || {};
+    name = (name || '').trim();
+    if (!name) return res.status(400).json({ error: 'name required' });
+    if (!['reward', 'task', 'case'].includes(kind)) kind = 'reward';
+    if (!['common', 'rare', 'legendary'].includes(rarity)) rarity = 'common';
+    icon = (icon || '🎁').toString().slice(0, 8);
+    const ct = (kind === 'case' && [1, 2, 3].includes(parseInt(caseTier))) ? parseInt(caseTier) : null;
+    const active = isActive !== false;
+    try {
+        if (id) {
+            const r = await pool.query(
+                `UPDATE case_prizes SET name=$1, kind=$2, case_tier=$3, icon=$4, rarity=$5, is_active=$6 WHERE id=$7
+                 RETURNING id, name, kind, case_tier, icon, rarity, is_active`,
+                [name, kind, ct, icon, rarity, active, id]
+            );
+            if (r.rowCount === 0) return res.status(404).json({ error: 'not_found' });
+            return res.json({ ok: true, prize: r.rows[0] });
+        } else {
+            const r = await pool.query(
+                `INSERT INTO case_prizes (name, kind, case_tier, icon, rarity, is_active, created_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,NOW())
+                 RETURNING id, name, kind, case_tier, icon, rarity, is_active`,
+                [name, kind, ct, icon, rarity, active]
+            );
+            return res.json({ ok: true, prize: r.rows[0] });
+        }
+    } catch (err) {
+        console.error('Case prize save error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Удалить приз (админ)
+app.post('/api/cases/admin/prize/delete', requireRegistration, requireLogAccess, async (req, res) => {
+    const { id } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'id required' });
+    try {
+        await pool.query('DELETE FROM case_tier_prizes WHERE prize_id = $1', [id]);
+        await pool.query('DELETE FROM case_prizes WHERE id = $1', [id]);
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('Case prize delete error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Задать вес приза в тире (вес 0 = убрать из тира) (админ)
+app.post('/api/cases/admin/tier-prize', requireRegistration, requireLogAccess, async (req, res) => {
+    const t = parseInt(req.body?.tier);
+    const pid = parseInt(req.body?.prizeId);
+    const w = parseInt(req.body?.weight);
+    if (![1, 2, 3].includes(t) || !pid || isNaN(w)) return res.status(400).json({ error: 'invalid_input' });
+    try {
+        if (w <= 0) {
+            await pool.query('DELETE FROM case_tier_prizes WHERE tier=$1 AND prize_id=$2', [t, pid]);
+            return res.json({ ok: true, removed: true });
+        }
+        const upd = await pool.query('UPDATE case_tier_prizes SET weight=$1 WHERE tier=$2 AND prize_id=$3 RETURNING id', [w, t, pid]);
+        if (upd.rowCount === 0) {
+            await pool.query('INSERT INTO case_tier_prizes (tier, prize_id, weight) VALUES ($1,$2,$3)', [t, pid, w]);
+        }
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('Tier-prize save error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Лог последних открытий (админ)
+app.get('/api/cases/admin/log', requireRegistration, requireLogAccess, async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT id, worker_nickname, tier, prize_name, prize_kind, prize_icon, prize_rarity, opened_at, delivered
+             FROM case_openings ORDER BY opened_at DESC LIMIT 100`
+        );
+        return res.json({ ok: true, log: r.rows });
+    } catch (err) {
+        console.error('Cases log error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
 });
 
 // Rate limiting для Socket.io событий
