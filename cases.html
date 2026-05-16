@@ -1,1330 +1,727 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎁 Кейсы</title>
-    <link rel="icon" href="/favicon.ico" type="image/x-icon">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap"
-        rel="stylesheet">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        :root {
-            --bg: #090a0f;
-            --card: #14161f;
-            --card-2: #1b1e29;
-            --line: #282c3a;
-            --line-soft: #20242f;
-            --text: #f1f2f6;
-            --muted: #898fa3;
-            --accent: #ff2d78;
-            --accent-2: #8b3dff;
-            --gold: #ffc23c;
-            --rare: #b15cff;
-            --common: #7d8497;
-            --green: #4bd07f;
-            --tier1: #4f9dff;
-            --tier2: #b15cff;
-            --tier3: #ffc23c;
-        }
-
-        body {
-            font-family: 'Poppins', sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-            padding-bottom: 70px;
-            -webkit-font-smoothing: antialiased;
-        }
-
-        body::before {
-            content: '';
-            position: fixed;
-            inset: 0;
-            background:
-                radial-gradient(820px 420px at 50% -160px, rgba(255, 45, 120, .20), transparent 70%),
-                radial-gradient(720px 420px at 85% 0%, rgba(139, 61, 255, .16), transparent 70%);
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        a { color: var(--accent); text-decoration: none; }
-
-        a:hover { text-decoration: underline; }
-
-        /* ===== Header ===== */
-        header {
-            position: sticky;
-            top: 0;
-            z-index: 30;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 15px 26px;
-            background: rgba(12, 13, 18, .82);
-            backdrop-filter: blur(14px);
-            border-bottom: 1px solid var(--line-soft);
-        }
-
-        .brand {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            font-size: 1.35rem;
-            font-weight: 800;
-            letter-spacing: .2px;
-        }
-
-        .brand .logo { font-size: 1.5rem; filter: drop-shadow(0 0 10px rgba(255, 45, 120, .55)); }
-
-        .brand .word {
-            background: linear-gradient(92deg, #fff, #ffc6dd);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .who { font-size: .88rem; color: var(--muted); }
-
-        .who b { color: var(--text); font-weight: 600; }
-
-        .who .dot { margin: 0 8px; opacity: .4; }
-
-        /* ===== Layout ===== */
-        .wrap {
-            position: relative;
-            z-index: 1;
-            max-width: 1080px;
-            margin: 0 auto;
-            padding: 26px 22px;
-        }
-
-        section {
-            background: linear-gradient(180deg, var(--card), #101219);
-            border: 1px solid var(--line);
-            border-radius: 20px;
-            padding: 24px;
-            margin-bottom: 22px;
-            box-shadow: 0 18px 40px -28px rgba(0, 0, 0, .9);
-        }
-
-        .sec-head {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 18px;
-        }
-
-        .sec-head .bar {
-            width: 4px;
-            height: 20px;
-            border-radius: 3px;
-            background: linear-gradient(180deg, var(--accent), var(--accent-2));
-        }
-
-        .sec-head h2 { font-size: 1.18rem; font-weight: 700; }
-
-        h3 {
-            font-size: .82rem;
-            text-transform: uppercase;
-            letter-spacing: 1.1px;
-            color: var(--muted);
-            margin: 20px 0 11px;
-            font-weight: 700;
-        }
-
-        .muted { color: var(--muted); font-size: .88rem; }
-
-        /* ===== Buttons ===== */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            background: linear-gradient(135deg, var(--accent), var(--accent-2));
-            color: #fff;
-            border: none;
-            border-radius: 11px;
-            padding: 11px 22px;
-            font-family: inherit;
-            font-weight: 700;
-            font-size: .92rem;
-            cursor: pointer;
-            transition: transform .14s ease, box-shadow .14s ease, opacity .14s ease;
-            box-shadow: 0 8px 22px -10px rgba(255, 45, 120, .8);
-        }
-
-        .btn:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 12px 26px -8px rgba(255, 45, 120, .9);
-        }
-
-        .btn:active:not(:disabled) { transform: translateY(0); }
-
-        .btn:disabled { opacity: .45; cursor: not-allowed; }
-
-        .btn.small { padding: 8px 15px; font-size: .82rem; border-radius: 9px; box-shadow: none; }
-
-        .btn.ghost {
-            background: var(--card-2);
-            border: 1px solid var(--line);
-            box-shadow: none;
-            color: var(--text);
-        }
-
-        .btn.ghost:hover:not(:disabled) { border-color: var(--accent); box-shadow: none; }
-
-        .btn.danger { background: linear-gradient(135deg, #e0473a, #b3271b); box-shadow: none; }
-
-        /* ===== Inputs ===== */
-        input, select {
-            background: #0e1016;
-            border: 1px solid var(--line);
-            color: var(--text);
-            border-radius: 10px;
-            padding: 10px 12px;
-            font-family: inherit;
-            font-size: .9rem;
-            transition: border-color .14s ease;
-        }
-
-        input:focus, select:focus { outline: none; border-color: var(--accent); }
-
-        input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
-
-        /* ===== Gate ===== */
-        .gate {
-            position: relative;
-            z-index: 1;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 22px;
-        }
-
-        .gate-card {
-            background: linear-gradient(180deg, var(--card), #101219);
-            border: 1px solid var(--line);
-            border-radius: 22px;
-            padding: 46px 40px;
-            text-align: center;
-            max-width: 430px;
-        }
-
-        .gate-card .g-emoji { font-size: 3.4rem; }
-
-        .gate-card h1 { font-size: 1.7rem; margin: 10px 0 12px; }
-
-        .gate-card p { color: var(--muted); margin-bottom: 24px; line-height: 1.55; }
-
-        /* ===== Case cards ===== */
-        .cases-grid {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 18px;
-        }
-
-        .case-card {
-            position: relative;
-            width: 212px;
-            padding: 22px 18px 20px;
-            border-radius: 18px;
-            background: linear-gradient(180deg, var(--card-2), #111219);
-            border: 1px solid var(--line);
-            text-align: center;
-            overflow: hidden;
-            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-        }
-
-        .case-card::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 3px;
-            background: var(--tc);
-        }
-
-        .case-card::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -70%;
-            width: 45%;
-            height: 100%;
-            background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .14), transparent);
-            transform: skewX(-18deg);
-            transition: left .55s ease;
-            pointer-events: none;
-        }
-
-        .case-card:hover {
-            transform: translateY(-6px);
-            border-color: var(--tc);
-            box-shadow: 0 22px 40px -22px var(--tcShadow);
-        }
-
-        .case-card:hover::after { left: 130%; }
-
-        .case-card.tier-1 { --tc: var(--tier1); --tcShadow: rgba(79, 157, 255, .6); }
-        .case-card.tier-2 { --tc: var(--tier2); --tcShadow: rgba(177, 92, 255, .6); }
-        .case-card.tier-3 { --tc: var(--tier3); --tcShadow: rgba(255, 194, 60, .6); }
-
-        .case-count {
-            position: absolute;
-            top: 12px;
-            right: 12px;
-            min-width: 26px;
-            height: 26px;
-            padding: 0 7px;
-            border-radius: 13px;
-            background: var(--tc);
-            color: #0a0a0d;
-            font-size: .8rem;
-            font-weight: 800;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .case-orb {
-            width: 116px;
-            height: 116px;
-            margin: 6px auto 14px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: radial-gradient(circle, var(--tcOrb), transparent 72%);
-        }
-
-        .case-card.tier-1 .case-orb { --tcOrb: rgba(79, 157, 255, .42); }
-        .case-card.tier-2 .case-orb { --tcOrb: rgba(177, 92, 255, .42); }
-        .case-card.tier-3 .case-orb { --tcOrb: rgba(255, 194, 60, .42); }
-
-        .case-emoji {
-            font-size: 3.7rem;
-            line-height: 1;
-            filter: drop-shadow(0 6px 12px rgba(0, 0, 0, .55));
-            animation: bob 3.4s ease-in-out infinite;
-        }
-
-        @keyframes bob {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-6px); }
-        }
-
-        .case-tier {
-            display: inline-block;
-            font-size: .72rem;
-            font-weight: 800;
-            letter-spacing: 1px;
-            text-transform: uppercase;
-            color: var(--tc);
-            border: 1px solid var(--tc);
-            border-radius: 20px;
-            padding: 3px 12px;
-            margin-bottom: 5px;
-        }
-
-        .case-sub { font-size: .78rem; color: var(--muted); margin-bottom: 15px; }
-
-        .case-card .btn { width: 100%; }
-
-        /* ===== Empty states ===== */
-        .empty {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 8px;
-            padding: 30px 16px;
-            text-align: center;
-            color: var(--muted);
-            border: 1px dashed var(--line);
-            border-radius: 14px;
-        }
-
-        .empty .e-emoji { font-size: 2.2rem; opacity: .85; }
-
-        .empty .e-text { font-size: .92rem; }
-
-        /* ===== Prize rows ===== */
-        .prize-row {
-            display: flex;
-            align-items: center;
-            gap: 13px;
-            padding: 13px 15px;
-            background: var(--card-2);
-            border: 1px solid var(--line);
-            border-left: 4px solid var(--rc, var(--common));
-            border-radius: 12px;
-            margin-bottom: 9px;
-        }
-
-        .prize-row.rarity-common { --rc: var(--common); }
-        .prize-row.rarity-rare { --rc: var(--rare); }
-        .prize-row.rarity-legendary { --rc: var(--gold); }
-
-        .p-tile {
-            width: 46px;
-            height: 46px;
-            flex-shrink: 0;
-            border-radius: 11px;
-            background: #0e1016;
-            border: 1px solid var(--line);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.55rem;
-        }
-
-        .p-main { flex: 1; min-width: 0; }
-
-        .p-name { font-weight: 600; font-size: .95rem; }
-
-        .p-meta { font-size: .76rem; color: var(--muted); margin-top: 2px; }
-
-        .p-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-
-        .badge {
-            font-size: .7rem;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-weight: 700;
-            white-space: nowrap;
-            text-transform: lowercase;
-        }
-
-        .badge.wait { background: rgba(255, 194, 60, .14); color: var(--gold); }
-
-        .badge.done { background: rgba(75, 208, 127, .14); color: var(--green); }
-
-        .tier-tag {
-            font-size: .7rem;
-            padding: 4px 9px;
-            border-radius: 7px;
-            background: #0e1016;
-            border: 1px solid var(--line);
-            color: var(--muted);
-            white-space: nowrap;
-        }
-
-        /* ===== Opening overlay ===== */
-        .overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(5, 6, 9, .95);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 100;
-            padding: 18px;
-            animation: fadeIn .2s ease;
-        }
-
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-        .open-box { width: 100%; max-width: 940px; text-align: center; }
-
-        .open-title {
-            font-size: 1.05rem;
-            font-weight: 600;
-            color: var(--muted);
-            margin-bottom: 16px;
-        }
-
-        .open-title b { color: var(--text); font-weight: 800; }
-
-        .reel-viewport {
-            position: relative;
-            overflow: hidden;
-            height: 184px;
-            background: radial-gradient(circle at 50% 50%, #12141d, #07080c);
-            border: 1px solid var(--line);
-            border-radius: 16px;
-        }
-
-        .reel-viewport::before,
-        .reel-viewport::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            width: 130px;
-            z-index: 4;
-            pointer-events: none;
-        }
-
-        .reel-viewport::before { left: 0; background: linear-gradient(90deg, #07080c, transparent); }
-
-        .reel-viewport::after { right: 0; background: linear-gradient(270deg, #07080c, transparent); }
-
-        .reel-strip {
-            display: flex;
-            height: 100%;
-            align-items: center;
-            will-change: transform;
-        }
-
-        .ri {
-            flex: 0 0 150px;
-            width: 150px;
-            height: 152px;
-            box-sizing: border-box;
-            margin: 0 5px;
-            background: linear-gradient(180deg, #1f222e, #14151c);
-            border: 1px solid var(--line);
-            border-radius: 12px;
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 9px;
-            padding: 10px;
-            overflow: hidden;
-        }
-
-        .ri::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 3px;
-            background: var(--rc);
-        }
-
-        .ri::after {
-            content: '';
-            position: absolute;
-            bottom: -40px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 90px;
-            height: 90px;
-            border-radius: 50%;
-            background: var(--rc);
-            opacity: .16;
-            filter: blur(20px);
-        }
-
-        .ri-icon { font-size: 2.9rem; line-height: 1; }
-
-        .ri-name { font-size: .78rem; font-weight: 600; text-align: center; }
-
-        .rarity-common { --rc: var(--common); }
-        .rarity-rare { --rc: var(--rare); }
-        .rarity-legendary { --rc: var(--gold); }
-
-        .reel-marker {
-            position: absolute;
-            top: -2px;
-            bottom: -2px;
-            left: 50%;
-            width: 3px;
-            margin-left: -1.5px;
-            background: var(--accent);
-            box-shadow: 0 0 16px 2px var(--accent);
-            z-index: 6;
-        }
-
-        .reel-marker::before,
-        .reel-marker::after {
-            content: '';
-            position: absolute;
-            left: 50%;
-            transform: translateX(-50%);
-            border-left: 8px solid transparent;
-            border-right: 8px solid transparent;
-        }
-
-        .reel-marker::before { top: -2px; border-top: 11px solid var(--accent); }
-
-        .reel-marker::after { bottom: -2px; border-bottom: 11px solid var(--accent); }
-
-        .result-card {
-            margin-top: 22px;
-            display: inline-block;
-            min-width: 300px;
-            background: linear-gradient(180deg, var(--card), #101219);
-            border: 1px solid var(--line);
-            border-radius: 18px;
-            padding: 26px 30px;
-            position: relative;
-            animation: pop .35s cubic-bezier(.2, 1.2, .35, 1);
-        }
-
-        @keyframes pop { from { transform: scale(.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-
-        .result-card::before {
-            content: '';
-            position: absolute;
-            inset: -1px;
-            border-radius: 18px;
-            padding: 1px;
-            background: var(--rc, var(--common));
-            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-            -webkit-mask-composite: xor;
-            mask-composite: exclude;
-            opacity: .8;
-        }
-
-        .rc-title { font-size: .82rem; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); }
-
-        .rc-icon {
-            font-size: 4rem;
-            margin: 8px 0 4px;
-            filter: drop-shadow(0 0 18px var(--rc, var(--common)));
-        }
-
-        .rc-name { font-size: 1.5rem; font-weight: 900; }
-
-        .rc-msg { font-size: .83rem; color: var(--muted); margin-top: 9px; max-width: 330px; line-height: 1.5; }
-
-        #closeOpenBtn { margin-top: 20px; }
-
-        /* ===== Admin ===== */
-        .admin-tabs {
-            display: flex;
-            gap: 6px;
-            flex-wrap: wrap;
-            background: #0e1016;
-            border: 1px solid var(--line);
-            border-radius: 12px;
-            padding: 5px;
-            margin-bottom: 18px;
-        }
-
-        .tab {
-            background: transparent;
-            border: none;
-            color: var(--muted);
-            border-radius: 8px;
-            padding: 9px 16px;
-            font-family: inherit;
-            font-weight: 600;
-            font-size: .85rem;
-            cursor: pointer;
-            transition: background .14s ease, color .14s ease;
-        }
-
-        .tab:hover { color: var(--text); }
-
-        .tab.active { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
-
-        .subcard {
-            background: var(--card-2);
-            border: 1px solid var(--line);
-            border-radius: 14px;
-            padding: 16px;
-        }
-
-        .row {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-            align-items: flex-end;
-        }
-
-        .field { display: flex; flex-direction: column; gap: 5px; }
-
-        .field label { font-size: .74rem; color: var(--muted); font-weight: 600; }
-
-        .status { font-size: .85rem; font-weight: 600; align-self: center; }
-
-        .status.ok { color: var(--green); }
-
-        .status.err { color: #ff7a7a; }
-
-        .editor-prize {
-            display: flex;
-            gap: 9px;
-            flex-wrap: wrap;
-            align-items: flex-end;
-            background: var(--card-2);
-            border: 1px solid var(--line);
-            border-radius: 12px;
-            padding: 13px;
-            margin-bottom: 9px;
-        }
-
-        .editor-prize .ico { width: 60px; text-align: center; }
-
-        .editor-prize .nm { flex: 1; min-width: 160px; }
-
-        .weight-row {
-            display: flex;
-            align-items: center;
-            gap: 11px;
-            padding: 9px 12px;
-            background: var(--card-2);
-            border: 1px solid var(--line);
-            border-left: 4px solid var(--rc, var(--common));
-            border-radius: 10px;
-            margin-bottom: 7px;
-        }
-
-        .weight-row .w-ico { font-size: 1.2rem; }
-
-        .weight-row .wn { flex: 1; font-size: .9rem; font-weight: 500; }
-
-        .weight-row .chance {
-            font-size: .76rem;
-            color: var(--muted);
-            width: 52px;
-            text-align: right;
-        }
-
-        .weight-row input { width: 84px; }
-
-        .tier-weights { margin-bottom: 18px; }
-
-        /* ===== Confetti ===== */
-        .confetti-particle {
-            position: fixed;
-            width: 11px;
-            height: 11px;
-            top: -14px;
-            pointer-events: none;
-            z-index: 200;
-        }
-
-        @keyframes fall { to { transform: translateY(106vh) rotate(720deg); opacity: 0; } }
-
-        @media (max-width: 560px) {
-            header { padding: 13px 16px; }
-            .wrap { padding: 18px 14px; }
-            section { padding: 18px; }
-            .case-card { width: 100%; }
-        }
-    </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Кейсы</title>
+<link rel="icon" href="/favicon.ico" type="image/x-icon">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/cases.css">
+<style>
+  .confetti-particle{ position:fixed; width:10px; height:10px; top:-14px; pointer-events:none; z-index:300; }
+  @keyframes fall{ to{ transform:translateY(106vh) rotate(720deg); opacity:0; } }
+</style>
 </head>
 
 <body>
-    <audio id="spinSound" src="spin.mp3" loop preload="auto"></audio>
-    <audio id="winSound" src="win.mp3" preload="auto"></audio>
 
-    <!-- Заглушка для незалогиненных -->
-    <div class="gate" id="gate" style="display:none;">
-        <div class="gate-card">
-            <div class="g-emoji">🎁</div>
-            <h1>Кейсы</h1>
-            <p>Сначала зайди в панель воркера под своим ником. После этого кейсы откроются здесь автоматически.</p>
-            <a class="btn" href="/admin">Открыть панель</a>
+<audio id="spinSound" src="spin.mp3" loop preload="auto"></audio>
+<audio id="winSound" src="win.mp3" preload="auto"></audio>
+
+<!-- Заглушка для незалогиненных -->
+<div class="gate" id="gate" style="display:none;">
+  <div class="panel">
+    <div class="gico">🎁</div>
+    <h3>Кейсы</h3>
+    <p>Сначала зайди в панель воркера под своим ником. После этого кейсы откроются здесь автоматически.</p>
+    <a class="btn primary" href="/admin">Открыть панель</a>
+  </div>
+</div>
+
+<!-- Основное приложение -->
+<div id="app" style="display:none;">
+
+  <header class="app">
+    <div class="wrap header-inner">
+      <div class="logo">
+        <div class="logo-mark" aria-hidden="true"></div>
+        <div><b>Кейсы</b> <span>· внутр.</span></div>
+      </div>
+      <nav class="nav">
+        <a href="/admin" class="admin">панель</a>
+        <div class="user-chip" title="Профиль">
+          <div class="avatar" id="userAvatar">··</div>
+          <div>
+            <div class="user-name" id="whoName"></div>
+            <div class="user-role" id="whoRole"></div>
+          </div>
         </div>
+      </nav>
     </div>
+  </header>
 
-    <!-- Основное приложение -->
-    <div id="app" style="display:none;">
-        <header>
-            <div class="brand"><span class="logo">🎁</span><span class="word">Кейсы</span></div>
-            <div class="who">Ты: <b id="whoName"></b><span class="dot">·</span><a href="/admin">панель</a></div>
-        </header>
+  <main class="wrap">
 
-        <div class="wrap">
-            <section>
-                <div class="sec-head"><span class="bar"></span>
-                    <h2>Мои кейсы</h2>
-                </div>
-                <div id="casesArea"></div>
-            </section>
-
-            <section>
-                <div class="sec-head"><span class="bar"></span>
-                    <h2>Мои призы</h2>
-                </div>
-                <div id="prizesArea"></div>
-            </section>
-
-            <!-- Админка -->
-            <section id="adminPanel" style="display:none;">
-                <div class="sec-head"><span class="bar"></span>
-                    <h2>Админка</h2>
-                </div>
-                <div class="admin-tabs">
-                    <button class="tab active" data-tab="grant">Выдать кейс</button>
-                    <button class="tab" data-tab="pending">Очередь выдачи</button>
-                    <button class="tab" data-tab="editor">Редактор призов</button>
-                    <button class="tab" data-tab="log">Лог</button>
-                </div>
-
-                <div class="tab-panel" id="tab-grant">
-                    <div class="subcard">
-                        <div class="row">
-                            <div class="field">
-                                <label>Воркер</label>
-                                <select id="grantWorker"></select>
-                            </div>
-                            <div class="field">
-                                <label>Тир</label>
-                                <select id="grantTier">
-                                    <option value="1">Тир 1</option>
-                                    <option value="2">Тир 2</option>
-                                    <option value="3">Тир 3</option>
-                                </select>
-                            </div>
-                            <div class="field">
-                                <label>Сколько</label>
-                                <input type="number" id="grantCount" value="1" min="1" max="50" style="width:88px;">
-                            </div>
-                            <button class="btn" id="grantBtn">Выдать кейс</button>
-                            <span class="status" id="grantStatus"></span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="tab-panel" id="tab-pending" style="display:none;">
-                    <div class="row" style="margin-bottom:14px;">
-                        <button class="btn small ghost" id="pendingRefresh">Обновить</button>
-                        <span class="muted">Жмёшь «Выдал» после того, как отдал приз воркеру в Телеграм.</span>
-                    </div>
-                    <div id="pendingArea"></div>
-                </div>
-
-                <div class="tab-panel" id="tab-editor" style="display:none;">
-                    <h3>Призы</h3>
-                    <div id="prizeEditor"></div>
-                    <button class="btn small" id="addPrizeBtn">+ Добавить приз</button>
-                    <h3>Веса по тирам — шанс выпадения</h3>
-                    <div id="weightEditor"></div>
-                </div>
-
-                <div class="tab-panel" id="tab-log" style="display:none;">
-                    <div class="row" style="margin-bottom:14px;">
-                        <button class="btn small ghost" id="logRefresh">Обновить</button>
-                        <span class="muted">Последние 100 открытий.</span>
-                    </div>
-                    <div id="logArea"></div>
-                </div>
-            </section>
+    <!-- ========= МОИ КЕЙСЫ ========= -->
+    <section class="block">
+      <div class="section-head">
+        <div>
+          <div class="kicker"><span class="dot"></span>инвентарь</div>
+          <h2>Мои кейсы</h2>
         </div>
-    </div>
+        <div class="meta" id="casesMeta"></div>
+      </div>
+      <div id="casesArea"></div>
+    </section>
 
-    <!-- Оверлей открытия кейса -->
-    <div class="overlay" id="openOverlay" style="display:none;">
-        <div class="open-box">
-            <div class="open-title">Открываем <b id="openTierName"></b></div>
-            <div class="reel-viewport" id="reelViewport">
-                <div class="reel-marker"></div>
-                <div class="reel-strip" id="reelStrip"></div>
+    <!-- ========= МОИ ПРИЗЫ ========= -->
+    <section class="block">
+      <div class="section-head">
+        <div>
+          <div class="kicker"><span class="dot" style="background:var(--ok);box-shadow:0 0 12px var(--ok)"></span>история</div>
+          <h2>Мои призы</h2>
+        </div>
+        <div class="meta" id="prizesMeta"></div>
+      </div>
+      <div id="prizesArea"></div>
+    </section>
+
+    <!-- ========= АДМИН ========= -->
+    <section class="block" id="adminPanel" style="display:none;">
+      <div class="section-head">
+        <div>
+          <div class="kicker"><span class="dot" style="background:var(--t3);box-shadow:0 0 12px var(--t3)"></span>панель администратора</div>
+          <h2>Управление</h2>
+        </div>
+      </div>
+
+      <div class="admin">
+        <div class="tabs" role="tablist">
+          <div class="tab active" data-tab="grant">Выдать кейс</div>
+          <div class="tab" data-tab="pending">Очередь выдачи <span class="count-chip" id="pendingCount">0</span></div>
+          <div class="tab" data-tab="editor">Редактор призов</div>
+          <div class="tab" data-tab="log">Лог</div>
+        </div>
+
+        <div class="admin-body">
+
+          <div class="tab-panel active" id="panel-grant">
+            <div class="panel">
+              <h4>Выдать кейс <span class="tag">форма</span></h4>
+              <div class="field">
+                <label>Сотрудник</label>
+                <div class="select-wrap"><select class="select" id="grantWorker"></select></div>
+              </div>
+              <div class="field">
+                <label>Тир кейса</label>
+                <div class="tier-radio" id="grantTierRadio">
+                  <label class="t1 sel" data-tier="1">Тир 1</label>
+                  <label class="t2" data-tier="2">Тир 2</label>
+                  <label class="t3" data-tier="3">Тир 3</label>
+                </div>
+              </div>
+              <div class="field">
+                <label>Количество</label>
+                <input class="input" id="grantCount" type="text" value="1" />
+              </div>
+              <div class="submit-row">
+                <button class="btn action" id="grantBtn">Выдать кейс</button>
+              </div>
+              <div class="form-status" id="grantStatus"></div>
             </div>
-            <div id="resultCard" class="result-card" style="display:none;"></div>
-            <div><button class="btn" id="closeOpenBtn" style="display:none;">Забрать</button></div>
+          </div>
+
+          <div class="tab-panel" id="panel-pending">
+            <div class="panel">
+              <h4>Очередь выдачи <span class="tag" id="pendingTag">0 в ожидании</span></h4>
+              <p style="color:var(--fg-mute);font-size:13px;margin:-8px 0 16px;">
+                Жми «✓» после того, как отдал приз воркеру в Телеграм.</p>
+              <div id="pendingArea"></div>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="panel-editor">
+            <div class="panel">
+              <h4>Редактор призов <span class="tag">призы и веса</span></h4>
+              <div class="editor-list" id="prizeEditor"></div>
+              <button class="btn sm editor-add" id="addPrizeBtn">+ Добавить приз</button>
+              <div id="weightEditor" style="margin-top:26px;"></div>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="panel-log">
+            <div class="panel">
+              <h4>Лог системы <span class="tag">последние 100</span></h4>
+              <div id="logArea"></div>
+            </div>
+          </div>
+
         </div>
+      </div>
+    </section>
+
+    <footer>кейсы · внутренняя система · работает на твоей панели</footer>
+  </main>
+</div>
+
+<!-- ========= ОВЕРЛЕЙ ОТКРЫТИЯ ========= -->
+<div class="overlay-backdrop" id="openOverlay" style="display:none;">
+  <div class="opening-shell">
+    <div class="ribbon">
+      <span class="live">live</span>
+      <span class="source" id="openSource"></span>
     </div>
+    <div class="reel-wrap">
+      <div class="pointer" aria-hidden="true"></div>
+      <div class="reel" id="reelStrip"></div>
+    </div>
+    <div class="result" id="resultCard" style="display:none;"></div>
+  </div>
+</div>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script>
-        // ===== Константы ленты =====
-        const STRIP_LEN = 64;
-        const WIN_INDEX = 56;
-        const CELL = 160; // ширина ячейки: item 150 + margin 5*2
-        const SPIN_MS = 6200;
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  // ===== Константы ленты =====
+  const STRIP_LEN = 64;
+  const WIN_INDEX = 56;
+  const REEL_ITEM = 160;
+  const REEL_GAP = 14;
+  const REEL_PAD = 40;
+  const SPIN_MS = 6200;
 
-        const TIER_EMOJI = { 1: '📦', 2: '🎁', 3: '🧰' };
+  const TIER_INFO = {
+    1: { word: 'обычный',     roman: 'I',   title: 'Стартовый кейс',   desc: 'Пасты от админа, мелкие награды, призовые задания.' },
+    2: { word: 'редкий',      roman: 'II',  title: 'Продвинутый кейс', desc: 'Кастомизация профиля, прохождение алгоритма, шанс на деньги.' },
+    3: { word: 'легендарный', roman: 'III', title: 'Легендарный кейс', desc: 'Крупные призы: деньги, кастом-ава, прохождение алгоритма.' }
+  };
+  const RAR_CLASS = { common: 'r-common', rare: 'r-rare', legend: 'r-legend' };
+  const RAR_WORD = { common: 'обычный', rare: 'редкий', legendary: 'легендарный' };
+  function rarClass(r) { return r === 'rare' ? 'r-rare' : r === 'legendary' ? 'r-legend' : 'r-common'; }
+  const RAR_VARS = {
+    common:    ['var(--t1)', 'var(--t1-deep)', 'oklch(0.78 0.13 220 / .35)'],
+    rare:      ['var(--t2)', 'var(--t2-deep)', 'oklch(0.72 0.22 300 / .35)'],
+    legendary: ['var(--t3)', 'var(--t3-deep)', 'oklch(0.84 0.16 85 / .35)']
+  };
 
-        const NICK = localStorage.getItem('nickname') || '';
-        let ROLE = 'reader';
-        let opening = false;
+  const NICK = localStorage.getItem('nickname') || '';
+  let ROLE = 'reader';
+  let opening = false;
 
-        const spinSound = document.getElementById('spinSound');
-        const winSound = document.getElementById('winSound');
-        const openOverlay = document.getElementById('openOverlay');
-        const closeOpenBtn = document.getElementById('closeOpenBtn');
+  const spinSound = document.getElementById('spinSound');
+  const winSound = document.getElementById('winSound');
+  const openOverlay = document.getElementById('openOverlay');
+  const socket = (typeof io !== 'undefined') ? io() : null;
 
-        const socket = (typeof io !== 'undefined') ? io() : null;
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
 
-        function escapeHtml(s) {
-            return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-        }
+  function fmtTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (isNaN(d)) return '';
+    const p = n => String(n).padStart(2, '0');
+    return p(d.getDate()) + '.' + p(d.getMonth() + 1) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
 
-        function fmtTime(ts) {
-            if (!ts) return '';
-            const d = new Date(ts);
-            if (isNaN(d)) return '';
-            const p = n => String(n).padStart(2, '0');
-            return p(d.getDate()) + '.' + p(d.getMonth() + 1) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
-        }
+  function initials(s) {
+    s = String(s || '').replace(/[^a-zA-Zа-яА-Я0-9]/g, '');
+    return (s.slice(0, 2) || '??').toUpperCase();
+  }
 
-        // ===== API helper =====
-        async function api(path, method, body) {
-            const opts = { method: method || 'GET', headers: { 'X-Nickname': NICK } };
-            if (body) {
-                opts.headers['Content-Type'] = 'application/json';
-                opts.body = JSON.stringify(body);
-            }
-            const res = await fetch(path, opts);
-            const data = await res.json().catch(() => null);
-            if (!res.ok) {
-                const err = new Error((data && data.error) || 'request_failed');
-                err.status = res.status;
-                err.data = data;
-                throw err;
-            }
-            return data;
-        }
+  function caseWord(n) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return 'кейс';
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return 'кейса';
+    return 'кейсов';
+  }
 
-        function showGate() {
-            document.getElementById('gate').style.display = 'flex';
-            document.getElementById('app').style.display = 'none';
-        }
+  // ===== API helper =====
+  async function api(path, method, body) {
+    const opts = { method: method || 'GET', headers: { 'X-Nickname': NICK } };
+    if (body) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(path, opts);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const err = new Error((data && data.error) || 'request_failed');
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
+  }
 
-        // ===== Инициализация =====
-        async function init() {
-            if (!NICK) { showGate(); return; }
-            let auth;
-            try { auth = await api('/api/auth/check'); }
-            catch (e) { showGate(); return; }
-            if (!auth || !auth.ok) { showGate(); return; }
+  function showGate() {
+    document.getElementById('gate').style.display = 'grid';
+    document.getElementById('app').style.display = 'none';
+  }
 
-            ROLE = auth.role || 'reader';
-            document.getElementById('whoName').textContent = auth.nickname || NICK;
-            document.getElementById('app').style.display = 'block';
+  // ===== Инициализация =====
+  async function init() {
+    if (!NICK) { showGate(); return; }
+    let auth;
+    try { auth = await api('/api/auth/check'); }
+    catch (e) { showGate(); return; }
+    if (!auth || !auth.ok) { showGate(); return; }
 
-            if (ROLE === 'admin') {
-                document.getElementById('adminPanel').style.display = 'block';
-                initAdmin();
-            }
-            setupLiveUpdates();
-            loadInventory();
-        }
+    ROLE = auth.role || 'reader';
+    document.getElementById('whoName').textContent = auth.nickname || NICK;
+    document.getElementById('whoRole').textContent = ROLE;
+    document.getElementById('userAvatar').textContent = initials(auth.nickname || NICK);
+    document.getElementById('app').style.display = 'block';
 
-        // ===== Живые обновления через Socket.io =====
-        function setupLiveUpdates() {
-            if (!socket) return;
-            function announce() {
-                socket.emit('identify', NICK);
-                if (ROLE === 'admin') socket.emit('cases-admin-join');
-            }
-            announce();
-            socket.on('connect', announce);
-            socket.on('cases-changed', function () {
-                loadInventory();
-                if (ROLE === 'admin') { loadPending(); loadLog(); }
-            });
-        }
+    if (ROLE === 'admin') {
+      document.getElementById('adminPanel').style.display = 'block';
+      initAdmin();
+    }
+    setupLiveUpdates();
+    loadInventory();
+  }
 
-        // ===== Инвентарь воркера =====
-        async function loadInventory() {
-            let data;
-            try { data = await api('/api/cases/inventory'); }
-            catch (e) { return; }
-            renderCases(data.cases || []);
-            renderPrizes(data.prizes || []);
-        }
+  // ===== Живые обновления через Socket.io =====
+  function setupLiveUpdates() {
+    if (!socket) return;
+    function announce() {
+      socket.emit('identify', NICK);
+      if (ROLE === 'admin') socket.emit('cases-admin-join');
+    }
+    announce();
+    socket.on('connect', announce);
+    socket.on('cases-changed', function () {
+      loadInventory();
+      if (ROLE === 'admin') { loadPending(); loadLog(); }
+    });
+  }
 
-        function renderCases(cases) {
-            const area = document.getElementById('casesArea');
-            if (!cases.length) {
-                area.innerHTML = '<div class="empty"><div class="e-emoji">📭</div>'
-                    + '<div class="e-text">Кейсов пока нет. Сделай продажу и получишь кейс 😈</div></div>';
-                return;
-            }
-            const byTier = { 1: [], 2: [], 3: [] };
-            cases.forEach(c => { if (byTier[c.tier]) byTier[c.tier].push(c); });
-            let html = '<div class="cases-grid">';
-            [1, 2, 3].forEach(t => {
-                const list = byTier[t];
-                if (!list.length) return;
-                const count = list.length;
-                const firstId = list[0].id;
-                html += '<div class="case-card tier-' + t + '">'
-                    + (count > 1 ? '<div class="case-count">' + count + '</div>' : '')
-                    + '<div class="case-orb"><div class="case-emoji">' + TIER_EMOJI[t] + '</div></div>'
-                    + '<div class="case-tier">Тир ' + t + '</div>'
-                    + '<div class="case-sub">' + count + ' ' + caseWord(count) + ' в инвентаре</div>'
-                    + '<button class="btn" onclick="openCase(' + firstId + ',' + t + ')">Открыть</button>'
-                    + '</div>';
-            });
-            html += '</div>';
-            area.innerHTML = html;
-        }
+  // ===== Инвентарь воркера =====
+  async function loadInventory() {
+    let data;
+    try { data = await api('/api/cases/inventory'); }
+    catch (e) { return; }
+    renderCases(data.cases || []);
+    renderPrizes(data.prizes || []);
+  }
 
-        function caseWord(n) {
-            const m10 = n % 10, m100 = n % 100;
-            if (m10 === 1 && m100 !== 11) return 'кейс';
-            if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return 'кейса';
-            return 'кейсов';
-        }
+  function renderCases(cases) {
+    const area = document.getElementById('casesArea');
+    const meta = document.getElementById('casesMeta');
+    if (!cases.length) {
+      area.innerHTML = '<div class="empty"><div class="ic">◇</div>'
+        + '<h5>Кейсов пока нет</h5>'
+        + '<p>Сделай продажу — и админ начислит тебе кейс. Они появятся здесь.</p></div>';
+      meta.innerHTML = 'пока нет кейсов на открытие';
+      return;
+    }
+    const byTier = { 1: [], 2: [], 3: [] };
+    cases.forEach(c => { if (byTier[c.tier]) byTier[c.tier].push(c); });
+    let html = '<div class="cases-grid">';
+    [1, 2, 3].forEach(t => {
+      const list = byTier[t];
+      if (!list.length) return;
+      const ti = TIER_INFO[t];
+      html += '<article class="case-card t' + t + '">'
+        + '<div class="top-row">'
+        + '<span class="tier-label">Тир ' + t + ' · ' + ti.word + '</span>'
+        + '<span class="count"><em>×</em>' + list.length + '</span></div>'
+        + '<div class="lootbox"><div class="halo"></div><div class="box">'
+        + '<span class="corner tl"></span><span class="corner tr"></span>'
+        + '<span class="corner bl"></span><span class="corner br"></span>'
+        + '<div class="emblem">' + ti.roman + '</div></div></div>'
+        + '<h3>' + ti.title + '</h3>'
+        + '<div class="desc">' + ti.desc + '</div>'
+        + '<button class="btn-open" type="button" onclick="openCase(' + list[0].id + ',' + t + ')">'
+        + 'Открыть <span class="arrow">→</span></button>'
+        + '</article>';
+    });
+    html += '</div>';
+    area.innerHTML = html;
+    meta.innerHTML = 'всего у тебя <b>' + cases.length + ' ' + caseWord(cases.length) + '</b> на открытие';
+  }
 
-        function renderPrizes(prizes) {
-            const area = document.getElementById('prizesArea');
-            if (!prizes.length) {
-                area.innerHTML = '<div class="empty"><div class="e-emoji">✨</div>'
-                    + '<div class="e-text">Призов пока нет. Открой кейс 🥰</div></div>';
-                return;
-            }
-            area.innerHTML = prizes.map(p => {
-                const isTask = p.prize_kind === 'task';
-                const badge = p.delivered
-                    ? '<span class="badge done">' + (isTask ? 'зачтено' : 'выдан') + '</span>'
-                    : '<span class="badge wait">' + (isTask ? 'нужно сделать' : 'ждёт выдачи') + '</span>';
-                return '<div class="prize-row rarity-' + (p.prize_rarity || 'common') + '">'
-                    + '<div class="p-tile">' + escapeHtml(p.prize_icon || '🎁') + '</div>'
-                    + '<div class="p-main"><div class="p-name">' + escapeHtml(p.prize_name) + '</div>'
-                    + '<div class="p-meta">' + (isTask ? 'Задание' : 'Приз') + ' · ' + fmtTime(p.opened_at) + '</div></div>'
-                    + '<div class="p-right"><span class="tier-tag">Тир ' + p.tier + '</span>' + badge + '</div>'
-                    + '</div>';
-            }).join('');
-        }
+  function renderPrizes(prizes) {
+    const area = document.getElementById('prizesArea');
+    const meta = document.getElementById('prizesMeta');
+    if (!prizes.length) {
+      area.innerHTML = '<div class="empty"><div class="ic">∅</div>'
+        + '<h5>Призов ещё не было</h5>'
+        + '<p>Открой свой первый кейс — и призы появятся в этом списке.</p></div>';
+      meta.innerHTML = 'призов пока нет';
+      return;
+    }
+    area.innerHTML = '<div class="prizes">' + prizes.map(p => {
+      const isTask = p.prize_kind === 'task';
+      const rar = p.prize_rarity || 'common';
+      const badge = p.delivered
+        ? '<span class="badge done"><span class="pip"></span>' + (isTask ? 'зачтено' : 'выдан') + '</span>'
+        : '<span class="badge wait"><span class="pip"></span>' + (isTask ? 'нужно сделать' : 'ждёт выдачи') + '</span>';
+      return '<div class="prize-row ' + rarClass(rar) + '">'
+        + '<div class="prize-icon">' + escapeHtml(p.prize_icon || '🎁') + '</div>'
+        + '<div class="prize-meta"><div class="prize-name">' + escapeHtml(p.prize_name) + '</div>'
+        + '<div class="prize-sub"><span class="rar-tag">' + (RAR_WORD[rar] || rar) + '</span>'
+        + '<span class="when">' + fmtTime(p.opened_at) + '</span>'
+        + '<span>· ' + (isTask ? 'задание' : 'кейс Тир ' + p.tier) + '</span></div></div>'
+        + badge + '</div>';
+    }).join('') + '</div>';
+    const wait = prizes.filter(p => !p.delivered).length;
+    meta.innerHTML = 'всего <b>' + prizes.length + '</b> · <b>' + wait + '</b> ждут выдачи';
+  }
 
-        // ===== Открытие кейса =====
-        async function openCase(grantId, tier) {
-            if (opening) return;
-            opening = true;
-            document.getElementById('openTierName').textContent = 'Тир ' + tier;
-            document.getElementById('resultCard').style.display = 'none';
-            closeOpenBtn.style.display = 'none';
-            document.getElementById('reelStrip').innerHTML = '';
-            openOverlay.style.display = 'flex';
+  // ===== Открытие кейса =====
+  async function openCase(grantId, tier) {
+    if (opening) return;
+    opening = true;
+    document.getElementById('openSource').textContent = NICK + ' открывает «Тир ' + tier + '»';
+    document.getElementById('resultCard').style.display = 'none';
+    document.getElementById('reelStrip').innerHTML = '';
+    openOverlay.style.display = 'flex';
 
-            let data;
-            try { data = await api('/api/cases/open', 'POST', { grantId: grantId }); }
-            catch (e) {
-                opening = false;
-                openOverlay.style.display = 'none';
-                alert('Не удалось открыть кейс. Обнови страницу и попробуй снова.');
-                loadInventory();
-                return;
-            }
+    let data;
+    try { data = await api('/api/cases/open', 'POST', { grantId: grantId }); }
+    catch (e) {
+      opening = false;
+      openOverlay.style.display = 'none';
+      alert('Не удалось открыть кейс. Обнови страницу и попробуй снова.');
+      loadInventory();
+      return;
+    }
 
-            buildReel(data.pool || [], data.prize);
-            runReel(function () {
-                showResult(data.prize, data.newCase);
-                opening = false;
-            });
-        }
+    buildReel(data.pool || [], data.prize);
+    runReel(function () {
+      showResult(data.prize, data.newCase);
+      opening = false;
+    });
+  }
 
-        function buildReel(pool, prize) {
-            const strip = document.getElementById('reelStrip');
-            strip.style.transition = 'none';
-            strip.style.transform = 'translateX(0px)';
-            strip.innerHTML = '';
-            const safePool = pool.length ? pool : [prize];
-            for (let i = 0; i < STRIP_LEN; i++) {
-                const p = (i === WIN_INDEX) ? prize : safePool[Math.floor(Math.random() * safePool.length)];
-                const el = document.createElement('div');
-                el.className = 'ri rarity-' + (p.rarity || 'common');
-                el.innerHTML = '<div class="ri-icon">' + escapeHtml(p.icon || '🎁') + '</div>'
-                    + '<div class="ri-name">' + escapeHtml(p.name) + '</div>';
-                strip.appendChild(el);
-            }
-        }
+  function buildReel(pool, prize) {
+    const strip = document.getElementById('reelStrip');
+    strip.style.transition = 'none';
+    strip.style.transform = 'translateX(0px)';
+    strip.innerHTML = '';
+    const safe = pool.length ? pool : [prize];
+    for (let i = 0; i < STRIP_LEN; i++) {
+      const p = (i === WIN_INDEX) ? prize : safe[Math.floor(Math.random() * safe.length)];
+      const rar = p.rarity || 'common';
+      const el = document.createElement('div');
+      el.className = 'rc ' + rarClass(rar);
+      el.innerHTML = '<div class="ric">' + escapeHtml(p.icon || '🎁') + '</div>'
+        + '<div><div class="nm">' + escapeHtml(p.name) + '</div>'
+        + '<div class="rt">' + (RAR_WORD[rar] || rar) + '</div></div>';
+      strip.appendChild(el);
+    }
+  }
 
-        function runReel(done) {
-            const strip = document.getElementById('reelStrip');
-            const vpW = document.getElementById('reelViewport').clientWidth;
-            const jitter = Math.random() * 100 - 50;
-            const finalX = vpW / 2 - (WIN_INDEX * CELL + CELL / 2) + jitter;
+  function runReel(done) {
+    const strip = document.getElementById('reelStrip');
+    const wrap = strip.parentElement;
+    const vpW = wrap.clientWidth;
+    const jitter = Math.random() * 100 - 50;
+    const winCenter = REEL_PAD + WIN_INDEX * (REEL_ITEM + REEL_GAP) + REEL_ITEM / 2;
+    const finalX = vpW / 2 - winCenter + jitter;
 
-            strip.offsetHeight; // форс reflow
-            try { spinSound.currentTime = 0; spinSound.play(); } catch (e) {}
+    strip.offsetHeight; // форс reflow
+    try { spinSound.currentTime = 0; spinSound.play(); } catch (e) {}
 
-            requestAnimationFrame(function () {
-                requestAnimationFrame(function () {
-                    strip.style.transition = 'transform ' + SPIN_MS + 'ms cubic-bezier(.10,.72,.18,1)';
-                    strip.style.transform = 'translateX(' + finalX + 'px)';
-                });
-            });
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        strip.style.transition = 'transform ' + SPIN_MS + 'ms cubic-bezier(.10,.72,.18,1)';
+        strip.style.transform = 'translateX(' + finalX + 'px)';
+      });
+    });
 
-            let finished = false;
-            function onEnd() {
-                if (finished) return;
-                finished = true;
-                strip.removeEventListener('transitionend', onEnd);
-                try { spinSound.pause(); spinSound.currentTime = 0; } catch (e) {}
-                try { winSound.currentTime = 0; winSound.play(); } catch (e) {}
-                done();
-            }
-            strip.addEventListener('transitionend', onEnd);
-            setTimeout(onEnd, SPIN_MS + 500); // фолбэк, если transitionend не сработал
-        }
+    let finished = false;
+    function onEnd() {
+      if (finished) return;
+      finished = true;
+      strip.removeEventListener('transitionend', onEnd);
+      const items = strip.children;
+      if (items[WIN_INDEX]) items[WIN_INDEX].classList.add('center');
+      try { spinSound.pause(); spinSound.currentTime = 0; } catch (e) {}
+      try { winSound.currentTime = 0; winSound.play(); } catch (e) {}
+      done();
+    }
+    strip.addEventListener('transitionend', onEnd);
+    setTimeout(onEnd, SPIN_MS + 500);
+  }
 
-        function showResult(prize, newCase) {
-            const card = document.getElementById('resultCard');
-            const rarity = prize.rarity || 'common';
-            let title, msg;
-            if (prize.kind === 'case') {
-                title = 'Выпал кейс!';
-                msg = 'Кейс уже в твоём инвентаре, можно сразу крутить.';
-            } else if (prize.kind === 'task') {
-                title = 'Тебе выпало задание';
-                msg = 'Выполни его, админ зачтёт в разделе «Мои призы».';
-            } else {
-                title = 'Тебе выпало';
-                msg = 'Админ выдаст приз. Следи за разделом «Мои призы».';
-            }
-            card.className = 'result-card rarity-' + rarity;
-            card.innerHTML = '<div class="rc-title">' + title + '</div>'
-                + '<div class="rc-icon">' + escapeHtml(prize.icon || '🎁') + '</div>'
-                + '<div class="rc-name">' + escapeHtml(prize.name) + '</div>'
-                + '<div class="rc-msg">' + msg + '</div>';
-            card.style.display = 'inline-block';
-            closeOpenBtn.style.display = 'inline-flex';
-            if (rarity === 'legendary' || rarity === 'rare') confetti(rarity === 'legendary' ? 130 : 70);
-        }
+  function showResult(prize, newCase) {
+    const card = document.getElementById('resultCard');
+    const rar = prize.rarity || 'common';
+    const v = RAR_VARS[rar] || RAR_VARS.common;
+    card.style.setProperty('--rar', v[0]);
+    card.style.setProperty('--rar-deep', v[1]);
+    card.style.setProperty('--rar-glow', v[2]);
+    let msg;
+    if (prize.kind === 'case') msg = 'Кейс уже в твоём инвентаре — можно сразу крутить.';
+    else if (prize.kind === 'task') msg = 'Это задание. Выполни его, админ зачтёт в разделе «Мои призы».';
+    else msg = 'Админ выдаст приз вручную. Следи за разделом «Мои призы».';
+    card.innerHTML = '<div class="visual">' + escapeHtml(prize.icon || '🎁') + '</div>'
+      + '<div class="info"><span class="rar-tag">' + (RAR_WORD[rar] || rar) + '</span>'
+      + '<h3>' + escapeHtml(prize.name) + '</h3><p>' + msg + '</p></div>'
+      + '<div class="actions"><button class="btn primary" onclick="closeOpening()">Забрать приз</button></div>';
+    card.style.display = 'grid';
+    if (rar === 'legendary' || rar === 'rare') confetti(rar === 'legendary' ? 130 : 70);
+  }
 
-        closeOpenBtn.addEventListener('click', function () {
-            openOverlay.style.display = 'none';
-            loadInventory();
-        });
+  function closeOpening() {
+    openOverlay.style.display = 'none';
+    loadInventory();
+  }
 
-        function confetti(count) {
-            const colors = ['#ff2d78', '#8b3dff', '#ffc23c', '#4f9dff', '#4bd07f'];
-            const frag = document.createDocumentFragment();
-            const els = [];
-            for (let i = 0; i < count; i++) {
-                const c = document.createElement('div');
-                c.className = 'confetti-particle';
-                c.style.left = Math.random() * 100 + 'vw';
-                c.style.background = colors[Math.floor(Math.random() * colors.length)];
-                c.style.borderRadius = Math.random() > .5 ? '50%' : '2px';
-                c.style.animation = 'fall ' + (2.6 + Math.random() * 1.7) + 's linear forwards';
-                c.style.animationDelay = (Math.random() * 0.4) + 's';
-                els.push(c);
-                frag.appendChild(c);
-            }
-            document.body.appendChild(frag);
-            setTimeout(function () { els.forEach(e => e.remove()); }, 5000);
-        }
+  function confetti(count) {
+    const colors = ['oklch(0.78 0.13 220)', 'oklch(0.72 0.22 300)', 'oklch(0.84 0.16 85)', 'oklch(0.78 0.14 155)', '#fff'];
+    const frag = document.createDocumentFragment();
+    const els = [];
+    for (let i = 0; i < count; i++) {
+      const c = document.createElement('div');
+      c.className = 'confetti-particle';
+      c.style.left = Math.random() * 100 + 'vw';
+      c.style.background = colors[Math.floor(Math.random() * colors.length)];
+      c.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+      c.style.animation = 'fall ' + (2.6 + Math.random() * 1.7) + 's linear forwards';
+      c.style.animationDelay = (Math.random() * 0.4) + 's';
+      els.push(c);
+      frag.appendChild(c);
+    }
+    document.body.appendChild(frag);
+    setTimeout(function () { els.forEach(e => e.remove()); }, 5000);
+  }
 
-        // ===== Админка =====
-        let adminConfig = { prizes: [], tiers: { 1: [], 2: [], 3: [] } };
+  // ===== Админка =====
+  let adminConfig = { prizes: [], tiers: { 1: [], 2: [], 3: [] } };
 
-        function initAdmin() {
-            document.querySelectorAll('.admin-tabs .tab').forEach(function (tab) {
-                tab.addEventListener('click', function () {
-                    document.querySelectorAll('.admin-tabs .tab').forEach(t => t.classList.remove('active'));
-                    tab.classList.add('active');
-                    document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
-                    document.getElementById('tab-' + tab.dataset.tab).style.display = 'block';
-                });
-            });
+  function initAdmin() {
+    document.querySelectorAll('.tabs .tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+      });
+    });
 
-            document.getElementById('grantBtn').addEventListener('click', grantCases);
-            document.getElementById('pendingRefresh').addEventListener('click', loadPending);
-            document.getElementById('logRefresh').addEventListener('click', loadLog);
-            document.getElementById('addPrizeBtn').addEventListener('click', function () {
-                renderPrizeEditorRow(null, true);
-            });
+    document.querySelectorAll('#grantTierRadio label').forEach(function (l) {
+      l.addEventListener('click', function () {
+        document.querySelectorAll('#grantTierRadio label').forEach(x => x.classList.remove('sel'));
+        l.classList.add('sel');
+      });
+    });
 
-            loadWorkers();
-            loadPending();
-            loadConfig();
-            loadLog();
-        }
+    document.getElementById('grantBtn').addEventListener('click', grantCases);
+    document.getElementById('addPrizeBtn').addEventListener('click', function () {
+      renderPrizeEditorRow(null);
+    });
 
-        async function loadWorkers() {
-            try {
-                const data = await api('/api/users');
-                const sel = document.getElementById('grantWorker');
-                sel.innerHTML = (data.users || [])
-                    .map(u => '<option value="' + escapeHtml(u.nickname) + '">' + escapeHtml(u.nickname)
-                        + ' (' + escapeHtml(u.role) + ')</option>').join('');
-            } catch (e) {}
-        }
+    loadWorkers();
+    loadPending();
+    loadConfig();
+    loadLog();
+  }
 
-        async function grantCases() {
-            const st = document.getElementById('grantStatus');
-            const worker = document.getElementById('grantWorker').value;
-            const tier = parseInt(document.getElementById('grantTier').value);
-            const count = parseInt(document.getElementById('grantCount').value) || 1;
-            if (!worker) { st.className = 'status err'; st.textContent = 'Выбери воркера'; return; }
-            try {
-                const r = await api('/api/cases/grant', 'POST', { workerNickname: worker, tier: tier, count: count });
-                st.className = 'status ok';
-                st.textContent = 'Выдано: ' + r.granted + ' шт.';
-                setTimeout(function () { st.textContent = ''; }, 4000);
-            } catch (e) {
-                st.className = 'status err';
-                st.textContent = 'Ошибка: ' + (e.data && e.data.error || e.message);
-            }
-        }
+  function selectedTier() {
+    const sel = document.querySelector('#grantTierRadio label.sel');
+    return sel ? parseInt(sel.dataset.tier) : 1;
+  }
 
-        async function loadPending() {
-            const area = document.getElementById('pendingArea');
-            let data;
-            try { data = await api('/api/cases/pending'); }
-            catch (e) { area.innerHTML = '<div class="empty"><div class="e-text">Ошибка загрузки</div></div>'; return; }
-            const list = data.pending || [];
-            if (!list.length) {
-                area.innerHTML = '<div class="empty"><div class="e-emoji">✅</div>'
-                    + '<div class="e-text">Очередь пуста, никому ничего не должен 🥰</div></div>';
-                return;
-            }
-            area.innerHTML = list.map(function (p) {
-                const isTask = p.prize_kind === 'task';
-                return '<div class="prize-row rarity-' + (p.prize_rarity || 'common') + '">'
-                    + '<div class="p-tile">' + escapeHtml(p.prize_icon || '🎁') + '</div>'
-                    + '<div class="p-main"><div class="p-name">' + escapeHtml(p.worker_nickname)
-                    + ' — ' + escapeHtml(p.prize_name) + '</div>'
-                    + '<div class="p-meta">' + (isTask ? 'Задание' : 'Приз') + ' · Тир ' + p.tier
-                    + ' · ' + fmtTime(p.opened_at) + '</div></div>'
-                    + '<div class="p-right"><button class="btn small" onclick="deliverPrize(' + p.id + ')">'
-                    + (isTask ? 'Зачтено' : 'Выдал') + '</button></div></div>';
-            }).join('');
-        }
+  async function loadWorkers() {
+    try {
+      const data = await api('/api/users');
+      document.getElementById('grantWorker').innerHTML = (data.users || [])
+        .map(u => '<option value="' + escapeHtml(u.nickname) + '">' + escapeHtml(u.nickname)
+          + ' · ' + escapeHtml(u.role) + '</option>').join('');
+    } catch (e) {}
+  }
 
-        async function deliverPrize(openingId) {
-            try {
-                await api('/api/cases/deliver', 'POST', { openingId: openingId });
-                loadPending();
-            } catch (e) {
-                alert('Ошибка: ' + (e.data && e.data.error || e.message));
-            }
-        }
+  async function grantCases() {
+    const st = document.getElementById('grantStatus');
+    const worker = document.getElementById('grantWorker').value;
+    const tier = selectedTier();
+    const count = parseInt(document.getElementById('grantCount').value) || 1;
+    if (!worker) { st.className = 'form-status err'; st.textContent = 'Выбери воркера'; return; }
+    try {
+      const r = await api('/api/cases/grant', 'POST', { workerNickname: worker, tier: tier, count: count });
+      st.className = 'form-status ok';
+      st.textContent = 'Выдано: ' + r.granted + ' шт. воркеру ' + worker;
+      setTimeout(function () { st.textContent = ''; }, 4500);
+    } catch (e) {
+      st.className = 'form-status err';
+      st.textContent = 'Ошибка: ' + (e.data && e.data.error || e.message);
+    }
+  }
 
-        async function loadConfig() {
-            try { adminConfig = await api('/api/cases/admin/config'); }
-            catch (e) { return; }
-            renderPrizeEditor();
-            renderWeightEditor();
-        }
+  async function loadPending() {
+    const area = document.getElementById('pendingArea');
+    let data;
+    try { data = await api('/api/cases/pending'); }
+    catch (e) { area.innerHTML = '<p style="color:var(--fg-mute)">Ошибка загрузки.</p>'; return; }
+    const list = data.pending || [];
+    document.getElementById('pendingCount').textContent = list.length;
+    document.getElementById('pendingTag').textContent = list.length + ' в ожидании';
+    if (!list.length) {
+      area.innerHTML = '<div class="empty"><div class="ic">⌀</div>'
+        + '<h5>Очередь чиста</h5><p>Все призы выданы. Новые заявки появятся здесь.</p></div>';
+      return;
+    }
+    area.innerHTML = '<table class="tbl"><thead><tr>'
+      + '<th>Сотрудник</th><th>Приз</th><th>Когда</th><th></th></tr></thead><tbody>'
+      + list.map(function (p) {
+        const isTask = p.prize_kind === 'task';
+        return '<tr><td><div class="who"><div class="avatar">' + initials(p.worker_nickname) + '</div>'
+          + '<div>' + escapeHtml(p.worker_nickname) + '</div></div></td>'
+          + '<td>' + escapeHtml(p.prize_icon || '') + ' ' + escapeHtml(p.prize_name)
+          + ' <span class="tier-pill t' + p.tier + '">тир ' + p.tier + '</span></td>'
+          + '<td class="when">' + fmtTime(p.opened_at) + '</td>'
+          + '<td><button class="icon-btn" title="' + (isTask ? 'Зачтено' : 'Выдать')
+          + '" onclick="deliverPrize(' + p.id + ')">✓</button></td></tr>';
+      }).join('')
+      + '</tbody></table>';
+  }
 
-        const KIND_OPTS = [['reward', 'Приз (выдаёт админ)'], ['task', 'Задание воркеру'], ['case', 'Кейс']];
-        const RARITY_OPTS = [['common', 'Обычный'], ['rare', 'Редкий'], ['legendary', 'Легендарный']];
+  async function deliverPrize(openingId) {
+    try {
+      await api('/api/cases/deliver', 'POST', { openingId: openingId });
+      loadPending();
+    } catch (e) {
+      alert('Ошибка: ' + (e.data && e.data.error || e.message));
+    }
+  }
 
-        function selectHtml(opts, val) {
-            return opts.map(o => '<option value="' + o[0] + '"' + (o[0] === val ? ' selected' : '') + '>'
-                + o[1] + '</option>').join('');
-        }
+  async function loadConfig() {
+    try { adminConfig = await api('/api/cases/admin/config'); }
+    catch (e) { return; }
+    renderPrizeEditor();
+    renderWeightEditor();
+  }
 
-        function renderPrizeEditor() {
-            document.getElementById('prizeEditor').innerHTML = '';
-            adminConfig.prizes.forEach(p => renderPrizeEditorRow(p, false));
-        }
+  const KIND_OPTS = [['reward', 'Приз (выдаёт админ)'], ['task', 'Задание воркеру'], ['case', 'Кейс']];
+  const RARITY_OPTS = [['common', 'Обычный'], ['rare', 'Редкий'], ['legendary', 'Легендарный']];
 
-        function renderPrizeEditorRow(p, isNew) {
-            p = p || { id: null, name: '', kind: 'reward', case_tier: null, icon: '🎁', rarity: 'common', is_active: true };
-            const wrap = document.createElement('div');
-            wrap.className = 'editor-prize';
-            wrap.innerHTML =
-                '<div class="field"><label>Иконка</label><input class="ico ep-icon" value="' + escapeHtml(p.icon || '🎁') + '"></div>'
-                + '<div class="field nm"><label>Название</label><input class="ep-name" value="' + escapeHtml(p.name) + '"></div>'
-                + '<div class="field"><label>Тип</label><select class="ep-kind">' + selectHtml(KIND_OPTS, p.kind) + '</select></div>'
-                + '<div class="field"><label>Тир кейса</label><select class="ep-ctier">'
-                + '<option value="">—</option>'
-                + [1, 2, 3].map(t => '<option value="' + t + '"' + (p.case_tier === t ? ' selected' : '') + '>Тир ' + t + '</option>').join('')
-                + '</select></div>'
-                + '<div class="field"><label>Редкость</label><select class="ep-rarity">' + selectHtml(RARITY_OPTS, p.rarity) + '</select></div>'
-                + '<div class="field"><label>Активен</label><input type="checkbox" class="ep-active"' + (p.is_active !== false ? ' checked' : '') + '></div>'
-                + '<button class="btn small ep-save">Сохранить</button>'
-                + (p.id ? '<button class="btn small danger ep-del">Удалить</button>' : '');
-            wrap.dataset.id = p.id || '';
+  function selectHtml(opts, val) {
+    return opts.map(o => '<option value="' + o[0] + '"' + (o[0] === val ? ' selected' : '') + '>'
+      + o[1] + '</option>').join('');
+  }
 
-            wrap.querySelector('.ep-save').addEventListener('click', function () {
-                savePrize(wrap);
-            });
-            const delBtn = wrap.querySelector('.ep-del');
-            if (delBtn) delBtn.addEventListener('click', function () {
-                if (confirm('Удалить приз «' + p.name + '»? Он пропадёт из всех тиров.')) deletePrize(p.id);
-            });
+  function renderPrizeEditor() {
+    document.getElementById('prizeEditor').innerHTML = '';
+    adminConfig.prizes.forEach(p => renderPrizeEditorRow(p));
+  }
 
-            document.getElementById('prizeEditor').appendChild(wrap);
-        }
+  function renderPrizeEditorRow(p) {
+    p = p || { id: null, name: '', kind: 'reward', case_tier: null, icon: '🎁', rarity: 'common', is_active: true };
+    const wrap = document.createElement('div');
+    wrap.className = 'ed-edit';
+    wrap.innerHTML =
+      '<div class="field"><label>Иконка</label><input class="input ic-input ep-icon" value="' + escapeHtml(p.icon || '🎁') + '"></div>'
+      + '<div class="field grow"><label>Название</label><input class="input ep-name" value="' + escapeHtml(p.name) + '"></div>'
+      + '<div class="field"><label>Тип</label><select class="select ep-kind">' + selectHtml(KIND_OPTS, p.kind) + '</select></div>'
+      + '<div class="field"><label>Тир кейса</label><select class="select ep-ctier"><option value="">—</option>'
+      + [1, 2, 3].map(t => '<option value="' + t + '"' + (p.case_tier === t ? ' selected' : '') + '>Тир ' + t + '</option>').join('')
+      + '</select></div>'
+      + '<div class="field"><label>Редкость</label><select class="select ep-rarity">' + selectHtml(RARITY_OPTS, p.rarity) + '</select></div>'
+      + '<label class="chk"><input type="checkbox" class="ep-active"' + (p.is_active !== false ? ' checked' : '') + '> активен</label>'
+      + '<button class="btn sm ep-save">Сохранить</button>'
+      + (p.id ? '<button class="btn sm ep-del">Удалить</button>' : '');
+    wrap.dataset.id = p.id || '';
 
-        async function savePrize(wrap) {
-            const body = {
-                id: wrap.dataset.id ? parseInt(wrap.dataset.id) : null,
-                name: wrap.querySelector('.ep-name').value,
-                kind: wrap.querySelector('.ep-kind').value,
-                caseTier: wrap.querySelector('.ep-ctier').value || null,
-                icon: wrap.querySelector('.ep-icon').value,
-                rarity: wrap.querySelector('.ep-rarity').value,
-                isActive: wrap.querySelector('.ep-active').checked
-            };
-            try {
-                await api('/api/cases/admin/prize', 'POST', body);
-                loadConfig();
-            } catch (e) {
-                alert('Ошибка: ' + (e.data && e.data.error || e.message));
-            }
-        }
+    wrap.querySelector('.ep-save').addEventListener('click', function () { savePrize(wrap); });
+    const del = wrap.querySelector('.ep-del');
+    if (del) del.addEventListener('click', function () {
+      if (confirm('Удалить приз «' + p.name + '»? Он пропадёт из всех тиров.')) deletePrize(p.id);
+    });
+    document.getElementById('prizeEditor').appendChild(wrap);
+  }
 
-        async function deletePrize(id) {
-            try {
-                await api('/api/cases/admin/prize/delete', 'POST', { id: id });
-                loadConfig();
-            } catch (e) {
-                alert('Ошибка: ' + (e.data && e.data.error || e.message));
-            }
-        }
+  async function savePrize(wrap) {
+    const body = {
+      id: wrap.dataset.id ? parseInt(wrap.dataset.id) : null,
+      name: wrap.querySelector('.ep-name').value,
+      kind: wrap.querySelector('.ep-kind').value,
+      caseTier: wrap.querySelector('.ep-ctier').value || null,
+      icon: wrap.querySelector('.ep-icon').value,
+      rarity: wrap.querySelector('.ep-rarity').value,
+      isActive: wrap.querySelector('.ep-active').checked
+    };
+    try {
+      await api('/api/cases/admin/prize', 'POST', body);
+      loadConfig();
+    } catch (e) {
+      alert('Ошибка: ' + (e.data && e.data.error || e.message));
+    }
+  }
 
-        function renderWeightEditor() {
-            const area = document.getElementById('weightEditor');
-            area.innerHTML = '';
-            [1, 2, 3].forEach(function (tier) {
-                const weightOf = {};
-                (adminConfig.tiers[tier] || []).forEach(tp => { weightOf[tp.prizeId] = tp.weight; });
-                const active = adminConfig.prizes.filter(p => p.is_active !== false);
-                const total = active.reduce((s, p) => s + (parseInt(weightOf[p.id]) || 0), 0);
+  async function deletePrize(id) {
+    try {
+      await api('/api/cases/admin/prize/delete', 'POST', { id: id });
+      loadConfig();
+    } catch (e) {
+      alert('Ошибка: ' + (e.data && e.data.error || e.message));
+    }
+  }
 
-                const block = document.createElement('div');
-                block.className = 'tier-weights';
-                let rows = '<h3>Тир ' + tier + '</h3>';
-                active.forEach(function (p) {
-                    const w = weightOf[p.id] || 0;
-                    const chance = total > 0 && w > 0 ? Math.round(w / total * 100) + '%' : '—';
-                    rows += '<div class="weight-row rarity-' + (p.rarity || 'common') + '" data-prize="' + p.id + '">'
-                        + '<span class="w-ico">' + escapeHtml(p.icon || '🎁') + '</span>'
-                        + '<span class="wn">' + escapeHtml(p.name) + '</span>'
-                        + '<span class="chance">' + chance + '</span>'
-                        + '<input type="number" class="we-input" min="0" value="' + w + '">'
-                        + '</div>';
-                });
-                rows += '<button class="btn small" data-savetier="' + tier + '">Сохранить Тир ' + tier + '</button>';
-                block.innerHTML = rows;
-                block.querySelector('[data-savetier]').addEventListener('click', function () {
-                    saveTierWeights(tier, block);
-                });
-                area.appendChild(block);
-            });
-        }
+  function renderWeightEditor() {
+    const area = document.getElementById('weightEditor');
+    area.innerHTML = '';
+    [1, 2, 3].forEach(function (tier) {
+      const weightOf = {};
+      (adminConfig.tiers[tier] || []).forEach(tp => { weightOf[tp.prizeId] = tp.weight; });
+      const active = adminConfig.prizes.filter(p => p.is_active !== false);
+      const total = active.reduce((s, p) => s + (parseInt(weightOf[p.id]) || 0), 0);
 
-        async function saveTierWeights(tier, block) {
-            const rows = block.querySelectorAll('.weight-row');
-            const tasks = [];
-            rows.forEach(function (r) {
-                const prizeId = parseInt(r.dataset.prize);
-                const weight = parseInt(r.querySelector('.we-input').value) || 0;
-                tasks.push(api('/api/cases/admin/tier-prize', 'POST', { tier: tier, prizeId: prizeId, weight: weight }));
-            });
-            try {
-                await Promise.all(tasks);
-                loadConfig();
-            } catch (e) {
-                alert('Ошибка сохранения весов: ' + (e.data && e.data.error || e.message));
-            }
-        }
+      const block = document.createElement('div');
+      block.className = 'weight-block';
+      let rows = '<h5>Тир ' + tier + ' — шанс выпадения</h5>';
+      active.forEach(function (p) {
+        const w = weightOf[p.id] || 0;
+        const chance = total > 0 && w > 0 ? Math.round(w / total * 100) + '%' : '—';
+        rows += '<div class="weight-row ' + rarClass(p.rarity) + '" data-prize="' + p.id + '">'
+          + '<span class="wic">' + escapeHtml(p.icon || '🎁') + '</span>'
+          + '<span class="wn">' + escapeHtml(p.name) + '</span>'
+          + '<span class="wch">' + chance + '</span>'
+          + '<input type="number" class="input we-input" min="0" value="' + w + '"></div>';
+      });
+      rows += '<button class="btn sm" data-savetier="' + tier + '">Сохранить Тир ' + tier + '</button>';
+      block.innerHTML = rows;
+      block.querySelector('[data-savetier]').addEventListener('click', function () {
+        saveTierWeights(tier, block);
+      });
+      area.appendChild(block);
+    });
+  }
 
-        async function loadLog() {
-            const area = document.getElementById('logArea');
-            let data;
-            try { data = await api('/api/cases/admin/log'); }
-            catch (e) { area.innerHTML = '<div class="empty"><div class="e-text">Ошибка загрузки</div></div>'; return; }
-            const log = data.log || [];
-            if (!log.length) {
-                area.innerHTML = '<div class="empty"><div class="e-emoji">📊</div>'
-                    + '<div class="e-text">Открытий пока не было</div></div>';
-                return;
-            }
-            area.innerHTML = log.map(function (l) {
-                const kindLabel = l.prize_kind === 'case' ? 'кейс'
-                    : l.prize_kind === 'task' ? 'задание' : 'приз';
-                return '<div class="prize-row rarity-' + (l.prize_rarity || 'common') + '">'
-                    + '<div class="p-tile">' + escapeHtml(l.prize_icon || '🎁') + '</div>'
-                    + '<div class="p-main"><div class="p-name">' + escapeHtml(l.worker_nickname)
-                    + ' — ' + escapeHtml(l.prize_name) + '</div>'
-                    + '<div class="p-meta">Тир ' + l.tier + ' · ' + fmtTime(l.opened_at) + '</div></div>'
-                    + '<div class="p-right"><span class="tier-tag">' + kindLabel + '</span></div></div>';
-            }).join('');
-        }
+  async function saveTierWeights(tier, block) {
+    const tasks = [];
+    block.querySelectorAll('.weight-row').forEach(function (r) {
+      const prizeId = parseInt(r.dataset.prize);
+      const weight = parseInt(r.querySelector('.we-input').value) || 0;
+      tasks.push(api('/api/cases/admin/tier-prize', 'POST', { tier: tier, prizeId: prizeId, weight: weight }));
+    });
+    try {
+      await Promise.all(tasks);
+      loadConfig();
+    } catch (e) {
+      alert('Ошибка сохранения весов: ' + (e.data && e.data.error || e.message));
+    }
+  }
 
-        init();
-    </script>
+  async function loadLog() {
+    const area = document.getElementById('logArea');
+    let data;
+    try { data = await api('/api/cases/admin/log'); }
+    catch (e) { area.innerHTML = '<p style="color:var(--fg-mute)">Ошибка загрузки.</p>'; return; }
+    const log = data.log || [];
+    if (!log.length) {
+      area.innerHTML = '<div class="empty"><div class="ic">⎯</div>'
+        + '<h5>Лог пуст</h5><p>Открытий кейсов пока не было.</p></div>';
+      return;
+    }
+    area.innerHTML = '<div class="log">' + log.map(function (l) {
+      const lvl = l.prize_kind === 'case' ? 'info' : 'win';
+      const label = l.prize_kind === 'case' ? 'CASE' : 'WIN';
+      return '<div class="row"><span class="ts">' + fmtTime(l.opened_at) + '</span>'
+        + '<span class="lvl ' + lvl + '">' + label + '</span>'
+        + '<span>' + escapeHtml(l.worker_nickname) + ' открыл Тир ' + l.tier
+        + ' → ' + escapeHtml(l.prize_name) + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  init();
+</script>
 </body>
-
 </html>
