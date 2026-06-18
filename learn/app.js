@@ -147,7 +147,7 @@
     function pasteCard(q,i){
       const wrap=document.createElement('div'); wrap.className='q';
       wrap.innerHTML='<div class="q__t"><span class="num">'+(i+1)+'.</span> '+q.q+'</div>'
-        +'<textarea class="ta" maxlength="300" placeholder="'+esc(q.placeholder||'пиши руками...')+'"></textarea>'
+        +'<textarea class="ta" maxlength="3000" placeholder="'+esc(q.placeholder||'пиши руками...')+'"></textarea>'
         +'<div class="row"><button class="btn" type="button">Проверить</button><span class="hint">проверяет AI по рубрике</span></div>'
         +'<div class="verdict"></div>';
       const ta=wrap.querySelector('.ta'), btn=wrap.querySelector('.btn'), v=wrap.querySelector('.verdict');
