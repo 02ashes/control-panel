@@ -4,6 +4,7 @@ const socketIo = require('socket.io');
 const path = require('path');
 const bcrypt = require('bcrypt');
 const { Pool } = require('pg');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
@@ -31,6 +32,43 @@ pool.connect((err, client, release) => {
         release();
     }
 });
+
+// ===== Обучение чаттеров (learn/): уроки, ключ ответов, AI-проверка паст =====
+const TRAINING_LESSONS = require('./learn/lessons.js');
+const grading = require('./learn/grading.js');
+
+// XAI ключ: из env (прод), с фолбэком на .env (локалка). В браузер не уходит.
+let XAI_API_KEY = process.env.XAI_API_KEY || '';
+if (!XAI_API_KEY) {
+    try {
+        fs.readFileSync(path.join(__dirname, '.env'), 'utf8').split('\n').forEach(l => {
+            const m = l.match(/^\s*XAI_API_KEY\s*=\s*(.+?)\s*$/); if (m) XAI_API_KEY = m[1];
+        });
+    } catch (e) {}
+}
+
+// Очищенные уроки для клиента (БЕЗ правильных ответов и пояснений)
+const TRAINING_CLIENT_LESSONS = TRAINING_LESSONS.map(l => ({
+    id: l.id, title: l.title, sub: l.sub || '', blocks: l.blocks || [],
+    quiz: (l.quiz || []).map(q => q.type === 'paste'
+        ? { type: 'paste', q: q.q, task: q.task, placeholder: q.placeholder || '' }
+        : { type: 'mc', q: q.q, opts: q.opts })
+}));
+// Серверный ключ ответов: lessonId -> { mc:{qIndex:correctText}, paste:{qIndex:task}, lesson }
+const TRAINING_KEY = {};
+TRAINING_LESSONS.forEach(l => {
+    const mc = {}, paste = {};
+    (l.quiz || []).forEach((q, i) => {
+        if (q.type === 'paste') paste[i] = q.task || grading.DEFAULT_TASK;
+        else mc[i] = q.opts[q.correct];
+    });
+    TRAINING_KEY[l.id] = { mc, paste, lesson: l };
+});
+const TRAINING_LESSON_COUNT = TRAINING_LESSONS.length;
+function nextTrainingLessonId(id) {
+    const idx = TRAINING_LESSONS.findIndex(x => x.id === id);
+    return (idx >= 0 && idx + 1 < TRAINING_LESSONS.length) ? TRAINING_LESSONS[idx + 1].id : null;
+}
 
 // Создание таблиц
 (async () => {
@@ -83,6 +121,36 @@ pool.connect((err, client, release) => {
         await pool.query(`
             UPDATE user_registrations SET role = 'admin' WHERE nickname = '02ashes'
         `);
+
+        // Обучение: прогресс (источник правды для разблокировки) + лог событий
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS training_progress (
+                nickname TEXT NOT NULL,
+                lesson INTEGER NOT NULL,
+                passed_at TIMESTAMP NOT NULL,
+                correct INTEGER,
+                total INTEGER,
+                PRIMARY KEY (nickname, lesson)
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS training_events (
+                id SERIAL PRIMARY KEY,
+                nickname TEXT NOT NULL,
+                type TEXT NOT NULL,
+                lesson INTEGER,
+                qindex INTEGER,
+                lesson_title TEXT,
+                task TEXT,
+                paste TEXT,
+                score INTEGER,
+                pass BOOLEAN,
+                feedback TEXT,
+                ts TIMESTAMP NOT NULL
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_events_nick ON training_events(nickname)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_progress_nick ON training_progress(nickname)`);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS messages (
@@ -358,12 +426,28 @@ app.get('/admin', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// Не отдаём файл с ответами на тесты напрямую — клиент берёт очищенную версию через /api/training/lessons
+app.get('/learn/lessons.js', (req, res) => res.status(404).send('not found'));
+
 // Serve static files
 app.use(express.static(__dirname));
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '10mb' })); // Увеличенный лимит для больших объемов снипетов
 
 app.use('/voice', express.static(path.join(__dirname, 'voice_messages')));
+
+// Ученики (роль 'new') имеют доступ ТОЛЬКО к обучению и проверке авторизации — всё остальное под /api/* им закрыто.
+app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    const nick = req.headers['x-nickname'] || (req.body && req.body.nickname);
+    const u = nick ? users.get(nick) : null;
+    if (u && u.role === 'new') {
+        const p = req.path;
+        const allowed = p.startsWith('/api/training/') || p === '/api/auth/check' || p === '/api/user/role';
+        if (!allowed) return res.status(403).json({ error: 'trainee_restricted' });
+    }
+    next();
+});
 
 app.get('/control.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'control.html'));
@@ -1108,7 +1192,7 @@ app.post('/api/user/role', requireRegistration, async (req, res) => {
     }
 
     // Validate role
-    const validRoles = ['admin', 'user', 'reader'];
+    const validRoles = ['admin', 'user', 'reader', 'new'];
     if (!validRoles.includes(newRole)) {
         return res.status(400).json({ error: 'invalid_role', validRoles });
     }
@@ -1137,10 +1221,8 @@ app.post('/api/user/role', requireRegistration, async (req, res) => {
             return res.status(404).json({ error: 'user_not_found' });
         }
 
-        // Update in memory cache
-        if (users.has(targetNickname)) {
-            users.set(targetNickname, { role: newRole });
-        }
+        // Update in memory cache (always — чтобы гард ученика сразу видел новую роль)
+        users.set(targetNickname, { role: newRole });
 
         console.log(`Role changed: ${targetNickname} -> ${newRole} (by ${adminNickname})`);
         return res.json({ ok: true, nickname: targetNickname, role: newRole });
@@ -1292,6 +1374,125 @@ app.get('/api/auth/check', requireRegistration, async (req, res) => {
     } catch (err) {
         return res.json({ ok: true, nickname, role: 'reader' });
     }
+});
+
+// ===================== ОБУЧЕНИЕ (learn/) =====================
+
+// Очищенные уроки (без ответов) — для рендера в обучалке
+app.get('/api/training/lessons', requireRegistration, (req, res) => {
+    res.json({ ok: true, lessons: TRAINING_CLIENT_LESSONS, count: TRAINING_LESSON_COUNT });
+});
+
+// Свой прогресс: какие уроки реально сданы (источник правды для разблокировки)
+app.get('/api/training/progress', requireRegistration, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT lesson FROM training_progress WHERE nickname = $1 ORDER BY lesson', [req.user.nickname]);
+        res.json({ ok: true, passed: r.rows.map(x => x.lesson), count: TRAINING_LESSON_COUNT });
+    } catch (e) { res.status(500).json({ error: 'database_error' }); }
+});
+
+// AI-проверка пасты (ник берётся из сессии, task — из серверного ключа)
+app.post('/api/training/check-paste', requireRegistration, async (req, res) => {
+    const nickname = req.user.nickname;
+    const { paste, lesson, qindex } = req.body || {};
+    try {
+        if (!paste || !String(paste).trim()) throw new Error('пустая паста');
+        if (!XAI_API_KEY) throw new Error('нет XAI_API_KEY на сервере');
+        const lessonKey = TRAINING_KEY[lesson];
+        const task = (lessonKey && lessonKey.paste && lessonKey.paste[qindex]) || grading.DEFAULT_TASK;
+        const lessonTitle = lessonKey ? lessonKey.lesson.title : '';
+        const raw = await grading.callGrok(String(paste).trim(), task, XAI_API_KEY);
+        const result = grading.clampVerdict(raw, task);
+        await pool.query(
+            'INSERT INTO training_events (nickname, type, lesson, qindex, lesson_title, task, paste, score, pass, feedback, ts) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+            [nickname, 'paste', lesson || null, (qindex != null ? qindex : null), lessonTitle, task, String(paste).trim(), result.score, result.pass, result.feedback, new Date()]
+        );
+        res.json(result);
+    } catch (e) {
+        res.json({ error: e.message || String(e) });
+    }
+});
+
+// Сдача теста: сервер сам проверяет MC по своему ключу и наличие сданных паст, затем пишет прогресс
+app.post('/api/training/submit', requireRegistration, async (req, res) => {
+    const nickname = req.user.nickname;
+    const { lesson, mc } = req.body || {};
+    const key = TRAINING_KEY[lesson];
+    if (!key) return res.status(400).json({ error: 'unknown_lesson' });
+    try {
+        const quiz = key.lesson.quiz || [];
+        const mcAnswers = {};
+        (Array.isArray(mc) ? mc : []).forEach(a => { if (a && a.i != null) mcAnswers[a.i] = a.choice; });
+
+        let allOk = true; let correct = 0; const wrong = [];
+        for (let i = 0; i < quiz.length; i++) {
+            const q = quiz[i];
+            if (q.type === 'paste') {
+                const ev = await pool.query(
+                    'SELECT 1 FROM training_events WHERE nickname=$1 AND lesson=$2 AND qindex=$3 AND pass=true LIMIT 1',
+                    [nickname, lesson, i]
+                );
+                if (ev.rows.length) correct++; else { allOk = false; wrong.push(i); }
+            } else {
+                if (mcAnswers[i] != null && mcAnswers[i] === key.mc[i]) correct++;
+                else { allOk = false; wrong.push(i); }
+            }
+        }
+        const total = quiz.length;
+
+        if (allOk) {
+            await pool.query(
+                `INSERT INTO training_progress (nickname, lesson, passed_at, correct, total) VALUES ($1,$2,$3,$4,$5)
+                 ON CONFLICT (nickname, lesson) DO UPDATE SET passed_at=EXCLUDED.passed_at, correct=EXCLUDED.correct, total=EXCLUDED.total`,
+                [nickname, lesson, new Date(), correct, total]
+            );
+            await pool.query(
+                'INSERT INTO training_events (nickname, type, lesson, lesson_title, score, pass, ts) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+                [nickname, 'lesson_done', lesson, key.lesson.title, correct, true, new Date()]
+            );
+            const doneCount = await pool.query('SELECT COUNT(*)::int AS c FROM training_progress WHERE nickname=$1', [nickname]);
+            const courseDone = doneCount.rows[0].c >= TRAINING_LESSON_COUNT;
+            if (courseDone) {
+                await pool.query('INSERT INTO training_events (nickname, type, ts) VALUES ($1,$2,$3)', [nickname, 'course_done', new Date()]);
+            }
+            return res.json({ ok: true, passed: true, correct, total, nextLesson: nextTrainingLessonId(lesson), courseDone });
+        } else {
+            await pool.query(
+                'INSERT INTO training_events (nickname, type, lesson, lesson_title, score, pass, ts) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+                [nickname, 'lesson_fail', lesson, key.lesson.title, correct, false, new Date()]
+            );
+            return res.json({ ok: true, passed: false, correct, total, wrong });
+        }
+    } catch (e) {
+        res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Дашборд для админа: все события + прогресс по ученикам
+app.get('/api/training/results', requireRegistration, requireLogAccess, async (req, res) => {
+    try {
+        const ev = await pool.query('SELECT nickname, type, lesson, lesson_title, task, paste, score, pass, feedback, ts FROM training_events ORDER BY ts DESC LIMIT 5000');
+        const pr = await pool.query('SELECT nickname, lesson FROM training_progress');
+        const progress = {};
+        pr.rows.forEach(r => { (progress[r.nickname] = progress[r.nickname] || []).push(r.lesson); });
+        const events = ev.rows.map(r => ({
+            name: r.nickname, type: r.type, lesson: r.lesson, lessonTitle: r.lesson_title,
+            task: r.task, paste: r.paste, score: r.score, pass: r.pass, feedback: r.feedback,
+            ts: r.ts ? new Date(r.ts).getTime() : 0
+        }));
+        res.json({ ok: true, events, progress, count: TRAINING_LESSON_COUNT });
+    } catch (e) { res.status(500).json({ error: 'database_error' }); }
+});
+
+// Сброс прогресса ученика (админ)
+app.post('/api/training/reset', requireRegistration, requireLogAccess, async (req, res) => {
+    const { nickname } = req.body || {};
+    if (!nickname) return res.status(400).json({ error: 'nickname required' });
+    try {
+        await pool.query('DELETE FROM training_progress WHERE nickname=$1', [nickname]);
+        await pool.query('DELETE FROM training_events WHERE nickname=$1', [nickname]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: 'database_error' }); }
 });
 
 app.get('/api/voice/list', requireRegistration, (req, res) => {

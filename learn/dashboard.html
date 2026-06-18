@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Дашборд · обучение</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#140a20;--bg2:#1e1230;--card:#241636;--line:#352247;--ink:#f3e9fb;--dim:#b49fce;--dim2:#8c79a8;
+    --pink:#ff5e9c;--purple:#b06bff;--green:#46d98a;--red:#ff5a6e;--amber:#ffb84d;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:radial-gradient(120% 80% at 50% 0%,#1d1030,#0d0716);color:var(--ink);font-family:'Nunito',system-ui,sans-serif;min-height:100vh;padding:0 0 60px}
+  .wrap{max-width:760px;margin:0 auto;padding:0 16px}
+  header{padding:22px 0 14px}
+  .crumbs{font-size:13px;color:var(--dim2);font-weight:700}
+  h1{font-size:25px;font-weight:900;margin-top:2px}
+  .sum{color:var(--dim);font-size:14px;margin-top:4px}
+  .msgbox{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-top:18px;max-width:420px}
+  .btn{font-family:inherit;font-weight:800;font-size:15px;padding:11px 18px;border:none;border-radius:11px;cursor:pointer;background:linear-gradient(90deg,var(--pink),var(--purple));color:#fff;text-decoration:none;display:inline-block}
+  .btn.ghost{background:var(--bg2);border:1px solid var(--line)}
+  .err{color:var(--red);font-size:13px;font-weight:700;margin-top:8px}
+
+  .wcard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:14px}
+  .whead{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .wname{font-size:18px;font-weight:900}
+  .wprog{font-size:12px;font-weight:800;padding:4px 10px;border-radius:99px;background:#13321f;color:var(--green)}
+  .wready{font-size:12px;font-weight:800;padding:4px 10px;border-radius:99px;background:#1d2f4a;color:#7db8ff}
+  .wfail{font-size:12px;font-weight:800;padding:4px 10px;border-radius:99px;background:#33141a;color:var(--red)}
+  .wreset{margin-left:auto;font-size:11px;font-weight:800;padding:4px 10px;border-radius:8px;background:var(--bg2);color:var(--dim);border:1px solid var(--line);cursor:pointer}
+  .lessons{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+  .lchip{font-size:11px;font-weight:800;padding:4px 8px;border-radius:7px;background:var(--bg2);color:var(--dim2)}
+  .lchip.done{background:#13321f;color:var(--green)}
+  .toggle{margin-top:12px;font-size:13px;font-weight:800;color:var(--purple);cursor:pointer;user-select:none}
+  .pastes{margin-top:10px;display:none}
+  .pastes.show{display:block}
+  .pitem{background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:11px 12px;margin-bottom:8px}
+  .pmeta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--dim2);font-weight:700;margin-bottom:6px}
+  .sc{font-size:12px;font-weight:900;padding:2px 8px;border-radius:6px}
+  .sc.ok{background:#13321f;color:var(--green)} .sc.no{background:#33141a;color:var(--amber)}
+  .ptext{font-size:14px;font-weight:600;color:var(--ink);white-space:pre-wrap}
+  .pfb{font-size:12.5px;color:var(--dim);margin-top:5px;font-style:italic}
+  .empty{color:var(--dim2);text-align:center;margin-top:30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="crumbs">LOVENSE · АДМИН</div>
+    <h1>Дашборд обучения</h1>
+    <div class="sum" id="sum"></div>
+  </header>
+  <div id="app"></div>
+</div>
+<script>
+  const app=document.getElementById('app'), sumEl=document.getElementById('sum');
+  const NICK=(localStorage.getItem('nickname')||'').trim();
+  let COUNT=11;
+  function esc(s){return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+  function fmt(ts){ const d=new Date(ts); return d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+
+  function msg(title, body){
+    sumEl.textContent='';
+    app.innerHTML='<div class="msgbox"><b>'+esc(title)+'</b><p style="color:var(--dim);font-size:14px;margin:8px 0 14px">'+body+'</p>'
+      +'<a class="btn" href="/admin">В панель ▸</a></div>';
+  }
+
+  async function load(){
+    if(!NICK){ msg('Нужен вход', 'Войди в админ-панель под своим аккаунтом, потом открой дашборд.'); return; }
+    let res;
+    try{ res=await fetch('/api/training/results',{headers:{'X-Nickname':NICK}}); }
+    catch(e){ msg('Ошибка загрузки','Нет связи с сервером. Попробуй обновить.'); return; }
+    if(res.status===403){ msg('Нужны права админа','Этот дашборд доступен только администраторам.'); return; }
+    if(!res.ok){ msg('Ошибка','Не удалось загрузить данные ('+res.status+').'); return; }
+    const data=await res.json();
+    COUNT=data.count||11;
+    render(data.events||[], data.progress||{});
+  }
+
+  async function resetUser(nick){
+    if(!confirm('Сбросить весь прогресс ученика «'+nick+'»?')) return;
+    try{
+      const r=await fetch('/api/training/reset',{method:'POST',headers:{'Content-Type':'application/json','X-Nickname':NICK},body:JSON.stringify({nickname:nick})});
+      if(r.ok){ load(); } else { alert('Не удалось сбросить'); }
+    }catch(e){ alert('Ошибка сети'); }
+  }
+
+  function render(events, progress){
+    // имена: объединяем тех, у кого есть прогресс, и тех, у кого есть события
+    const byName={};
+    events.forEach(e=>{ const n=e.name||'аноним'; (byName[n]=byName[n]||[]).push(e); });
+    const names=new Set([...Object.keys(progress), ...Object.keys(byName)]);
+    const list=[...names];
+    sumEl.textContent='учеников: '+list.length+' · событий: '+events.length;
+    if(!list.length){ app.innerHTML='<div class="empty">Пока никто не проходил. Назначь ученику роль «new» — и он появится здесь.</div>'; return; }
+
+    // сортировка по последней активности
+    list.sort((a,b)=> Math.max(0,...(byName[b]||[]).map(x=>x.ts||0)) - Math.max(0,...(byName[a]||[]).map(x=>x.ts||0)) );
+
+    let html='';
+    list.forEach((n,wi)=>{
+      const evs=(byName[n]||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
+      const done=new Set(progress[n]||[]);
+      const fails=evs.filter(e=>e.type==='lesson_fail').length;
+      const pastes=evs.filter(e=>e.type==='paste');
+      const ready=done.size>=COUNT;
+      html+='<div class="wcard"><div class="whead"><span class="wname">'+esc(n)+'</span>'
+        +'<span class="wprog">пройдено '+done.size+'/'+COUNT+'</span>'
+        +(ready?'<span class="wready">готов ✓</span>':'')
+        +(fails?'<span class="wfail">провалов: '+fails+'</span>':'')
+        +'<button class="wreset" data-reset="'+esc(n)+'">сбросить</button></div>';
+      html+='<div class="lessons">';
+      for(let i=1;i<=COUNT;i++){ html+='<span class="lchip'+(done.has(i)?' done':'')+'">'+i+'</span>'; }
+      html+='</div>';
+      if(pastes.length){
+        html+='<div class="toggle" data-w="'+wi+'">▸ пасты ('+pastes.length+')</div><div class="pastes" id="p'+wi+'">';
+        pastes.forEach(p=>{
+          const ok=p.pass;
+          html+='<div class="pitem"><div class="pmeta">'
+            +'<span class="sc '+(ok?'ok':'no')+'">'+(p.score!=null?p.score:'?')+'/100</span>'
+            +'<span>урок '+(p.lesson||'?')+' · '+esc(p.lessonTitle||'')+'</span>'
+            +'<span>· '+esc(p.task||'')+'</span><span>· '+fmt(p.ts)+'</span></div>'
+            +'<div class="ptext">'+esc(p.paste)+'</div>'
+            +(p.feedback?'<div class="pfb">'+esc(p.feedback)+'</div>':'')+'</div>';
+        });
+        html+='</div>';
+      }
+      html+='</div>';
+    });
+    app.innerHTML=html;
+    app.querySelectorAll('.toggle').forEach(t=>{ t.onclick=()=>{ const el=document.getElementById('p'+t.dataset.w); const open=el.classList.toggle('show'); t.textContent=(open?'▾':'▸')+' пасты ('+el.children.length+')'; }; });
+    app.querySelectorAll('[data-reset]').forEach(b=>{ b.onclick=()=>resetUser(b.dataset.reset); });
+  }
+
+  load();
+</script>
+</body>
+</html>

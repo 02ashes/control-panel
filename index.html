@@ -914,6 +914,8 @@
                     style="width:auto;padding:8px 12px;display:none;">Users</button>
                 <button id="btnLogs" class="btn-generate"
                     style="width:auto;padding:8px 12px;display:none;">Logs</button>
+                <button id="btnTraining" class="btn-generate"
+                    style="width:auto;padding:8px 12px;display:none;">Обучение 🎓</button>
             </div>
         </div>
 
@@ -1326,6 +1328,9 @@
                 currentRole = authResult.role || 'reader';
                 localStorage.setItem('role', currentRole);
 
+                // Ученик (роль 'new'): только обучение, остальной функционал панели скрыт
+                if (currentRole === 'new') { showTraineeView(); return; }
+
                 socket.emit('identify', currentNickname);
                 if (app) app.style.display = 'block';
 
@@ -1347,6 +1352,13 @@
                         btnUsers.style.display = 'block';
                         btnUsers.onclick = () => showUsersModal();
                     }
+
+                    // Кнопка дашборда обучения для админов
+                    const btnTraining = document.getElementById('btnTraining');
+                    if (btnTraining) {
+                        btnTraining.style.display = 'block';
+                        btnTraining.onclick = () => window.open('/learn/dashboard.html', '_blank');
+                    }
                 }
 
                 // Скрываем кнопку Generate Invite для не-админов
@@ -1361,6 +1373,24 @@
                 // Применяем ограничения для readers
                 applyRoleRestrictions();
             }
+        }
+
+        function showTraineeView() {
+            const root = document.getElementById('appRoot');
+            if (root) root.style.display = 'none';
+            const nameSafe = (currentNickname || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+            let el = document.getElementById('traineeView');
+            if (!el) { el = document.createElement('div'); el.id = 'traineeView'; document.body.appendChild(el); }
+            el.style.cssText = 'max-width:520px;margin:60px auto;padding:0 16px;text-align:center;';
+            el.innerHTML =
+                '<div style="border:1px solid #000;background:#fff;padding:28px;box-shadow:4px 4px #808080;">'
+                + '<h1 style="margin:0 0 6px;font-size:22px;">Обучение</h1>'
+                + '<p style="color:#555;margin:0 0 18px;">Привет, ' + nameSafe + '! Пройди обучение — уроки и тесты.</p>'
+                + '<a href="/learn/" style="display:inline-block;padding:12px 22px;background:#0a7;color:#fff;font-weight:800;text-decoration:none;border-radius:8px;">Начать обучение ▸</a>'
+                + '<div style="margin-top:16px;"><a href="#" id="traineeLogout" style="color:#888;font-size:13px;">Выйти</a></div>'
+                + '</div>';
+            const lo = document.getElementById('traineeLogout');
+            if (lo) lo.onclick = (e) => { e.preventDefault(); localStorage.removeItem('nickname'); localStorage.removeItem('role'); location.reload(); };
         }
 
         function applyRoleRestrictions() {
@@ -1448,6 +1478,7 @@
                                     <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>admin</option>
                                     <option value="user" ${user.role === 'user' ? 'selected' : ''}>user</option>
                                     <option value="reader" ${user.role === 'reader' ? 'selected' : ''}>reader</option>
+                                    <option value="new" ${user.role === 'new' ? 'selected' : ''}>new (обучение)</option>
                                 </select>
                             `}
                         </td>
