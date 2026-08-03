@@ -5,6 +5,7 @@ const path = require('path');
 const bcrypt = require('bcrypt');
 const { Pool } = require('pg');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 const server = http.createServer(app);
@@ -16,6 +17,8 @@ const io = socketIo(server, {
 });
 
 const PORT = process.env.PORT || 3000;
+const AUTH_COOKIE_NAME = 'control_panel_session';
+const AUTH_SESSION_DAYS = 30;
 
 // Инициализация базы данных PostgreSQL
 const pool = new Pool({
@@ -36,6 +39,10 @@ pool.connect((err, client, release) => {
 // ===== Обучение чаттеров (learn/): уроки, ключ ответов, AI-проверка паст =====
 const TRAINING_LESSONS = require('./learn/lessons.js');
 const grading = require('./learn/grading.js');
+const DAY1_PROGRAM = require('./learn/programs/day1-v1.js');
+const gradingV2 = require('./learn/grading-v2.js');
+const DAY1_ENABLED = process.env.TRAINING_DAY1_ENABLED !== '0';
+const day1GradingInFlight = new Map();
 
 // XAI ключ: из env (прод), с фолбэком на .env (локалка). В браузер не уходит.
 let XAI_API_KEY = process.env.XAI_API_KEY || '';
@@ -71,7 +78,7 @@ function nextTrainingLessonId(id) {
 }
 
 // Создание таблиц
-(async () => {
+const databaseReady = (async () => {
     try {
         await pool.query(`
             CREATE TABLE IF NOT EXISTS sessions (
@@ -96,6 +103,18 @@ function nextTrainingLessonId(id) {
                 registered_at TIMESTAMP NOT NULL
             )
         `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                token_hash TEXT PRIMARY KEY,
+                nickname TEXT NOT NULL REFERENCES user_registrations(nickname) ON DELETE CASCADE,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                revoked_at TIMESTAMP
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_auth_sessions_nickname ON auth_sessions(nickname)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at)`);
 
         // Add password_hash column if it doesn't exist (for existing installations)
         await pool.query(`
@@ -151,6 +170,131 @@ function nextTrainingLessonId(id) {
         `);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_events_nick ON training_events(nickname)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_progress_nick ON training_progress(nickname)`);
+
+        // Day 1 v2 lives alongside the legacy course so its data can be rolled
+        // back or reset without touching the future Day 2 materials.
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS training_v2_grade_cache (
+                cache_key TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                program_version INTEGER NOT NULL,
+                task_id TEXT NOT NULL,
+                rubric_version TEXT NOT NULL,
+                model TEXT NOT NULL,
+                answer_hash TEXT NOT NULL,
+                result_json JSONB NOT NULL,
+                created_at TIMESTAMP NOT NULL
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS training_v2_submissions (
+                id BIGSERIAL PRIMARY KEY,
+                nickname TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                program_version INTEGER NOT NULL,
+                task_id TEXT NOT NULL,
+                answer_text TEXT NOT NULL,
+                answer_hash TEXT NOT NULL,
+                cache_key TEXT NOT NULL,
+                rubric_version TEXT NOT NULL,
+                score INTEGER NOT NULL,
+                pass BOOLEAN NOT NULL,
+                criteria JSONB NOT NULL,
+                feedback TEXT NOT NULL,
+                verdict JSONB NOT NULL DEFAULT '{}'::jsonb,
+                grader_model TEXT NOT NULL,
+                cache_hit BOOLEAN NOT NULL DEFAULT false,
+                created_at TIMESTAMP NOT NULL,
+                UNIQUE (nickname, program_id, program_version, task_id, cache_key)
+            )
+        `);
+        await pool.query(`
+            ALTER TABLE training_v2_submissions
+            ADD COLUMN IF NOT EXISTS verdict JSONB NOT NULL DEFAULT '{}'::jsonb
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS training_v2_progress (
+                nickname TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                program_version INTEGER NOT NULL,
+                rubric_version TEXT NOT NULL,
+                completed_tasks INTEGER NOT NULL DEFAULT 0,
+                total_tasks INTEGER NOT NULL,
+                average_score NUMERIC(5,2) NOT NULL DEFAULT 0,
+                passed BOOLEAN NOT NULL DEFAULT false,
+                passed_at TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL,
+                PRIMARY KEY (nickname, program_id, program_version)
+            )
+        `);
+        await pool.query(`
+            ALTER TABLE training_v2_progress
+            ADD COLUMN IF NOT EXISTS rubric_version TEXT NOT NULL DEFAULT 'legacy'
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS training_v2_attempt_slots (
+                nickname TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                program_version INTEGER NOT NULL,
+                rubric_version TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                attempt_number INTEGER NOT NULL,
+                answer_hash TEXT NOT NULL,
+                reservation_token TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'reserved',
+                reserved_until TIMESTAMP,
+                created_at TIMESTAMP NOT NULL,
+                completed_at TIMESTAMP,
+                PRIMARY KEY (nickname, program_id, program_version, rubric_version, task_id, attempt_number),
+                UNIQUE (nickname, program_id, program_version, rubric_version, task_id, answer_hash)
+            )
+        `);
+        await pool.query(`
+            ALTER TABLE training_v2_attempt_slots
+            ADD COLUMN IF NOT EXISTS reservation_token TEXT
+        `);
+        await pool.query(`
+            UPDATE training_v2_attempt_slots
+            SET reservation_token = md5(
+                random()::text || clock_timestamp()::text ||
+                nickname || task_id || attempt_number::text
+            )
+            WHERE reservation_token IS NULL
+        `);
+        await pool.query(`
+            ALTER TABLE training_v2_attempt_slots
+            ALTER COLUMN reservation_token SET NOT NULL
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_v2_submissions_nick ON training_v2_submissions(nickname, program_id, program_version)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_v2_submissions_task ON training_v2_submissions(task_id, created_at)`);
+        await pool.query(`
+            DO $$
+            DECLARE old_constraint TEXT;
+            BEGIN
+                SELECT c.conname INTO old_constraint
+                FROM pg_constraint c
+                JOIN pg_class t ON t.oid=c.conrelid
+                WHERE t.relname='training_v2_submissions'
+                  AND c.contype='u'
+                  AND pg_get_constraintdef(c.oid) LIKE
+                    '%(nickname, program_id, program_version, task_id, answer_hash, rubric_version)%'
+                LIMIT 1;
+                IF old_constraint IS NOT NULL THEN
+                    EXECUTE format(
+                        'ALTER TABLE training_v2_submissions DROP CONSTRAINT %I',
+                        old_constraint
+                    );
+                END IF;
+            END $$;
+        `);
+        await pool.query(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_training_v2_submissions_cache_unique
+            ON training_v2_submissions(nickname, program_id, program_version, task_id, cache_key)
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_training_v2_attempt_slots_expiry
+            ON training_v2_attempt_slots(status, reserved_until)
+        `);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS messages (
@@ -291,6 +435,7 @@ function nextTrainingLessonId(id) {
         await seedCasePrizes();
     } catch (err) {
         console.error('Error creating tables:', err);
+        throw err;
     }
 })();
 
@@ -426,8 +571,68 @@ app.get('/admin', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+app.get('/learn/start', (req, res) => {
+    res.redirect(DAY1_ENABLED ? '/learn/day1.html' : '/learn/');
+});
+
+app.get(['/learn', '/learn/', '/learn/index.html'], (req, res, next) => {
+    if (!DAY1_ENABLED) return next();
+    return res.redirect('/learn/day1.html');
+});
+
 // Не отдаём файл с ответами на тесты напрямую — клиент берёт очищенную версию через /api/training/lessons
 app.get('/learn/lessons.js', (req, res) => res.status(404).send('not found'));
+app.get('/learn/grading.js', (req, res) => res.status(404).send('not found'));
+app.get('/learn/grading-v2.js', (req, res) => res.status(404).send('not found'));
+app.get('/learn/grading-v2.test.js', (req, res) => res.status(404).send('not found'));
+app.get('/learn/day1-theory.test.js', (req, res) => res.status(404).send('not found'));
+app.get('/learn/day1-preview-server.js', (req, res) => res.status(404).send('not found'));
+app.get('/learn/server.js', (req, res) => res.status(404).send('not found'));
+app.get('/learn/results.json', (req, res) => res.status(404).send('not found'));
+app.get('/learn/programs/day1-v1.js', (req, res) => res.status(404).send('not found'));
+app.get('/learn/programs/day1-v1-rubrics.js', (req, res) => res.status(404).send('not found'));
+
+const PRIVATE_STATIC_PATHS = new Set([
+    '/.env',
+    '/package.json',
+    '/package-lock.json',
+    '/server.js',
+    '/clear-db.js',
+    '/learn/lessons.js',
+    '/learn/grading.js',
+    '/learn/grading-v2.js',
+    '/learn/grading-v2.test.js',
+    '/learn/day1-theory.test.js',
+    '/learn/day1-preview-server.js',
+    '/learn/server.js',
+    '/learn/results.json',
+    '/learn/programs/day1-v1.js',
+    '/learn/programs/day1-v1-rubrics.js'
+]);
+app.use((req, res, next) => {
+    let decodedPath;
+    try {
+        decodedPath = decodeURIComponent(String(req.path || ''));
+    } catch (_) {
+        return res.status(404).send('not found');
+    }
+    const slashPath = decodedPath.replace(/\\/g, '/');
+    if (slashPath.split('/').some(segment => segment === '..')) {
+        return res.status(404).send('not found');
+    }
+    const normalizedPath = path.posix.normalize('/' + slashPath).toLowerCase();
+    if (
+        PRIVATE_STATIC_PATHS.has(normalizedPath) ||
+        normalizedPath.startsWith('/.env.') ||
+        normalizedPath === '/node_modules' ||
+        normalizedPath.startsWith('/node_modules/') ||
+        normalizedPath === '/.git' ||
+        normalizedPath.startsWith('/.git/')
+    ) {
+        return res.status(404).send('not found');
+    }
+    next();
+});
 
 // Serve static files
 app.use(express.static(__dirname));
@@ -443,7 +648,12 @@ app.use((req, res, next) => {
     const u = nick ? users.get(nick) : null;
     if (u && u.role === 'new') {
         const p = req.path;
-        const allowed = p.startsWith('/api/training/') || p === '/api/auth/check' || p === '/api/user/role';
+        const allowed =
+            p.startsWith('/api/training/') ||
+            p === '/api/auth/check' ||
+            p === '/api/login' ||
+            p === '/api/logout' ||
+            p === '/api/user/role';
         if (!allowed) return res.status(403).json({ error: 'trainee_restricted' });
     }
     next();
@@ -1072,6 +1282,7 @@ app.post('/api/register', async (req, res) => {
             users.set(nickname, { role });
 
             console.log(`New user registered: ${nickname} (via master code, role: ${role})`);
+            await issueAuthSession(res, nickname);
             return res.json({ ok: true, role });
         }
 
@@ -1117,12 +1328,92 @@ app.post('/api/register', async (req, res) => {
         users.set(nickname, { role });
 
         console.log(`New user registered: ${nickname} (invited by ${invitedBy}, role: ${role})`);
+        await issueAuthSession(res, nickname);
         return res.json({ ok: true, role });
     } catch (err) {
         console.error('Registration error:', err);
         return res.status(500).json({ error: 'database_error' });
     }
 });
+
+function readCookie(req, name) {
+    const raw = String(req.headers.cookie || '');
+    for (const part of raw.split(';')) {
+        const separator = part.indexOf('=');
+        if (separator < 0) continue;
+        const key = part.slice(0, separator).trim();
+        if (key !== name) continue;
+        try {
+            return decodeURIComponent(part.slice(separator + 1).trim());
+        } catch (_) {
+            return '';
+        }
+    }
+    return '';
+}
+
+function authTokenHash(token) {
+    return crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
+}
+
+function setAuthCookie(res, token, maxAgeSeconds) {
+    const parts = [
+        `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}`,
+        'Path=/',
+        'HttpOnly',
+        'SameSite=Lax',
+        `Max-Age=${maxAgeSeconds}`
+    ];
+    if (process.env.NODE_ENV === 'production') parts.push('Secure');
+    res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+async function issueAuthSession(res, nickname) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + AUTH_SESSION_DAYS * 24 * 60 * 60 * 1000);
+    await pool.query(
+        `INSERT INTO auth_sessions (token_hash, nickname, expires_at, created_at)
+         VALUES ($1,$2,$3,$4)`,
+        [authTokenHash(token), nickname, expiresAt, now]
+    );
+    setAuthCookie(res, token, AUTH_SESSION_DAYS * 24 * 60 * 60);
+}
+
+async function requireAuthenticatedSession(req, res, next) {
+    const token = readCookie(req, AUTH_COOKIE_NAME);
+    if (!token) return res.status(401).json({ error: 'login_required' });
+
+    try {
+        const result = await pool.query(
+            `SELECT s.nickname, u.role
+             FROM auth_sessions s
+             JOIN user_registrations u ON u.nickname=s.nickname
+             WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at > NOW()
+             LIMIT 1`,
+            [authTokenHash(token)]
+        );
+        if (!result.rows.length) {
+            setAuthCookie(res, '', 0);
+            return res.status(401).json({ error: 'login_required' });
+        }
+
+        const nickname = result.rows[0].nickname;
+        const claimedNickname = String(req.headers['x-nickname'] || '').trim();
+        if (claimedNickname && claimedNickname !== nickname) {
+            return res.status(401).json({ error: 'identity_mismatch' });
+        }
+
+        req.user = {
+            nickname,
+            role: nickname === SUPER_ADMIN ? 'admin' : (result.rows[0].role || 'reader')
+        };
+        next();
+    } catch (err) {
+        console.error('Authenticated session check error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+}
 
 // Login endpoint
 app.post('/api/login', async (req, res) => {
@@ -1158,9 +1449,28 @@ app.post('/api/login', async (req, res) => {
         users.set(nickname, { role });
 
         console.log(`User logged in: ${nickname} (role: ${role})`);
+        await issueAuthSession(res, nickname);
         return res.json({ ok: true, nickname, role });
     } catch (err) {
         console.error('Login error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+app.post('/api/logout', async (req, res) => {
+    const token = readCookie(req, AUTH_COOKIE_NAME);
+    try {
+        if (token) {
+            await pool.query(
+                'UPDATE auth_sessions SET revoked_at=$1 WHERE token_hash=$2',
+                [new Date(), authTokenHash(token)]
+            );
+        }
+        setAuthCookie(res, '', 0);
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('Logout error:', err);
+        setAuthCookie(res, '', 0);
         return res.status(500).json({ error: 'database_error' });
     }
 });
@@ -1365,7 +1675,257 @@ async function requireLogAccess(req, res, next) {
     }
 }
 
-app.get('/api/auth/check', requireRegistration, async (req, res) => {
+function getDay1Task(taskId) {
+    return (DAY1_PROGRAM.tasks || []).find(task => task.id === taskId) || null;
+}
+
+function getPublicDay1Program() {
+    return {
+        id: DAY1_PROGRAM.id,
+        slug: DAY1_PROGRAM.slug,
+        version: DAY1_PROGRAM.version,
+        rubricVersion: DAY1_PROGRAM.rubricVersion,
+        title: DAY1_PROGRAM.title,
+        subtitle: DAY1_PROGRAM.subtitle,
+        instructions: DAY1_PROGRAM.instructions || [],
+        passingScore: DAY1_PROGRAM.passingScore,
+        minimumTaskScore: DAY1_PROGRAM.minimumTaskScore,
+        maxAttemptsPerTask: DAY1_PROGRAM.maxAttemptsPerTask,
+        tasks: (DAY1_PROGRAM.tasks || []).map(task => ({
+            id: task.id,
+            title: task.title,
+            context: task.context,
+            prompt: task.prompt,
+            placeholder: task.placeholder || 'Write your answer in English…',
+            maxWords: task.maxWords || null,
+            minMessages: task.minMessages || 1,
+            maxMessages: task.maxMessages || task.minMessages || 1
+        }))
+    };
+}
+
+function serializeDay1Submission(row) {
+    return {
+        id: Number(row.id),
+        taskId: row.task_id,
+        answer: row.answer_text,
+        score: Number(row.score),
+        pass: !!row.pass,
+        criteria: row.criteria || {},
+        feedback: row.feedback || '',
+        verdict: row.verdict || {},
+        model: row.grader_model || '',
+        cacheHit: !!row.cache_hit,
+        createdAt: row.created_at ? new Date(row.created_at).getTime() : 0
+    };
+}
+
+async function computeDay1State(nickname, persist = true) {
+    const result = await pool.query(
+        `SELECT id, task_id, answer_text, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at
+         FROM training_v2_submissions
+         WHERE nickname=$1 AND program_id=$2 AND program_version=$3 AND rubric_version=$4
+         ORDER BY created_at ASC, id ASC`,
+        [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, DAY1_PROGRAM.rubricVersion]
+    );
+
+    const tasks = {};
+    let completedTasks = 0;
+    let scoreSum = 0;
+    let everyTaskPassed = true;
+
+    (DAY1_PROGRAM.tasks || []).forEach(task => {
+        const history = result.rows
+            .filter(row => row.task_id === task.id)
+            .map(serializeDay1Submission);
+        const latest = history.length ? history[history.length - 1] : null;
+        const best = history.reduce((winner, attempt) => {
+            if (!winner) return attempt;
+            if (attempt.pass && !winner.pass) return attempt;
+            if (attempt.pass === winner.pass && attempt.score > winner.score) return attempt;
+            if (
+                attempt.pass === winner.pass &&
+                attempt.score === winner.score &&
+                attempt.createdAt > winner.createdAt
+            ) return attempt;
+            return winner;
+        }, null);
+
+        tasks[task.id] = {
+            latest,
+            best,
+            attempts: history.length,
+            history
+        };
+
+        if (best) {
+            completedTasks++;
+            scoreSum += best.score;
+            if (!best.pass || best.score < DAY1_PROGRAM.minimumTaskScore) everyTaskPassed = false;
+        } else {
+            everyTaskPassed = false;
+        }
+    });
+
+    const totalTasks = (DAY1_PROGRAM.tasks || []).length;
+    const averageScore = completedTasks ? Math.round((scoreSum / completedTasks) * 100) / 100 : 0;
+    const passed = completedTasks === totalTasks &&
+        averageScore >= DAY1_PROGRAM.passingScore &&
+        everyTaskPassed;
+
+    if (persist) {
+        const now = new Date();
+        await pool.query(
+            `INSERT INTO training_v2_progress
+             (nickname, program_id, program_version, rubric_version, completed_tasks, total_tasks, average_score, passed, passed_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             ON CONFLICT (nickname, program_id, program_version) DO UPDATE SET
+               rubric_version=EXCLUDED.rubric_version,
+               completed_tasks=EXCLUDED.completed_tasks,
+               total_tasks=EXCLUDED.total_tasks,
+               average_score=EXCLUDED.average_score,
+               passed=EXCLUDED.passed,
+               passed_at=CASE
+                 WHEN EXCLUDED.passed THEN COALESCE(training_v2_progress.passed_at, EXCLUDED.passed_at)
+                 ELSE NULL
+               END,
+               updated_at=EXCLUDED.updated_at`,
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, DAY1_PROGRAM.rubricVersion,
+                completedTasks, totalTasks, averageScore, passed, passed ? now : null, now]
+        );
+    }
+
+    return {
+        programId: DAY1_PROGRAM.id,
+        programVersion: DAY1_PROGRAM.version,
+        rubricVersion: DAY1_PROGRAM.rubricVersion,
+        completedTasks,
+        totalTasks,
+        averageScore,
+        passingScore: DAY1_PROGRAM.passingScore,
+        minimumTaskScore: DAY1_PROGRAM.minimumTaskScore,
+        passed,
+        tasks
+    };
+}
+
+function getDay1Hashes(taskId, answer) {
+    const normalized = gradingV2.normalizeAnswer(answer);
+    const answerHash = gradingV2.hashAnswer(normalized);
+    const graderSignature = crypto.createHash('sha256')
+        .update([
+            gradingV2.GRADER_VERSION,
+            gradingV2.buildSystemPrompt(taskId),
+            JSON.stringify(gradingV2.buildResponseSchema(taskId))
+        ].join('\0'), 'utf8')
+        .digest('hex');
+    const cacheMaterial = [
+        DAY1_PROGRAM.id,
+        DAY1_PROGRAM.version,
+        DAY1_PROGRAM.rubricVersion,
+        taskId,
+        gradingV2.MODEL,
+        gradingV2.REASONING_EFFORT,
+        graderSignature,
+        answerHash
+    ].join('\0');
+    return {
+        normalized,
+        answerHash,
+        cacheKey: crypto.createHash('sha256').update(cacheMaterial, 'utf8').digest('hex')
+    };
+}
+
+async function reserveDay1Attempt(nickname, taskId, answerHash) {
+    const key = [
+        nickname,
+        DAY1_PROGRAM.id,
+        DAY1_PROGRAM.version,
+        DAY1_PROGRAM.rubricVersion,
+        taskId
+    ];
+    const now = new Date();
+    const reservedUntil = new Date(now.getTime() + 10 * 60 * 1000);
+    const reservationToken = crypto.randomBytes(32).toString('hex');
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(
+            'SELECT nickname FROM user_registrations WHERE nickname=$1 FOR UPDATE',
+            [nickname]
+        );
+        await client.query(
+            `DELETE FROM training_v2_attempt_slots
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3
+               AND rubric_version=$4 AND task_id=$5
+               AND status='reserved' AND reserved_until < NOW()`,
+            key
+        );
+
+        for (let attempt = 0; attempt <= DAY1_PROGRAM.maxAttemptsPerTask; attempt++) {
+            const result = await client.query(
+                `WITH next_slot AS (
+                   SELECT slot
+                   FROM generate_series(1, $10::int) AS slots(slot)
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM training_v2_attempt_slots
+                     WHERE nickname=$1 AND program_id=$2 AND program_version=$3
+                       AND rubric_version=$4 AND task_id=$5 AND attempt_number=slot
+                   )
+                   ORDER BY slot
+                   LIMIT 1
+                 )
+                 INSERT INTO training_v2_attempt_slots
+                   (nickname, program_id, program_version, rubric_version, task_id,
+                    attempt_number, answer_hash, reservation_token, status, reserved_until, created_at)
+                 SELECT $1,$2,$3,$4,$5,slot,$6,$7,'reserved',$8,$9
+                 FROM next_slot
+                 ON CONFLICT DO NOTHING
+                 RETURNING attempt_number, reservation_token`,
+                [...key, answerHash, reservationToken, reservedUntil, now, DAY1_PROGRAM.maxAttemptsPerTask]
+            );
+            if (result.rows.length) {
+                await client.query('COMMIT');
+                return {
+                    attemptNumber: Number(result.rows[0].attempt_number),
+                    reservationToken: result.rows[0].reservation_token
+                };
+            }
+        }
+
+        const sameAnswer = await client.query(
+            `SELECT status FROM training_v2_attempt_slots
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3
+               AND rubric_version=$4 AND task_id=$5 AND answer_hash=$6
+             LIMIT 1`,
+            [...key, answerHash]
+        );
+        const error = new Error(sameAnswer.rows[0]?.status === 'reserved'
+            ? 'grading_in_progress'
+            : 'max_attempts_reached');
+        error.code = error.message;
+        error.statusCode = 409;
+        throw error;
+    } catch (error) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
+async function releaseDay1Attempt(nickname, taskId, attemptNumber, reservationToken) {
+    await pool.query(
+        `DELETE FROM training_v2_attempt_slots
+         WHERE nickname=$1 AND program_id=$2 AND program_version=$3
+           AND rubric_version=$4 AND task_id=$5
+           AND attempt_number=$6 AND reservation_token=$7 AND status='reserved'`,
+        [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, DAY1_PROGRAM.rubricVersion,
+            taskId, attemptNumber, reservationToken]
+    );
+}
+
+app.get('/api/auth/check', requireAuthenticatedSession, async (req, res) => {
     const nickname = req.user.nickname;
     try {
         const result = await pool.query('SELECT role FROM user_registrations WHERE nickname = $1', [nickname]);
@@ -1373,6 +1933,254 @@ app.get('/api/auth/check', requireRegistration, async (req, res) => {
         return res.json({ ok: true, nickname, role });
     } catch (err) {
         return res.json({ ok: true, nickname, role: 'reader' });
+    }
+});
+
+// ===================== ДЕНЬ 1 · ПРАКТИЧЕСКИЙ ТЕСТ v2 =====================
+
+app.get('/api/training/v2/programs/day1-v1', requireAuthenticatedSession, (req, res) => {
+    if (!DAY1_ENABLED) return res.status(404).json({ error: 'day1_disabled' });
+    res.json({ ok: true, program: getPublicDay1Program() });
+});
+
+app.get('/api/training/v2/programs/day1-v1/state', requireAuthenticatedSession, async (req, res) => {
+    if (!DAY1_ENABLED) return res.status(404).json({ error: 'day1_disabled' });
+    try {
+        const state = await computeDay1State(req.user.nickname);
+        res.json({ ok: true, state });
+    } catch (err) {
+        console.error('Day 1 state error:', err);
+        res.status(500).json({ error: 'database_error' });
+    }
+});
+
+app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthenticatedSession, async (req, res) => {
+    if (!DAY1_ENABLED) return res.status(404).json({ error: 'day1_disabled' });
+
+    const taskId = String(req.params.taskId || '');
+    const task = getDay1Task(taskId);
+    if (!task) return res.status(404).json({ error: 'unknown_task' });
+
+    const rawAnswer = typeof req.body?.answer === 'string' ? req.body.answer : '';
+    const { normalized, answerHash, cacheKey } = getDay1Hashes(taskId, rawAnswer);
+    const preflight = gradingV2.preflightAnswer(normalized);
+    if (!preflight.ok) {
+        const error = preflight.flags.empty
+            ? 'empty_answer'
+            : (preflight.flags.too_short ? 'answer_too_short' : 'answer_too_long');
+        return res.status(400).json({ error });
+    }
+    if (task.maxWords && preflight.wordCount > task.maxWords) {
+        return res.status(400).json({ error: 'word_limit_exceeded', maxWords: task.maxWords });
+    }
+    const messageCount = normalized.split('\n').filter(line => line.trim()).length;
+    const minMessages = task.minMessages || 1;
+    const maxMessages = task.maxMessages || minMessages;
+    if (messageCount < minMessages || messageCount > maxMessages) {
+        return res.status(400).json({
+            error: 'message_count_mismatch',
+            minMessages,
+            maxMessages,
+            actualMessages: messageCount
+        });
+    }
+
+    let reservedAttemptNumber = null;
+    let reservedAttemptToken = null;
+    try {
+        const existing = await pool.query(
+            `SELECT id, task_id, answer_text, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at
+             FROM training_v2_submissions
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3
+               AND task_id=$4 AND cache_key=$5
+             LIMIT 1`,
+            [req.user.nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, taskId, cacheKey]
+        );
+        if (existing.rows.length) {
+            const state = await computeDay1State(req.user.nickname);
+            return res.json({
+                ok: true,
+                result: { ...serializeDay1Submission(existing.rows[0]), reused: true },
+                state
+            });
+        }
+
+        const reservation = await reserveDay1Attempt(req.user.nickname, taskId, answerHash);
+        reservedAttemptNumber = reservation.attemptNumber;
+        reservedAttemptToken = reservation.reservationToken;
+
+        let cached = false;
+        let verdict;
+        const cachedResult = await pool.query(
+            `SELECT result_json FROM training_v2_grade_cache WHERE cache_key=$1 LIMIT 1`,
+            [cacheKey]
+        );
+
+        if (cachedResult.rows.length) {
+            cached = true;
+            verdict = cachedResult.rows[0].result_json;
+        } else {
+            if (!XAI_API_KEY) {
+                const error = new Error('XAI_API_KEY is required');
+                error.retryable = true;
+                throw error;
+            }
+
+            let gradingPromise = day1GradingInFlight.get(cacheKey);
+            if (!gradingPromise) {
+                gradingPromise = (async () => {
+                    const modelResult = await gradingV2.callGrok(normalized, taskId, XAI_API_KEY);
+                    const computed = gradingV2.computeVerdict(modelResult, taskId, normalized);
+                    const canonical = await pool.query(
+                        `INSERT INTO training_v2_grade_cache
+                         (cache_key, program_id, program_version, task_id, rubric_version, model, answer_hash, result_json, created_at)
+                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                         ON CONFLICT (cache_key) DO UPDATE SET cache_key=EXCLUDED.cache_key
+                         RETURNING result_json`,
+                        [cacheKey, DAY1_PROGRAM.id, DAY1_PROGRAM.version, taskId, DAY1_PROGRAM.rubricVersion,
+                            gradingV2.MODEL, answerHash, computed, new Date()]
+                    );
+                    return canonical.rows[0].result_json;
+                })();
+                day1GradingInFlight.set(cacheKey, gradingPromise);
+                gradingPromise.then(
+                    () => day1GradingInFlight.delete(cacheKey),
+                    () => day1GradingInFlight.delete(cacheKey)
+                );
+            } else {
+                cached = true;
+            }
+            verdict = await gradingPromise;
+        }
+
+        const feedback = String(verdict.feedback || verdict.feedback_ru || '');
+        const client = await pool.connect();
+        let inserted;
+        try {
+            await client.query('BEGIN');
+            const completed = await client.query(
+                `UPDATE training_v2_attempt_slots
+                 SET status='completed', reserved_until=NULL, completed_at=$8
+                 WHERE nickname=$1 AND program_id=$2 AND program_version=$3
+                   AND rubric_version=$4 AND task_id=$5
+                   AND attempt_number=$6 AND reservation_token=$7 AND status='reserved'`,
+                [req.user.nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, DAY1_PROGRAM.rubricVersion,
+                    taskId, reservedAttemptNumber, reservedAttemptToken, new Date()]
+            );
+            if (completed.rowCount !== 1) {
+                const error = new Error('Day 1 attempt reservation expired or was reset');
+                error.code = 'attempt_reservation_lost';
+                error.retryable = true;
+                throw error;
+            }
+            inserted = await client.query(
+                `INSERT INTO training_v2_submissions
+                 (nickname, program_id, program_version, task_id, answer_text, answer_hash, cache_key,
+                  rubric_version, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+                 ON CONFLICT (nickname, program_id, program_version, task_id, cache_key)
+                 DO UPDATE SET cache_hit=training_v2_submissions.cache_hit OR EXCLUDED.cache_hit
+                 RETURNING id, task_id, answer_text, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at`,
+                [req.user.nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, taskId, normalized, answerHash, cacheKey,
+                    DAY1_PROGRAM.rubricVersion, verdict.score, !!verdict.pass, verdict.criteria || {}, feedback,
+                    verdict, gradingV2.MODEL, cached, new Date()]
+            );
+            await client.query('COMMIT');
+        } catch (error) {
+            try { await client.query('ROLLBACK'); } catch (_) {}
+            throw error;
+        } finally {
+            client.release();
+        }
+
+        const state = await computeDay1State(req.user.nickname);
+        res.json({
+            ok: true,
+            result: serializeDay1Submission(inserted.rows[0]),
+            state
+        });
+    } catch (err) {
+        console.error('Day 1 grading error:', err);
+        if (reservedAttemptNumber !== null) {
+            try {
+                await releaseDay1Attempt(
+                    req.user.nickname,
+                    taskId,
+                    reservedAttemptNumber,
+                    reservedAttemptToken
+                );
+            } catch (releaseError) {
+                console.error('Day 1 attempt release error:', releaseError);
+            }
+        }
+        const status = Number(err.statusCode) === 409 ? 409 : (err.retryable ? 503 : 500);
+        res.status(status).json({
+            error: status === 409
+                ? (err.code || 'max_attempts_reached')
+                : (status === 503 ? 'grader_unavailable' : 'grading_error'),
+            retryable: status === 503
+        });
+    }
+});
+
+app.get('/api/training/v2/admin/day1-v1/results', requireAuthenticatedSession, requireLogAccess, async (req, res) => {
+    try {
+        const namesResult = await pool.query(
+            `SELECT DISTINCT nickname
+             FROM training_v2_submissions
+             WHERE program_id=$1 AND program_version=$2 AND rubric_version=$3
+             ORDER BY nickname`,
+            [DAY1_PROGRAM.id, DAY1_PROGRAM.version, DAY1_PROGRAM.rubricVersion]
+        );
+        const students = await Promise.all(namesResult.rows.map(async row => {
+            const state = await computeDay1State(row.nickname, false);
+            const activity = Object.values(state.tasks)
+                .flatMap(task => task.history || [])
+                .reduce((latest, attempt) => Math.max(latest, attempt.createdAt || 0), 0);
+            return { nickname: row.nickname, lastActivity: activity, state };
+        }));
+        students.sort((a, b) => b.lastActivity - a.lastActivity);
+        res.json({ ok: true, program: getPublicDay1Program(), students });
+    } catch (err) {
+        console.error('Day 1 admin results error:', err);
+        res.status(500).json({ error: 'database_error' });
+    }
+});
+
+app.post('/api/training/v2/admin/day1-v1/reset', requireAuthenticatedSession, requireLogAccess, async (req, res) => {
+    const nickname = String(req.body?.nickname || '').trim();
+    if (!nickname) return res.status(400).json({ error: 'nickname_required' });
+    let client;
+    try {
+        client = await pool.connect();
+        await client.query('BEGIN');
+        await client.query(
+            'SELECT nickname FROM user_registrations WHERE nickname=$1 FOR UPDATE',
+            [nickname]
+        );
+        await client.query(
+            `DELETE FROM training_v2_attempt_slots
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3`,
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version]
+        );
+        await client.query(
+            `DELETE FROM training_v2_submissions
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3`,
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version]
+        );
+        await client.query(
+            `DELETE FROM training_v2_progress
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3`,
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version]
+        );
+        await client.query('COMMIT');
+        res.json({ ok: true });
+    } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        console.error('Day 1 reset error:', err);
+        res.status(500).json({ error: 'database_error' });
+    } finally {
+        if (client) client.release();
     }
 });
 
@@ -2291,9 +3099,14 @@ io.on('connection', (socket) => {
     });
 });
 
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Database: PostgreSQL (Railway)`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+databaseReady.then(() => {
+    server.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+        console.log(`Database: PostgreSQL (Railway)`);
+        console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    });
+}).catch(async err => {
+    console.error('Server startup aborted because database initialization failed:', err.message);
+    try { await pool.end(); } catch (_) {}
+    process.exit(1);
 });
-

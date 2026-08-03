@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Day 1 · База и практика</title>
+  <link rel="stylesheet" href="/learn/day1-styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="course-header" aria-labelledby="programTitle">
+      <div class="course-heading">
+        <div class="eyebrow">WORKER ONBOARDING · DAY 1</div>
+        <h1 id="programTitle">База работы</h1>
+        <p id="programDescription" class="course-description">
+          Короткая теория, реальные примеры и письменная практика.
+        </p>
+      </div>
+
+      <div class="course-metrics" aria-label="Прогресс Day 1">
+        <div class="metric">
+          <span id="completedMetricLabel" class="metric__label">Пройдено</span>
+          <strong id="completedMetric">0 / 8</strong>
+        </div>
+        <div class="metric">
+          <span id="averageMetricLabel" class="metric__label">Средний балл</span>
+          <strong id="averageMetric">—</strong>
+        </div>
+        <div class="metric metric--target">
+          <span id="targetMetricLabel" class="metric__label">Порог</span>
+          <strong id="targetMetric">85 / 100</strong>
+        </div>
+        <div id="overallStatus" class="overall-status" role="status">Загрузка…</div>
+      </div>
+
+      <div
+        id="stageSwitcher"
+        class="stage-switch"
+        role="tablist"
+        aria-label="Этапы Day 1"
+      >
+        <button
+          id="theoryStageButton"
+          class="stage-switch__button"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="taskContent"
+          tabindex="0"
+        >
+          <span class="stage-switch__number">1</span>
+          <span>
+            <strong>Короткая база</strong>
+            <small>6 тем · 10–15 минут</small>
+          </span>
+        </button>
+        <button
+          id="practiceStageButton"
+          class="stage-switch__button"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="taskContent"
+          aria-disabled="true"
+          tabindex="-1"
+        >
+          <span class="stage-switch__number">2</span>
+          <span>
+            <strong>Письменная практика</strong>
+            <small>8 рабочих ситуаций</small>
+          </span>
+        </button>
+      </div>
+
+      <div
+        id="courseProgress"
+        class="course-progress"
+        role="progressbar"
+        aria-label="Прогресс текущего этапа"
+        aria-valuemin="0"
+        aria-valuemax="8"
+        aria-valuenow="0"
+      >
+        <span id="courseProgressBar"></span>
+      </div>
+    </header>
+
+    <main class="course-layout">
+      <aside id="courseSidebar" class="course-sidebar" aria-label="Навигация по заданиям">
+        <section class="briefing">
+          <h2 id="briefingTitle">Перед началом</h2>
+          <ul id="briefingList">
+            <li>Ответ — только на английском.</li>
+            <li>Переводчиком пользоваться можно.</li>
+            <li>В каждом задании отдельно указаны факты модели — заранее знать её не нужно.</li>
+            <li>Готовые пасты и ИИ использовать нельзя.</li>
+            <li>На каждое задание есть 2 попытки.</li>
+            <li>Для зачёта: все 8 ответов, средний балл 85 и минимум 60 за каждое задание.</li>
+          </ul>
+        </section>
+
+        <nav id="stageNavigation" class="task-nav" aria-label="Задания Day 1">
+          <div class="task-nav__heading">
+            <span id="navHeading">Задания</span>
+            <span id="navProgress">0 / 8</span>
+          </div>
+          <div id="taskNavList" class="task-nav__list"></div>
+        </nav>
+
+        <p id="saveNote" class="save-note">
+          Черновики сохраняются на этом устройстве. Проверенные ответы и вердикты
+          загружаются с сервера.
+        </p>
+      </aside>
+
+      <section
+        id="taskContent"
+        class="task-content"
+        role="tabpanel"
+        aria-labelledby="theoryStageButton"
+        aria-live="polite"
+        tabindex="-1"
+      >
+        <div class="loading-panel" id="loadingPanel">
+          <div class="loading-line loading-line--wide"></div>
+          <div class="loading-line"></div>
+          <div class="loading-line loading-line--short"></div>
+          <p>Загружаю Day 1 и сохранённые результаты…</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <script src="/learn/day1-theory.js"></script>
+  <script src="/learn/day1-app.js"></script>
+</body>
+</html>

@@ -1357,7 +1357,7 @@
                     const btnTraining = document.getElementById('btnTraining');
                     if (btnTraining) {
                         btnTraining.style.display = 'block';
-                        btnTraining.onclick = () => window.open('/learn/dashboard.html', '_blank');
+                        btnTraining.onclick = () => window.open('/learn/day1-dashboard.html', '_blank');
                     }
                 }
 
@@ -1384,13 +1384,19 @@
             el.style.cssText = 'max-width:520px;margin:60px auto;padding:0 16px;text-align:center;';
             el.innerHTML =
                 '<div style="border:1px solid #000;background:#fff;padding:28px;box-shadow:4px 4px #808080;">'
-                + '<h1 style="margin:0 0 6px;font-size:22px;">Обучение</h1>'
-                + '<p style="color:#555;margin:0 0 18px;">Привет, ' + nameSafe + '! Пройди обучение — уроки и тесты.</p>'
-                + '<a href="/learn/" style="display:inline-block;padding:12px 22px;background:#0a7;color:#fff;font-weight:800;text-decoration:none;border-radius:8px;">Начать обучение ▸</a>'
+                + '<h1 style="margin:0 0 6px;font-size:22px;">День 1 · Практический тест</h1>'
+                + '<p style="color:#555;margin:0 0 18px;">Привет, ' + nameSafe + '! Тебя ждут 8 ситуаций из переписок. Все ответы нужно написать самостоятельно на английском; переводчик разрешён.</p>'
+                + '<a href="/learn/start" style="display:inline-block;padding:12px 22px;background:#0a7;color:#fff;font-weight:800;text-decoration:none;border-radius:8px;">Начать День 1 ▸</a>'
                 + '<div style="margin-top:16px;"><a href="#" id="traineeLogout" style="color:#888;font-size:13px;">Выйти</a></div>'
                 + '</div>';
             const lo = document.getElementById('traineeLogout');
-            if (lo) lo.onclick = (e) => { e.preventDefault(); localStorage.removeItem('nickname'); localStorage.removeItem('role'); location.reload(); };
+            if (lo) lo.onclick = async (e) => {
+                e.preventDefault();
+                try { await fetch('/api/logout', { method: 'POST' }); } catch (_) {}
+                localStorage.removeItem('nickname');
+                localStorage.removeItem('role');
+                location.reload();
+            };
         }
 
         function applyRoleRestrictions() {

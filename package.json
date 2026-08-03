@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "preview:day1": "node learn/day1-preview-server.js",
+    "test": "node --test learn/*.test.js"
   },
   "keywords": [
     "lovense",

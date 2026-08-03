@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Day 1 · Результаты кандидатов</title>
+  <link rel="stylesheet" href="/learn/day1-dashboard.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="page-header">
+      <div class="page-header__copy">
+        <div class="eyebrow">WORKER ONBOARDING · ADMIN</div>
+        <h1>Результаты Day 1</h1>
+        <p>Ответы кандидатов, оценки Grok и история всех попыток.</p>
+      </div>
+
+      <nav class="page-actions" aria-label="Навигация">
+        <a class="text-link" href="/admin">← В панель</a>
+        <button id="refreshButton" class="primary-button" type="button">
+          <span class="refresh-icon" aria-hidden="true">↻</span>
+          Обновить
+        </button>
+      </nav>
+    </header>
+
+    <section class="summary-grid" aria-label="Сводка по кандидатам">
+      <article class="summary-card">
+        <span class="summary-card__label">Кандидатов</span>
+        <strong id="candidateCount">—</strong>
+      </article>
+      <article class="summary-card summary-card--success">
+        <span class="summary-card__label">Прошли</span>
+        <strong id="passedCount">—</strong>
+      </article>
+      <article class="summary-card">
+        <span class="summary-card__label">Средний результат</span>
+        <strong id="averageScore">—</strong>
+      </article>
+      <article class="summary-card summary-card--attention">
+        <span class="summary-card__label">Требуют внимания</span>
+        <strong id="attentionCount">—</strong>
+      </article>
+      <p id="updatedAt" class="updated-at" role="status">Загрузка результатов…</p>
+    </section>
+
+    <main class="dashboard-layout">
+      <aside class="candidate-panel" aria-label="Кандидаты">
+        <div class="candidate-panel__header">
+          <div>
+            <h2>Кандидаты</h2>
+            <span id="visibleCount">0</span>
+          </div>
+          <label class="search-field">
+            <span class="visually-hidden">Найти кандидата</span>
+            <input
+              id="candidateSearch"
+              type="search"
+              autocomplete="off"
+              placeholder="Поиск по нику"
+            >
+          </label>
+        </div>
+        <div id="candidateList" class="candidate-list"></div>
+      </aside>
+
+      <section id="candidateDetails" class="candidate-details" aria-live="polite">
+        <div class="state-panel state-panel--loading">
+          <div class="skeleton skeleton--title"></div>
+          <div class="skeleton"></div>
+          <div class="skeleton skeleton--short"></div>
+          <p>Загружаю результаты Day 1…</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <script src="/learn/day1-dashboard.js"></script>
+</body>
+</html>
