@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
 const THEORY = require('./day1-theory.js');
@@ -156,4 +157,12 @@ test('local preview mirrors Day 1 theory, reset, and private-file contracts', as
   result = await request(base, `${root}/state`);
   assert.equal(result.data.state.theory.completedCount, 0);
   assert.equal(result.data.state.resetGeneration, 1);
+});
+
+test('Day 1 migrates the old production draft only before an admin reset', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'day1-app.js'), 'utf8');
+  assert.match(source, /function legacyDraftKey\(taskId\)/);
+  assert.match(source, /value === null && resetGeneration === 0/);
+  assert.match(source, /localStorage\.getItem\(legacyDraftKey\(taskId\)\)/);
+  assert.match(source, /localStorage\.setItem\(currentKey, value\)/);
 });

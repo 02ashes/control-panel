@@ -374,9 +374,39 @@
     ].join(':');
   }
 
+  // Production drafts created before reset generations were introduced use
+  // this key. Generation zero migrates them once; a real admin reset does not.
+  function legacyDraftKey(taskId) {
+    const programVersion = program && program.version !== undefined
+      ? program.version
+      : 'unknown';
+    const rubricVersion = program && program.rubricVersion
+      ? program.rubricVersion
+      : 'unknown';
+    return [
+      'training',
+      PROGRAM_SLUG,
+      'program',
+      encodeURIComponent(String(programVersion)),
+      'rubric',
+      encodeURIComponent(String(rubricVersion)),
+      'draft',
+      encodeURIComponent(NICKNAME),
+      'task',
+      encodeURIComponent(taskId)
+    ].join(':');
+  }
+
   function readDraft(taskId) {
     try {
-      const value = localStorage.getItem(draftKey(taskId));
+      const currentKey = draftKey(taskId);
+      let value = localStorage.getItem(currentKey);
+      if (value === null && resetGeneration === 0) {
+        value = localStorage.getItem(legacyDraftKey(taskId));
+        if (value !== null) {
+          try { localStorage.setItem(currentKey, value); } catch (_) {}
+        }
+      }
       if (value === null) return null;
       try {
         const parsed = JSON.parse(value);
