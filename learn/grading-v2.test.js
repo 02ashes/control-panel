@@ -123,9 +123,9 @@ test('Day 1 keeps its screening limits and separates lore, live scene, and offer
   assert.match(task.context, /Fixed model lore/);
   assert.match(task.context, /small crescent moon/);
   assert.match(task.context, /Current live scene/);
-  assert.match(task.context, /ordinary plausible actions may be invented/);
+  assert.match(task.context, /ordinary plausible action right now/);
   assert.match(task.context, /Available locked offer/);
-  assert.match(task.prompt, /комментарий Alex про тату.*действие модели прямо сейчас.*шесть получившихся фото.*\$18/);
+  assert.match(task.prompt, /crescent moon.*действие модели прямо сейчас.*шестью свежими фото.*\$18/);
 
   const liveCriterion = rubric.criteria.find(item => item.id === 'teaser_transition');
   const truthCriterion = rubric.criteria.find(item => item.id === 'content_accuracy');
@@ -135,6 +135,25 @@ test('Day 1 keeps its screening limits and separates lore, live scene, and offer
   assert.ok(rubric.doNotPenalize.some(rule => /Обычные правдоподобные действия прямо сейчас/.test(rule)));
   assert.ok(rubric.hardFails.some(rule => /Fixed lore прямо изменён/.test(rule)));
   assert.ok(rubric.hardFails.some(rule => /отсутствующий коммерческий формат/.test(rule)));
+});
+
+test('trainee-facing tasks stay concise while hidden rubrics keep exact grading detail', () => {
+  const custom = DAY1.tasks.find(item => item.id === 'custom_pitch');
+  const transition = DAY1.tasks.find(item => item.id === 'sexting_transition');
+  const objection = DAY1.tasks.find(item => item.id === 'price_objection');
+
+  assert.doesNotMatch(custom.context, /Unsupported capabilities/i);
+  assert.doesNotMatch(custom.prompt, /Действиями считаются|сами по себе действиями не считаются/i);
+  assert.match(custom.context, /Yeah, tell me/);
+  assert.match(custom.prompt, /каждая строка отправляется отдельно/i);
+  assert.match(transition.prompt, /контекстный флирт не требует отдельного разрешения/i);
+  assert.match(objection.prompt, /сам попросил вариант дешевле/i);
+
+  const customRubric = rubricFor('custom_pitch');
+  assert.match(
+    customRubric.criteria.find(item => item.id === 'scenario_actions').rule,
+    /минимум два различимых действия/i
+  );
 });
 
 test('every task receives an exact strict schema and its own complete prompt', () => {
@@ -157,6 +176,10 @@ test('every task receives an exact strict schema and its own complete prompt', (
     assert.equal(schema.properties.integrity.additionalProperties, false);
     assert.equal(schema.properties.integrity.properties.hard_fail_ids.maxItems, 1);
     assert.equal(schema.properties.criteria.additionalProperties, false);
+    assert.match(
+      schema.properties.feedback_ru.description,
+      /If every criterion is 3-4.*do not invent a flaw/i
+    );
     assert.deepEqual(
       Object.keys(schema.properties.criteria.properties).sort(),
       criterionIds.slice().sort()
@@ -176,7 +199,12 @@ test('every task receives an exact strict schema and its own complete prompt', (
     assert.ok(prompt.includes(task.prompt), `${task.id} task prompt omitted`);
     assert.ok(prompt.includes(DAY1.voiceGuide), `${task.id} chat voice guide omitted`);
     assert.match(prompt, /voice mismatch is never a hard fail/i);
-    assert.match(prompt, /Do not require any exact catchphrase/i);
+    assert.match(prompt, /Do not require or reward any exact catchphrase/i);
+    assert.match(prompt, /markers are fully optional/i);
+    assert.match(prompt, /Never compare the answer with an imagined ideal greeting/i);
+    assert.match(prompt, /If at least one criterion is rated 0-2/i);
+    assert.match(prompt, /If every criterion is rated 3-4/i);
+    assert.match(prompt, /Do not invent a weakness/i);
     for (const rule of rubric.hardFails) {
       assert.ok(prompt.includes(rule), `${task.id} hard-fail omitted: ${rule}`);
     }
@@ -193,6 +221,55 @@ test('normalization and hashes are stable across inconsequential whitespace', ()
   assert.equal(grading.normalizeAnswer(noisy), canonical);
   assert.equal(grading.hashAnswer(noisy), grading.hashAnswer(canonical));
   assert.match(grading.hashAnswer(canonical), /^[a-f0-9]{64}$/);
+});
+
+test('grounded multiline evidence over 240 characters is safely shortened and accepted', () => {
+  const taskId = 'sexting_transition';
+  const answer = [
+    'Daniel, after a twelve-hour hospital shift you absolutely earned that pasta. I am home in an oversized T-shirt trying to choose a movie, and your dinner already sounds much better than anything in my kitchen tonight.',
+    'Now I am wondering whether your pasta or my oversized T-shirt would be more distracting during a movie... would you pick a cozy comedy with me, or something that gives us an excuse to sit a little closer?'
+  ].join('\n');
+  const assessment = makeAssessment(taskId, answer);
+
+  assert.ok(answer.length > 240, 'regression answer must exceed the old evidence limit');
+  assert.ok(answer.length <= grading.MAX_ANSWER_CHARS);
+  assert.equal(answer.split('\n').length, 2);
+  const validated = grading.validateAssessment(assessment, taskId, answer);
+  const evidence = validated.criteria.format_facts_language.evidence;
+  assert.ok(Array.from(evidence).length <= grading.MAX_EVIDENCE_CHARS);
+  assert.ok(answer.includes(evidence));
+
+  const schema = grading.buildResponseSchema(taskId);
+  assert.equal(
+    schema.properties.criteria.properties.format_facts_language.properties.evidence.maxLength,
+    grading.MAX_EVIDENCE_CHARS
+  );
+});
+
+test('overlong invented evidence is rejected instead of being silently shortened', () => {
+  const taskId = 'personalized_opener';
+  const answer = 'Hey Ethan, did those gym posts inspire your next after-shift workout?';
+  const assessment = makeAssessment(taskId, answer);
+  assessment.criteria.context_use.evidence = 'z'.repeat(grading.MAX_EVIDENCE_CHARS + 1);
+
+  assert.throws(
+    () => grading.validateAssessment(assessment, taskId, answer),
+    error => error &&
+      error.code === 'invalid_assessment' &&
+      /exact quote/.test(error.message)
+  );
+});
+
+test('evidence length follows JSON Schema Unicode characters and never splits emoji', () => {
+  const taskId = 'personalized_opener';
+  const answer = `Hey Ethan ${'😀'.repeat(120)}`;
+  const assessment = makeAssessment(taskId, answer);
+
+  assert.ok(answer.length > grading.MAX_EVIDENCE_CHARS, 'UTF-16 length must exceed 240');
+  assert.ok(Array.from(answer).length <= grading.MAX_EVIDENCE_CHARS);
+  const validated = grading.validateAssessment(assessment, taskId, answer);
+  assert.equal(validated.criteria.context_use.evidence, answer);
+  assert.doesNotMatch(validated.criteria.context_use.evidence, /[\uD800-\uDBFF]$/);
 });
 
 test('preflight distinguishes English, non-English, and prompt injection', () => {
@@ -250,10 +327,35 @@ test('critical criteria gate passing even when the numeric score is high', () =>
     answer
   );
   assert.ok(verdict.rawScore >= 80);
+  assert.equal(verdict.score, grading.CRITICAL_SCORE_CAP);
   assert.equal(verdict.criticalOk, false);
   assert.equal(verdict.hardFail, false);
   assert.equal(verdict.pass, false);
   assert.ok(verdict.critical.some(item => item.id === firstCriticalId && item.ok === false));
+  const criticalCap = verdict.caps.find(item => item.reason === 'critical_gate');
+  assert.equal(criticalCap.maximum, 59);
+  assert.deepEqual(criticalCap.failed_criteria, [firstCriticalId]);
+  assert.match(criticalCap.reason_ru, /обязательный критерий/i);
+  assert.match(verdict.scoreCapReasonRu, /59\/100/);
+});
+
+test('generic Hey how are you fails the personalized opener cleanly below 60', () => {
+  const taskId = 'personalized_opener';
+  const answer = 'Hey, how are you?';
+  const verdict = grading.computeVerdict(
+    makeAssessment(taskId, answer, { ratings: [0, 1, 4, 4, 3] }),
+    taskId,
+    answer
+  );
+
+  assert.equal(verdict.rawScore, 60);
+  assert.equal(verdict.score, 59);
+  assert.equal(verdict.pass, false);
+  assert.equal(verdict.criticalOk, false);
+  assert.ok(verdict.caps.some(cap =>
+    cap.reason === 'critical_gate' &&
+    cap.failed_criteria.includes('context_use')
+  ));
 });
 
 test('diagnostic booleans cannot cap a score without a grounded violation', () => {
@@ -509,6 +611,58 @@ test('callGrok safely retries when IncomingMessage errors before end', { concurr
     const result = await grading.callGrok(answer, taskId, 'test-api-key');
     assert.deepEqual(result, assessment);
     assert.equal(attempts, 2);
+  } finally {
+    https.request = originalRequest;
+  }
+});
+
+test('callGrok does not pay for deterministic retries of an invalid assessment', { concurrency: false }, async () => {
+  const taskId = 'silent_fan';
+  const answer = 'Joe, tap ❤️ for lingerie or 🦶 for feet — no words needed.';
+  const assessment = makeAssessment(taskId, answer);
+  assessment.criteria.nonverbal_channel.evidence = 'This text is not in the answer.';
+  const originalRequest = https.request;
+  let attempts = 0;
+
+  https.request = (_options, onResponse) => {
+    attempts += 1;
+    const request = new EventEmitter();
+    request.setTimeout = () => request;
+    request.write = () => {};
+    request.end = () => {
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      response.headers = {};
+      response.complete = true;
+      response.destroy = () => {};
+      onResponse(response);
+      process.nextTick(() => {
+        const apiResponse = {
+          status: 'completed',
+          output: [{
+            type: 'message',
+            content: [{
+              type: 'output_text',
+              text: JSON.stringify(assessment)
+            }]
+          }]
+        };
+        response.emit('data', Buffer.from(JSON.stringify(apiResponse)));
+        response.emit('end');
+      });
+    };
+    request.destroy = error => {
+      if (error) request.emit('error', error);
+    };
+    return request;
+  };
+
+  try {
+    await assert.rejects(
+      grading.callGrok(answer, taskId, 'test-api-key'),
+      error => error && error.code === 'invalid_assessment' && error.retryable === false
+    );
+    assert.equal(attempts, 1);
   } finally {
     https.request = originalRequest;
   }

@@ -6,6 +6,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const DAY1_PROGRAM = require('./programs/day1-v1.js');
+const DAY1_THEORY = require('./day1-theory.js');
 const grading = require('./grading-v2.js');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -13,6 +14,8 @@ const PORT = Number.parseInt(process.env.PREVIEW_PORT || '4173', 10);
 const HOST = '127.0.0.1';
 const app = express();
 const histories = new Map();
+const theoryProgress = new Map();
+const resetGenerations = new Map();
 const gradeCache = new Map();
 let nextSubmissionId = 1;
 
@@ -48,6 +51,13 @@ function publicProgram() {
     passingScore: DAY1_PROGRAM.passingScore,
     minimumTaskScore: DAY1_PROGRAM.minimumTaskScore,
     maxAttemptsPerTask: DAY1_PROGRAM.maxAttemptsPerTask,
+    theoryRequired: true,
+    serverTheoryProgress: true,
+    theory: {
+      id: DAY1_THEORY.id,
+      version: DAY1_THEORY.version,
+      totalModules: DAY1_THEORY.modules.length
+    },
     tasks: DAY1_PROGRAM.tasks.map(task => ({
       id: task.id,
       title: task.title,
@@ -58,6 +68,25 @@ function publicProgram() {
       minMessages: task.minMessages || 1,
       maxMessages: task.maxMessages || task.minMessages || 1
     }))
+  };
+}
+
+function completedTheory(name) {
+  if (!theoryProgress.has(name)) theoryProgress.set(name, new Set());
+  return theoryProgress.get(name);
+}
+
+function theoryStateFor(name) {
+  const completedSet = completedTheory(name);
+  const completed = DAY1_THEORY.modules
+    .map(module => module.id)
+    .filter(moduleId => completedSet.has(moduleId));
+  return {
+    completed,
+    completedCount: completed.length,
+    totalModules: DAY1_THEORY.modules.length,
+    complete: DAY1_THEORY.modules.length > 0 &&
+      completed.length === DAY1_THEORY.modules.length
   };
 }
 
@@ -132,8 +161,10 @@ function stateFor(name) {
     averageScore,
     passingScore: DAY1_PROGRAM.passingScore,
     minimumTaskScore: DAY1_PROGRAM.minimumTaskScore,
-    passed: completedTasks === totalTasks &&
+    passed: theoryStateFor(name).complete && completedTasks === totalTasks &&
       averageScore >= DAY1_PROGRAM.passingScore && everyTaskPassed,
+    theory: theoryStateFor(name),
+    resetGeneration: resetGenerations.get(name) || 0,
     tasks
   };
 }
@@ -165,6 +196,10 @@ function validationError(task, answer) {
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '100kb' }));
+app.use('/api/training/v2', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 
 app.get('/api/training/v2/programs/day1-v1', (req, res) => {
   res.json({ ok: true, program: publicProgram(), preview: true });
@@ -172,6 +207,55 @@ app.get('/api/training/v2/programs/day1-v1', (req, res) => {
 
 app.get('/api/training/v2/programs/day1-v1/state', (req, res) => {
   res.json({ ok: true, state: stateFor(nickname(req)), preview: true });
+});
+
+app.post('/api/training/v2/programs/day1-v1/theory', (req, res) => {
+  const name = nickname(req);
+  const moduleId = String(req.body?.moduleId || '').trim();
+  const theoryId = String(req.body?.theoryId || '').trim();
+  const theoryVersion = Number(req.body?.theoryVersion);
+  const selectedIndex = Number(req.body?.selectedIndex);
+  const module = DAY1_THEORY.modules.find(item => item.id === moduleId);
+
+  if (!module) return res.status(400).json({ error: 'unknown_theory_module' });
+  if (theoryId !== DAY1_THEORY.id || theoryVersion !== Number(DAY1_THEORY.version)) {
+    return res.status(409).json({
+      error: 'theory_version_mismatch',
+      theoryId: DAY1_THEORY.id,
+      theoryVersion: DAY1_THEORY.version
+    });
+  }
+  const options = Array.isArray(module.check?.options) ? module.check.options : [];
+  if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= options.length) {
+    return res.status(400).json({ error: 'invalid_selected_index' });
+  }
+
+  const completed = completedTheory(name);
+  const moduleIndex = DAY1_THEORY.modules.findIndex(item => item.id === moduleId);
+  const firstIncompleteIndex = DAY1_THEORY.modules.findIndex(item => !completed.has(item.id));
+  if (!completed.has(moduleId) && firstIncompleteIndex !== moduleIndex) {
+    return res.status(409).json({ error: 'theory_module_locked' });
+  }
+  if (selectedIndex !== Number(module.check?.correctIndex)) {
+    const state = stateFor(name);
+    return res.json({
+      ok: true,
+      correct: false,
+      state,
+      theory: state.theory,
+      preview: true
+    });
+  }
+
+  completed.add(moduleId);
+  const state = stateFor(name);
+  return res.json({
+    ok: true,
+    correct: true,
+    state,
+    theory: state.theory,
+    preview: true
+  });
 });
 
 app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', async (req, res) => {
@@ -200,8 +284,20 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', async (req, re
   if (history.length >= DAY1_PROGRAM.maxAttemptsPerTask) {
     return res.status(409).json({ error: 'max_attempts_reached' });
   }
+  const theory = theoryStateFor(name);
+  if (!theory.complete) {
+    return res.status(409).json({
+      error: 'theory_required',
+      theory,
+      resetGeneration: resetGenerations.get(name) || 0
+    });
+  }
   if (!XAI_API_KEY) {
-    return res.status(503).json({ error: 'grader_unavailable', retryable: true });
+    return res.status(503).json({
+      error: 'grader_unavailable',
+      message: 'Grok сейчас недоступен. Попытка не потрачена — повторите позже.',
+      retryable: true
+    });
   }
 
   const cacheKey = [DAY1_PROGRAM.rubricVersion, taskId, answerHash].join(':');
@@ -237,13 +333,21 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', async (req, re
     });
   } catch (error) {
     console.error('Preview grading error:', error && error.message);
-    return res.status(503).json({ error: 'grader_unavailable', retryable: true });
+    return res.status(503).json({
+      error: 'grader_unavailable',
+      message: 'Grok сейчас недоступен. Попытка не потрачена — повторите позже.',
+      retryable: true
+    });
   }
 });
 
 app.post('/api/training/v2/preview/reset', (req, res) => {
-  histories.delete(nickname(req));
-  res.json({ ok: true, preview: true });
+  const name = nickname(req);
+  histories.delete(name);
+  theoryProgress.delete(name);
+  const resetGeneration = (resetGenerations.get(name) || 0) + 1;
+  resetGenerations.set(name, resetGeneration);
+  res.json({ ok: true, resetGeneration, preview: true });
 });
 
 app.get('/api/training/v2/preview/status', (req, res) => {
@@ -255,17 +359,35 @@ app.get('/api/training/v2/preview/status', (req, res) => {
   });
 });
 
+app.all(/^\/api\/training\/(?!v2(?:\/|$)).*/, (req, res) => {
+  res.status(410).json({
+    error: 'legacy_training_disabled',
+    message: 'Старая обучалка отключена. Используйте День 1.',
+    preview: true
+  });
+});
+
+app.get('/', (req, res) => {
+  res.redirect('/learn/day1.html?preview=1');
+});
+
 const PRIVATE_PATHS = new Set([
   '/.env',
   '/package.json',
   '/package-lock.json',
   '/server.js',
+  '/clear-db.js',
   '/learn/lessons.js',
+  '/learn/app.js',
+  '/learn/styles.css',
+  '/learn/dashboard.html',
   '/learn/grading.js',
   '/learn/grading-v2.js',
   '/learn/grading-v2.test.js',
   '/learn/day1-theory.test.js',
   '/learn/day1-preview-server.js',
+  '/learn/server.js',
+  '/learn/results.json',
   '/learn/programs/day1-v1.js',
   '/learn/programs/day1-v1-rubrics.js'
 ]);
@@ -282,6 +404,11 @@ app.use((req, res, next) => {
     .toLowerCase();
   if (
     PRIVATE_PATHS.has(normalizedPath) ||
+    normalizedPath === '/learn/evals' ||
+    normalizedPath.startsWith('/learn/evals/') ||
+    normalizedPath === '/learn/programs' ||
+    normalizedPath.startsWith('/learn/programs/') ||
+    (normalizedPath.startsWith('/learn/') && normalizedPath.endsWith('.test.js')) ||
     normalizedPath.startsWith('/.env.') ||
     normalizedPath === '/node_modules' ||
     normalizedPath.startsWith('/node_modules/') ||
@@ -301,10 +428,6 @@ app.use(express.static(ROOT_DIR, {
     res.setHeader('Cache-Control', 'no-store');
   }
 }));
-
-app.get('/', (req, res) => {
-  res.redirect('/learn/day1.html?preview=1');
-});
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`Day 1 preview: http://${HOST}:${PORT}/learn/day1.html?preview=1`);

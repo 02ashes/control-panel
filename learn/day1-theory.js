@@ -2,36 +2,51 @@
 
 var DAY1_THEORY = {
   id: 'day1-theory',
+  // Module ids did not change. Keeping v7 preserves the current cohort's
+  // completed theory state and local draft namespace across the hotfix.
   version: 7,
   title: 'День 1 — база рабочего чата',
+  subtitle: 'Шесть коротких тем перед письменным отбором',
+  estimatedMinutes: '15–20',
+  glossary: [
+    { term: 'Лор', definition: 'Постоянные факты модели, которые нельзя менять от сообщения к сообщению.' },
+    { term: 'Vault', definition: 'Библиотека реально доступных фото, видео и наборов.' },
+    { term: 'PPV', definition: 'Платное закрытое сообщение с контентом.' },
+    { term: 'Live-сцена', definition: 'Правдоподобное действие модели «прямо сейчас», которое ведёт к доступному контенту.' },
+    { term: 'Кастом', definition: 'Контент, который снимается персонально под согласованные детали фана.' },
+    { term: 'Допка', definition: 'Отдельное платное улучшение уже согласованного предложения.' }
+  ],
   modules: [
     {
       id: 'work-cycle',
-      kicker: 'База · 2 минуты',
+      kicker: 'База · 3 минуты',
       title: 'Сначала контекст, потом живой голос',
-      lead: 'В каждом задании отдельно указано, что известно о модели, фане и текущем разговоре. Бери из паст манеру общения, а факты — только из текущего условия.',
+      lead: 'В каждом задании отдельно указано, что известно о модели, фане и текущем разговоре. Манеру общения бери из примеров, а факты — только из текущего условия.',
       points: [
         'Перед ответом посмотри последнюю реплику, карточку, заметки, прошлые покупки и доступный контент.',
-        'Рабочий голос: нормальные слова вместо u/ur/rn/wanna, заглавная I, живые паузы через «...», иногда haha, :3 или >_<. Не лепи их в каждую строку.',
-        'Возьми одну свежую деталь фана, отреагируй на неё и, если к месту, добавь один факт модели из условия. Потом задай один простой вопрос.',
-        'Не пиши идеально отполированный мини-текст. Живое сообщение может начаться с Wait..., Well... или Omg... и немного недоговорить мысль.'
+        'Возьми одну свежую деталь фана, нормально отреагируй на неё и задай один простой вопрос. Не возвращайся к уже закрытой теме только потому, что под неё есть паста.',
+        'Пиши понятными словами, ставь заглавную I и избегай менеджерского тона. Паузы, haha, :3 и >_< — необязательные оттенки, а не формула правильного ответа.',
+        'Не копируй приветку слово в слово. Рабочих начал и последовательностей разговора может быть несколько.'
       ],
-      rule: 'Деталь фана → живая реакция → если к месту, факт модели → один вопрос.',
+      rule: 'Свежая деталь → человеческая реакция → один лёгкий вопрос.',
       examples: [
         {
-          label: 'Простой вопрос из реальной приветки',
+          label: 'Короткий вопрос из реальной приветки',
           text: 'What are your hobbies?',
-          tone: 'neutral'
+          tone: 'neutral',
+          sourceType: 'real'
         },
         {
-          label: 'Fan',
+          label: 'Ответ фана для учебной ситуации',
           text: 'I make beats after work. Mostly hip-hop.',
-          tone: 'neutral'
+          tone: 'neutral',
+          sourceType: 'training'
         },
         {
-          label: 'Подстроили реальную пасту под его ответ',
-          text: 'Okay, making beats after work actually sounds fun. Mine are pretty nerdy ngl... What do you use to make them? :3',
-          tone: 'good'
+          label: 'Адаптация под свежую деталь',
+          text: 'Making beats after work actually sounds fun. What do you use to make them?',
+          tone: 'good',
+          sourceType: 'adapted'
         }
       ],
       media: [
@@ -60,81 +75,87 @@ var DAY1_THEORY = {
       check: {
         question: 'Вы уже обсудили имя Noah и Minnesota. Факт модели: скоро начнёт учиться sound design. Последняя фраза Noah: “And I make beats after work.” Какой ответ лучше продолжает свежую тему?',
         options: [
-          'Noah... okay haha. I like that name. Have your friends always called you that? :3',
-          'Omg... you make beats too. I am going to study sound design, so now I am curious haha. What kind of music? :3',
-          'Omg... Minnesota. I will be there soon haha. Have you always lived there? :3'
+          'Noah is a really nice name. Have your friends always called you that, or is it just your profile name?',
+          'You make beats after work? I am about to start sound design classes, so now I am curious. What kind of music do you make?',
+          'Minnesota can get so cold in winter. Have you always lived there, or did you move there for work?'
         ],
         correctIndex: 1,
-        explanation: 'Все три написаны в нужной манере. Второй сильнее: он цепляется за последнюю новую деталь, коротко связывает её с данным в условии sound design и задаёт один вопрос. Первый возвращается к уже закрытой теме имени, а третий — к Minnesota.'
+        explanation: 'Все варианты можно отправить, но второй отвечает на последнюю новую деталь, связывает её только с данным в условии фактом модели и даёт Noah лёгкий вопрос. Остальные возвращают уже закрытые темы.'
       }
     },
     {
       id: 'lore-and-live-scene',
-      kicker: 'Live-эффект · 2 минуты',
+      kicker: 'Live-эффект · 3 минуты',
       title: 'Лор постоянный, сцена живая',
-      lead: 'Лор держит образ модели целым. Сцена «делаю прямо сейчас» добавляет жизнь, если каждое действие логично продолжает чат.',
+      lead: 'Лор держит образ модели целым. Сцена «делаю прямо сейчас» добавляет жизнь, если действие правдоподобно и ведёт к реально доступному контенту.',
       points: [
         'Лор — постоянная основа: возраст, город, семья, характер, интересы, планы и уже рассказанные факты не меняются.',
-        'Сначала выбери подходящий контент в Vault — библиотеке готовых фото и видео. Потом можно разыграть подготовку к нему: сменить помаду, поправить свет или выбрать позу.',
-        'Выбор фана должен вызвать действие модели «прямо сейчас» и привести к подходящему медиа.',
-        'Модель не объясняет фану эту технику. Она просто пишет, что делает сейчас, и не обещает формат, которого нет в Vault.'
+        'Сначала выбери подходящий контент в Vault. Потом можно разыграть подготовку к нему: сменить помаду, поправить свет, подойти к зеркалу или выбрать позу.',
+        'Выбор или комментарий фана должен вызвать действие модели «прямо сейчас» и привести к подходящему медиа.',
+        'Не обещай видео, звук, имя, число файлов или другой формат, которого нет в условии.'
       ],
-      rule: 'Сначала медиа в Vault → потом сцена «прямо сейчас» → то же медиа.',
+      rule: 'Доступное медиа → логичное действие сейчас → тот же оффер без новых обещаний.',
       examples: [
         {
-          label: 'Лор этого примера',
+          label: 'Лор учебного примера',
           text: 'Model facts: from Moldova; won a talent visa; moving to Minnesota; will study sound design.',
-          tone: 'neutral'
+          tone: 'neutral',
+          sourceType: 'training'
         },
         {
-          label: 'Ответ использует только данный лор',
+          label: 'Строка из реальной приветки',
           text: 'I won a talent visa, so... Yes. And they offered me a free dorm and tuition',
-          tone: 'good'
+          tone: 'good',
+          sourceType: 'real'
         },
         {
-          label: 'Live-эффект в другом разговоре',
-          text: 'Wait... Let me find the lipstick I want to use for your surprise. Give me one minute :3',
-          tone: 'good'
+          label: 'Адаптированный live-переход',
+          text: 'Give me a second. I want to find the lipstick that fits the red set before I show you.',
+          tone: 'good',
+          sourceType: 'adapted'
         }
       ],
       check: {
         question: 'Фан выбрал красный образ. В Vault есть красные фото, но нет видео. Какой первый ответ лучше создаёт эффект «прямо сейчас» и не меняет оффер?',
         options: [
-          'I have the red photos right here haha. Do you want me to send them before I change my mind? :3',
-          'Wait... I want to make a little video in that look now. Give me one minute :3',
-          'Red... okay haha. Let me find the lipstick I want to use for your surprise. One minute :3'
+          'I have the red photos right here. Do you want me to send the whole set before I change my mind?',
+          'Red is a good choice. Let me make a quick video in that look now, and I will be right back.',
+          'Red won. Give me a second to find the lipstick I want with that set before I show you.'
         ],
         correctIndex: 2,
-        explanation: 'Все три звучат как сообщения, а не как учебник. Третий сильнее: помада создаёт маленькое действие прямо сейчас и спокойно ведёт к готовым фото. Первый раскрывает, что сет уже готов, а второй выдумывает отсутствующее видео.'
+        explanation: 'Третий вариант создаёт маленькое правдоподобное действие сейчас и ведёт к имеющимся фото. Первый сразу раскрывает, что набор готов, а второй обещает отсутствующее видео.'
       }
     },
     {
       id: 'silent-fan',
       kicker: 'Молчун · 2 минуты',
       title: 'Молчун тоже отвечает',
-      lead: 'Если фан читает и ставит реакции, тишина ещё не означает отказ. Просто дай ему способ общаться без текста.',
+      lead: 'Если фан читает и ставит реакции, тишина ещё не означает отказ. Дай ему способ общаться без набора текста.',
       points: [
-        'Предложи одно простое действие: поставить лайк, выбрать emoji или отреагировать на один вариант.',
-        'Давай один выбор за раз — без анкеты из нескольких вопросов.',
-        'Увидел реакцию — сразу продолжи по выбранному варианту, не спрашивай то же самое ещё раз.',
+        'Предложи одно простое действие: поставить лайк, выбрать emoji или отреагировать на вариант.',
+        'Давай один понятный выбор за раз, без анкеты из нескольких вопросов.',
+        'Увидел реакцию — сразу продолжи по выбранному варианту, не проси подтвердить тот же выбор повторно.',
         'Не упрекай за молчание и не заваливай сообщениями.'
       ],
-      rule: 'Нет слов → просим минимальную реакцию → используем её как настоящий ответ.',
+      rule: 'Нет слов → минимальная реакция → считаем её настоящим ответом.',
       examples: [
         {
-          label: 'Контекст примера',
+          label: 'Контекст учебного примера',
           text: 'Fan reads the messages and leaves likes, but does not type.',
-          tone: 'neutral'
+          tone: 'neutral',
+          sourceType: 'training'
         },
         {
-          label: 'Разрешаем ответить без текста',
+          label: 'Строка из реальной пасты',
           text: 'You can just like this if typing is not your thing. I will understand :3',
-          tone: 'good'
+          tone: 'good',
+          sourceType: 'real'
         },
         {
-          label: 'Лайк сразу становится ответом',
-          text: 'Okayy, quiet mode haha. Can I call you Joe? Like this if that works :3',
-          tone: 'good'
+          label: 'Другой рабочий вариант',
+          text: 'Tap the black heart if lingerie is your thing. No typing needed.',
+          tone: 'good',
+          sourceType: 'training'
         }
       ],
       media: [
@@ -144,130 +165,139 @@ var DAY1_THEORY = {
           caption: 'Реальный молчун: лайк становится его ответом',
           callouts: [
             'Сначала чаттер предлагает поставить лайк вместо текста.',
-            'После первого сигнала фану дают понятные варианты.',
+            'После первого сигнала фану дают понятный вариант.',
             'Выбранная реакция сразу двигает разговор дальше.',
-            'Смотрим на механику ветки, а не копируем английский со скрина слово в слово.'
+            'Берём механику ветки; английский со скрина не обязан быть идеальным шаблоном.'
           ]
         }
       ],
       check: {
         question: 'Фан ничего не пишет, но поставил лайк на black outfit. Как лучше использовать его реакцию?',
         options: [
-          'Okayy, black won haha. Give me one minute... I know which one I want to show you now :3',
-          'I saw that like haha. What was it about the black one that got you? You can give me one word :3',
-          'Okayy, I think that means black haha. Like this again so I know I understood you right :3'
+          'Black won. Give me one minute, I know exactly which look I want to show you next.',
+          'I saw your like on the black one. What exactly did you enjoy about it? One word is enough.',
+          'I think that like means black. Tap this message again so I know I understood your choice correctly.'
         ],
         correctIndex: 0,
-        explanation: 'Все три сохраняют рабочую манеру общения. Первый сильнее: «black won» принимает лайк как полноценный выбор и сразу продолжает ветку. Второй снова требует текст, а третий заставляет подтверждать уже сделанный выбор.'
+        explanation: 'Первый вариант принимает лайк как полноценный выбор и сразу двигает ветку. Второй снова требует текст, а третий заставляет подтверждать уже понятную реакцию.'
       }
     },
     {
       id: 'soft-transition',
-      kicker: 'Тон · 2 минуты',
-      title: 'От обычного вопроса к личному',
-      lead: 'В реальной приветке переход работает не через случайную сексуальную шутку. Сначала узнаём человека, затем просим разрешение на более личный вопрос.',
+      kicker: 'Тон · 3 минуты',
+      title: 'Лёгкий флирт и личный вопрос — не одно и то же',
+      lead: 'Лёгкий флирт может естественно вырасти из текущей темы. Перед прямым вопросом о порно, фетише или графической сексуальной фантазии сначала спроси разрешение и дождись ответа.',
       points: [
-        'Сначала имя, страна и один живой разговор про хобби. Это знакомство, а не анкета: реагируй на каждый ответ.',
-        'После нормальной реакции спроси разрешение: «Can I ask you a more personal question?»',
-        'Только после его «yes» задавай kink-вопрос про любимую категорию или фетиш. PH в реальной пасте означает Pornhub.',
-        'Если вопрос сложный, упрости выбор, но не вытягивай ответ давлением.'
+        'Suggestive-фраза про его pasta, твой oversized T-shirt или совместный movie может быть первым лёгким флиртом, если она продолжает разговор и оставляет фану выбор.',
+        'Перед прямым kink-вопросом спроси: «Can I ask you a more personal question?» — и дождись yes.',
+        'После согласия задай один понятный интимный вопрос. PH в реальной пасте означает Pornhub.',
+        'Нет обязательного маршрута «имя → страна → хобби». Важно реагировать на то, что фан реально пишет, а не проводить анкету.'
       ],
-      rule: 'Его ответ → живая реакция → разрешение → ждём → один личный вопрос.',
+      rule: 'Контекстный лёгкий флирт допустим сразу; explicit/kink-вопрос — только после разрешения.',
       examples: [
         {
-          label: 'После разговора о хобби',
-          text: 'Honestly that sounds way more fun than my whole personality haha.. mine are pretty nerdy ngl',
-          tone: 'good'
+          label: 'Учебный лёгкий флирт из контекста',
+          text: 'An oversized T-shirt and your pasta sound dangerously close to a good night together. What sauce did you make?',
+          tone: 'good',
+          sourceType: 'training'
         },
         {
-          label: 'Отдельный мост из приветки',
+          label: 'Мост из реальной приветки',
           text: 'And can I ask you a more personal question? :)',
-          tone: 'good'
+          tone: 'good',
+          sourceType: 'real'
         },
         {
           label: 'Только после согласия',
           text: 'What is the one category you always end up searching for on PH? Or your fetish haha',
-          tone: 'good'
+          tone: 'good',
+          sourceType: 'real'
         }
       ],
       check: {
-        question: 'Fan: “I mostly cook and watch anime after work.” Модель уже ответила про свои хобби. Как лучше сделать первый шаг к более личной теме?',
+        question: 'Fan: “I mostly cook and watch anime after work.” Модель уже ответила про свои хобби. Как лучше сделать первый шаг именно к интимной теме?',
         options: [
-          'Anime? Omg... Okay, what are your top three right now? :3',
-          'Anime? Omg... What is the one category you always search for on PH? :3',
-          'Anime? Omg... Can I ask you a more personal question? :3'
+          'Anime after work is a perfect reset. Which show are you watching right now, and would you recommend it?',
+          'Cooking and anime sounds cute. What is the one porn category or fetish you always come back to?',
+          'Cooking and anime sounds like a good night. Can I ask you something a little more personal?'
         ],
         correctIndex: 2,
-        explanation: 'Все три можно представить в живом чате. Третий отдельно просит разрешение перед личным вопросом. Первый остаётся в теме аниме, а второй уже задаёт интимный вопрос, не дождавшись согласия.'
+        explanation: 'Третий вариант отдельно просит разрешение. Первый нормально продолжает обычную тему, но не делает нужный переход; второй уже задаёт kink-вопрос, не дождавшись согласия.'
       }
     },
     {
       id: 'offer-and-objection',
-      kicker: 'Продажа · 2 минуты',
+      kicker: 'Продажа · 3 минуты',
       title: 'Возражение не ломает разговор',
-      lead: 'Если фан тормозит перед покупкой, модель не превращается в менеджера и не начинает торговаться. Сначала выясняем одну настоящую причину.',
+      lead: 'Если фан тормозит перед покупкой, не начинай спорить или автоматически сбивать цену. Сначала пойми, что именно его остановило.',
       points: [
         'Перед отправкой сверь формат, количество, тему, особые детали и цену с реальным контентом.',
-        'На расплывчатое «не сейчас» задай один короткий выбор: цена или слишком быстро.',
-        'Если дело в цене, не спорь и не выдумывай скидку. Оставь платное сообщение на месте и перестань толкать его в этой сессии.',
-        'Если слишком быстро, вернись к обычному разговору. Более дешёвый вариант можно дать только там, где он предусмотрен в воронке.'
+        'На расплывчатое «не сейчас» задай один короткий выбор: дело в цене или ты слишком быстро перешёл к продаже.',
+        'Если он просто назвал цену высокой, не спорь, не придумывай скидку и перестань толкать тот же оффер в этой сессии.',
+        'Исключение: если фан сам прямо просит более дешёвый вариант и такой вариант указан в доступном контенте, можно спокойно предложить ровно один.'
       ],
-      rule: 'Уточнил причину → ответил только на неё → не давишь повторно.',
+      rule: 'Узнай причину → ответь только на неё → не дави и не выдумывай условия.',
       examples: [
         {
-          label: 'Диагностика из реальной ветки',
-          text: 'Okay... was it the price or did I move too quickly? You can give me one word',
-          tone: 'neutral'
+          label: 'Адаптированная диагностика',
+          text: 'Was it the price, or did I move too quickly? One word is enough.',
+          tone: 'neutral',
+          sourceType: 'adapted'
         },
         {
-          label: 'Если причина в цене',
-          text: 'I understand. Leave it there for now... I would rather you open it when you actually want to see what is behind that preview than because I kept poking you >_<',
-          tone: 'good'
+          label: 'Если причина только в цене',
+          text: 'I understand. Leave it there for now. I would rather you open it when you actually want it.',
+          tone: 'good',
+          sourceType: 'training'
         },
         {
-          label: 'Если всё случилось слишком быстро',
-          text: 'That is fair haha. We can talk normally first. What did you actually want to know about me? :3',
-          tone: 'good'
+          label: 'Если он сам просит дешевле',
+          text: 'I do have a smaller three-photo feet teaser for $9. Would that fit tonight better?',
+          tone: 'good',
+          sourceType: 'training'
         }
       ],
       check: {
-        question: 'Платное сообщение из приветственной воронки уже отправлено. Фан отвечает: “I don’t know... maybe not right now.” Какой ответ лучше всего выясняет причину и сохраняет живой голос?',
+        question: 'Платное сообщение уже отправлено. Фан отвечает: “I don’t know... maybe not right now.” Какой ответ лучше выясняет причину, не додумывая её за него?',
         options: [
-          'Okay... maybe $15 was too much. I can make it a little cheaper tonight if you still want it >_<',
-          'Wait... do you mean the price, or did I rush the whole thing? One word is enough :3',
-          'That is fair haha. We can talk normally first. What did you actually want to know about me? :3'
+          'Maybe the price is the problem. I can make it cheaper tonight if you still want to see everything.',
+          'Do you mean the price, or did I rush the whole thing? You can give me one word.',
+          'That is fair. We can forget the offer and talk normally. What did you want to know about me?'
         ],
         correctIndex: 1,
-        explanation: 'Второй ответ не угадывает за фана: он даёт два понятных варианта и просит одно слово. Третий был бы правильным уже после ответа «too fast», а первый без разрешения меняет цену.'
+        explanation: 'Второй ответ сначала выясняет причину. Третий подходит уже после ответа «too fast», а первый угадывает за фана и самовольно меняет цену.'
       }
     },
     {
       id: 'custom-and-videocall',
-      kicker: 'Крупный оффер · 2 минуты',
+      kicker: 'Крупный оффер · 3 минуты',
       title: 'Кастом и видеочат продаём через ценность',
-      lead: 'В День 1 достаточно основы: идея должна ощущаться продолжением вашего разговора, а не рекламой, которую можно отправить любому.',
+      lead: 'Идея должна ощущаться продолжением разговора. Этапы кастома отправляются по одному после реакции фана, а не пачкой из заготовленных сообщений.',
       points: [
-        'Кастом — это персональное видео под запрос фана. Вернись к его интересу, напиши идею как живую мысль и сначала спроси, хочет ли он её услышать.',
-        'После интереса раскрой мини-сцену с конкретными действиями, личной деталью и точными условиями.',
-        'Допка к видеочату: назови дополнительное действие и простыми словами объясни, что фан получит от него.',
-        'Не добавляй локацию, реквизит, длительность или техническую возможность, которых нет в условиях.'
+        'Сначала вернись к интересу фана, коротко скажи, что появилась идея, и спроси, хочет ли он её услышать. Дождись ответа.',
+        'После его интереса раскрой мини-сцену с конкретными действиями и личной деталью. Следующий этап отправляй только если он продолжает разговор.',
+        'Затем назови точные формат, длительность, цену и задай один вопрос о заказе. В письменном задании эти этапы стоят на отдельных строках, но в реальном чате не уходят одним залпом.',
+        'Для допки к видеочату назови, что именно добавляется, и объясни конкретную пользу для фана.'
       ],
-      rule: 'Его интерес → мысль модели → конкретная сцена → точные условия и польза.',
+      rule: 'Интерес → разрешение → сцена → точные условия. Каждый этап ждёт реакцию.',
       examples: [
         {
-          label: 'Кастом начинается с его интереса',
-          text: 'Wait... I remembered what you said about cooking and I got an idea haha. Can I tell you? :3',
-          tone: 'good'
+          label: 'Адаптация из реальной ветки',
+          text: 'I remembered what you said about cooking and got an idea. Can I tell you?',
+          tone: 'good',
+          sourceType: 'adapted'
         },
         {
-          label: 'Идея звучит как личная фантазия',
-          text: 'So... I want to try making your favorite dish on camera and taste it for you when it is ready. What would you make me cook? :3',
-          tone: 'good'
+          label: 'После его «yes»',
+          text: 'I want to make your carbonara on camera, look right at you when I taste it, and say your name when you tell me I did it right.',
+          tone: 'good',
+          sourceType: 'training'
         },
         {
           label: 'Видеочат: польза, а не слово upgrade',
-          text: 'Mmm... I can get ready before we start, so you will see more of me instead of losing half the call while I undress >_<',
-          tone: 'good'
+          text: 'I can be fully ready before we start, so none of your ten minutes disappear while I get set up.',
+          tone: 'good',
+          sourceType: 'training'
         }
       ],
       media: [
@@ -278,7 +308,7 @@ var DAY1_THEORY = {
           callouts: [
             'Тема готовки появляется из самого разговора с фаном.',
             'Чаттер возвращается к его словам, а не достаёт случайную идею.',
-            'Сценарий раскрывается через действия, а не сухое «хочешь кастом?».',
+            'Сценарий раскрывается действиями после интереса фана.',
             'На День 1 берём принцип персонализации, а не копируем длинную пасту.'
           ]
         },
@@ -289,20 +319,20 @@ var DAY1_THEORY = {
           callouts: [
             'Сначала согласован базовый звонок, затем предлагается отдельная допка.',
             'Подготовка заранее сохраняет оплаченные минуты фана.',
-            'Вторая игрушка — ещё одно конкретное изменение опыта, а не пустая доплата.',
-            'Скрин показывает логику ценности; точную формулировку новичок пишет сам.'
+            'Вторая игрушка — конкретное изменение опыта, а не пустая доплата.',
+            'Скрин показывает логику ценности; цены и формулировки берём из текущего задания.'
           ]
         }
       ],
       check: {
         question: 'Фан согласен на 10-минутный видеочат. База — одна игрушка. За $20 можно добавить вторую и полностью подготовиться до начала. Как лучше объяснить доплату?',
         options: [
-          'Mmm... for $20 more I can get ready with the second toy before we start... then you do not lose any of your 10 mins waiting for me >_<',
-          'Mmm... then for $20 more I can have the second toy ready too. I think it will make the whole call much hotter for both of us >_<',
-          'Mmm... then for $20 more I can use the second toy and stay five minutes longer, so neither of us has to rush at the end >_<'
+          'The extra $20 adds a second toy, and I will be ready before we start, so all ten minutes stay inside the actual call. Want that?',
+          'For $20 more I can have the second toy ready too. It will make everything much hotter and more exciting for both of us. Want it?',
+          'For $20 more I can use a second toy and stay five minutes longer, so neither of us has to rush at the end. Deal?'
         ],
         correctIndex: 0,
-        explanation: 'Первый вариант сохраняет живой голос, называет обе реальные части допки и объясняет пользу через его оплаченные минуты. Второй обещает только «hotter», но не объясняет конкретную пользу, а третий выдумывает дополнительные пять минут.'
+        explanation: 'Первый вариант называет обе реальные части допки и объясняет пользу через оплаченные минуты. Второй не объясняет конкретную выгоду, а третий выдумывает ещё пять минут.'
       }
     }
   ]

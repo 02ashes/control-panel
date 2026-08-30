@@ -1059,6 +1059,15 @@
         const socket = io();
         let currentNickname = localStorage.getItem('nickname') || '';
 
+        // Login/register may set the HttpOnly cookie after Socket.IO has already
+        // connected. Reconnect so the next handshake carries the real session;
+        // the nickname argument is display data, never authentication.
+        function reconnectAuthenticatedSocket() {
+            socket.once('connect', () => socket.emit('identify', currentNickname));
+            socket.disconnect();
+            socket.connect();
+        }
+
         // Show choice modal: Login or Register
         async function showAuthChoiceModal() {
             return new Promise((resolve) => {
@@ -1174,7 +1183,7 @@
                         currentNickname = nickname;
                         localStorage.setItem('nickname', nickname);
                         document.body.removeChild(modal);
-                        socket.emit('identify', nickname);
+                        reconnectAuthenticatedSocket();
                         resolve();
 
                     } catch (e) {
@@ -1278,7 +1287,7 @@
                         currentNickname = nickname;
                         localStorage.setItem('nickname', nickname);
                         document.body.removeChild(modal);
-                        socket.emit('identify', nickname);
+                        reconnectAuthenticatedSocket();
                         resolve();
 
                     } catch (e) {
@@ -1309,7 +1318,11 @@
                     });
                     if (res.ok) {
                         const data = await res.json();
-                        return { ok: true, role: data.role || 'reader' };
+                        return {
+                            ok: true,
+                            role: data.role || 'reader',
+                            nickname: data.nickname || ''
+                        };
                     }
                     return { ok: false, role: null };
                 } catch (_) {
@@ -1324,7 +1337,8 @@
                 authResult = await checkAuth();
             }
             if (authResult.ok) {
-                currentNickname = localStorage.getItem('nickname') || '';
+                currentNickname = authResult.nickname || localStorage.getItem('nickname') || '';
+                localStorage.setItem('nickname', currentNickname);
                 currentRole = authResult.role || 'reader';
                 localStorage.setItem('role', currentRole);
 
@@ -1696,20 +1710,27 @@
                 durationMin: durationMin
             };
 
-            links.unshift(link);
-            localStorage.setItem('lovenseLinks', JSON.stringify(links));
-
             // Сообщаем серверу о создании сессии и времени окончания
             try {
-                await fetch('/api/create', {
+                const response = await fetch('/api/create', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'X-Nickname': currentNickname
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ sessionId: id, expiresAt })
                 });
-            } catch (e) { }
+
+                if (!response.ok) {
+                    throw new Error(`create_session_failed_${response.status}`);
+                }
+            } catch (e) {
+                console.error('Не удалось создать ссылку:', e);
+                showToast('Не удалось создать ссылку. Попробуйте ещё раз.');
+                return;
+            }
+
+            links.unshift(link);
+            localStorage.setItem('lovenseLinks', JSON.stringify(links));
 
             renderLinks();
             updateStats();
@@ -2143,10 +2164,6 @@
                     message: chatMessage
                 });
 
-                // Отображаем локально у админа сразу и запоминаем ID
-                displayMessage(chatMessage);
-                displayedMessageIds.add(chatMessage.id);
-
                 input.value = '';
                 input.style.height = 'auto'; // Reset height after sending
             }
@@ -2245,9 +2262,6 @@
                 sessionId: currentChatSessionId,
                 message: voiceMessage
             });
-
-            displayMessage(voiceMessage);
-            displayedMessageIds.add(voiceMessage.id);
 
             document.getElementById('voicePicker').classList.remove('show');
             showToast('Голосовое сообщение отправлено');

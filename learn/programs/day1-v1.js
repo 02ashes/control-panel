@@ -4,6 +4,8 @@ const DAY1_V1 = {
   id: 'day1',
   slug: 'day1-v1',
   version: 1,
+  // Keep v1.6 while the first production cohort is in progress so their
+  // completed submissions and attempt history remain visible after deployment.
   rubricVersion: 'day1-v1.6',
   passingScore: 85,
   minimumTaskScore: 60,
@@ -11,12 +13,13 @@ const DAY1_V1 = {
   title: 'День 1 — письменный отбор',
   subtitle: 'Проверка самостоятельного общения, персонализации и продаж на английском',
   instructions: 'Ответы пиши только на английском языке и строго от лица модели. Переводчик разрешён. Готовые сниппеты, ChatGPT, Grok и любые другие AI-инструменты запрещены. Разделяй три вещи: фиксированный лор нельзя менять; текущую сцену можно живо продолжать правдоподобными действиями «прямо сейчас»; свойства оффера — контент, формат, длительность и цена — нельзя выдумывать или менять. Соблюдай число сообщений и лимит слов в каждом задании.',
-  voiceGuide: `The target working chat voice is warm, curious, slightly shy, and a little nerdy.
+  voiceGuide: `The target working chat voice is warm, curious, slightly shy, and a little nerdy, but task execution matters more than copying one persona sample.
 Use normal sentence case and always capitalize I. Prefer complete words instead of u, ur, rn, or wanna.
-Natural pauses and starts such as Wait..., Well..., So..., Omg..., haha, :3, or >_< may appear, but none is required and they should not be stuffed into every message.
-Build around one concrete fan detail, one human reaction or thought, and one easy next question. Add lore only when it fits the conversation.
+Natural pauses and starts such as Wait..., Well..., So..., Omg..., haha, :3, or >_< are optional. Never raise or lower a rating merely because one of these markers is present or absent.
+Accept different openings, sentence rhythms, and question order when the answer uses the supplied context, sounds human, and completes the task. Never require the greeting sequence shown in theory.
+Build around one concrete fan detail, one human reaction or thought, and one easy next question when the task calls for a question. Add lore only when it fits the conversation.
 Do not reward generic babe/love language, customer-support phrasing, polished advertising copy, checklist prose, or text that explains its own sales technique.
-Minor grammar roughness is allowed. Judge the underlying voice and conversational rhythm, not exact imitation or marker counting.`,
+Minor grammar roughness is allowed. Judge observable meaning, voice, and conversational rhythm, not exact imitation or marker counting.`,
   responseLanguage: 'en',
   translatorAllowed: true,
   snippetsAllowed: false,
@@ -64,7 +67,7 @@ Daniel is a nurse and enjoys cooking.
 Model facts:
 She is at home in an oversized T-shirt, choosing a movie.
 The conversation has not been sexual yet.`,
-      prompt: 'Напиши ровно два последовательных сообщения на английском языке и раздели их переносом строки. В первом ответь Daniel и отреагируй на то, что он написал. Во втором переведи разговор в лёгкий сексуальный флирт и закончи простым вопросом или выбором по контексту. Не продавай контент и не делай первый переход графически откровенным. Максимум 80 слов суммарно.',
+      prompt: 'Напиши ровно два сообщения на английском языке и раздели их переносом строки. В первом ответь Daniel и отреагируй на его сообщение. Во втором продолжи ту же тему лёгким suggestive-флиртом и закончи простым вопросом или выбором. Такой контекстный флирт не требует отдельного разрешения; прямой вопрос о kink или графическая сексуальная тема потребовали бы разрешения и здесь не нужны. Не продавай контент. Максимум 80 слов суммарно.',
       placeholder: 'Message 1\nMessage 2',
       maxWords: 80,
       minMessages: 2,
@@ -98,11 +101,11 @@ Alex:
 Fixed model lore (must stay consistent):
 - her hip tattoo is a small crescent moon
 
-Current live scene (ordinary plausible actions may be invented):
+Current live scene:
 - she is at home in her bedroom
 - she is wearing black lingerie
 - Alex's message arrived while she was taking new photos
-- his tattoo comment may cause what she does next
+- she may react to his tattoo comment with an ordinary plausible action right now
 
 Available locked offer (commercial details must stay exact):
 - 6 photos taken just now
@@ -110,7 +113,7 @@ Available locked offer (commercial details must stay exact):
 - close-ups of the hip tattoo
 - price: $18
 - no video, audio, or custom name`,
-      prompt: 'Напиши ровно два сообщения на английском языке и раздели их переносом строки. Построй простую live-цепочку: комментарий Alex про тату → правдоподобное действие модели прямо сейчас → шесть получившихся фото → закрытый оффер за $18. В первом бесплатном сообщении ответь, что на модели, используй деталь crescent moon и покажи текущее действие. Во втором свяжи это действие с доступными фото и предложи их открыть. Обычные действия сцены придумывать можно; лор и коммерческие свойства оффера менять нельзя. Максимум 100 слов суммарно.',
+      prompt: 'Напиши ровно два сообщения на английском языке и раздели их переносом строки. В первом ответь, что на модели, упомяни crescent moon и покажи одно логичное действие модели прямо сейчас, вызванное комментарием Alex. Во втором свяжи этот момент с шестью свежими фото и предложи открыть их за $18. Обычное действие в спальне можно придумать, но лор и состав оффера менять нельзя. Максимум 100 слов суммарно.',
       placeholder: 'Free teaser\nLocked-content pitch',
       maxWords: 100,
       minMessages: 2,
@@ -130,7 +133,7 @@ Available content:
 - $35: custom feet video
 - both the $9 teaser and the $15 stockings set are new and do not duplicate Ryan's previous purchase
 - discounts are not allowed`,
-      prompt: 'Напиши один ответ Ryan на английском языке. Признай его возражение, сохрани разговор, сделай ровно одно подходящее следующее предложение из доступного контента и закончи простым вопросом-подтверждением об этом оффере. Максимум 60 слов.',
+      prompt: 'Напиши один ответ Ryan на английском языке. Он сам попросил вариант дешевле, поэтому спокойно признай его бюджет и предложи ровно один подходящий продукт из списка без новой скидки. Закончи простым вопросом-подтверждением именно об этом оффере. Максимум 60 слов.',
       placeholder: 'One reply with one appropriate offer...',
       maxWords: 60,
       minMessages: 1,
@@ -146,14 +149,16 @@ He has followed the model for five months.
 Chris:
 "Cooking is my thing. Carbonara is my best dish, and I love when a woman takes control in the kitchen."
 
+The model asked if he wanted to hear an idea.
+Chris replied:
+"Yeah, tell me."
+
 Available custom:
 - one personalized 3-minute video
 - filmed in the kitchen
 - the model can say Chris's name
-- price: $90
-
-You may invent realistic actions and ordinary staging inside the kitchen scenario. "Unsupported capabilities" means a different format, duration, location, required props, live interaction, or technical feature that is not listed; it does not mean ordinary actions performed in the kitchen. Do not change the format, duration, location, or price.`,
-      prompt: 'Предложи Chris кастом на английском языке в двух или трёх сообщениях, разделённых переносами строк. Используй его интересы, опиши конкретный мини-сценарий минимум с двумя действиями, назови цену и спроси, хочет ли он такой кастом. Действиями считаются, например, помешивание или подача carbonara, инструкция для Chris, взгляд в камеру или произнесение его имени; слова kitchen, custom или sexy сами по себе действиями не считаются. Максимум 120 слов суммарно.',
+- price: $90`,
+      prompt: 'Напиши черновик следующих двух или трёх этапов предложения на английском языке, каждый с новой строки. Представь, что в реальном чате каждая строка отправляется отдельно и только после того, как Chris продолжает проявлять интерес, а не одним залпом. Используй его cooking/carbonara и любовь к контролю, раскрой мини-сценарий минимум с двумя конкретными действиями, точно назови формат, длительность и цену, затем спроси, хочет ли он заказать такой кастом. Максимум 120 слов суммарно.',
       placeholder: 'Two or three messages pitching the custom...',
       maxWords: 120,
       minMessages: 2,

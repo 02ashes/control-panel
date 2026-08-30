@@ -3,7 +3,6 @@
 (function day1Dashboard() {
   const API_RESULTS = '/api/training/v2/admin/day1-v1/results';
   const API_RESET = '/api/training/v2/admin/day1-v1/reset';
-  const NICKNAME = String(localStorage.getItem('nickname') || '').trim();
 
   const CRITERION_LABELS = {
     context_use: 'Использование контекста',
@@ -130,7 +129,6 @@
       ...options,
       headers: {
         Accept: 'application/json',
-        'X-Nickname': NICKNAME,
         ...(options && options.headers ? options.headers : {})
       }
     });
@@ -155,6 +153,39 @@
     return finiteNumber(student && student.lastActivity, 0);
   }
 
+  function theoryProgress(progress) {
+    const raw = progress && progress.theory && typeof progress.theory === 'object'
+      ? progress.theory
+      : {};
+    const completedIds = Array.isArray(raw.completed)
+      ? raw.completed
+      : (Array.isArray(raw.completedModules) ? raw.completedModules : []);
+    const completed = finiteNumber(
+      raw.completedCount,
+      finiteNumber(progress && progress.theoryCompletedCount, completedIds.length)
+    );
+    const total = finiteNumber(
+      raw.totalModules,
+      finiteNumber(progress && progress.theoryTotalModules, 6)
+    );
+    return {
+      completed: Math.max(0, completed),
+      total: Math.max(0, total),
+      complete: raw.complete === true || raw.completed === true || (total > 0 && completed >= total)
+    };
+  }
+
+  function candidateStatus(progress) {
+    const current = progress || {};
+    const theory = theoryProgress(current);
+    const completed = finiteNumber(current.completedTasks, 0);
+    const total = finiteNumber(current.totalTasks, 8);
+    if (current.passed) return { label: 'Пройден', tone: 'passed' };
+    if (!theory.complete) return { label: 'Проходит теорию', tone: 'theory' };
+    if (completed < total) return { label: 'Пишет практику', tone: 'progress' };
+    return { label: 'Не прошёл порог', tone: 'attention' };
+  }
+
   function studentByNickname(nickname) {
     return state.students.find(student => student.nickname === nickname) || null;
   }
@@ -171,6 +202,7 @@
     const total = state.students.length;
     const passed = state.students.filter(student => Boolean(student.state && student.state.passed)).length;
     const scores = state.students
+      .filter(student => finiteNumber(student.state && student.state.completedTasks, 0) > 0)
       .map(student => finiteNumber(student.state && student.state.averageScore, null))
       .filter(score => score !== null);
     const average = scores.length
@@ -192,7 +224,7 @@
     if (!students.length) {
       elements.candidateList.innerHTML = `
         <div class="list-empty">
-          ${state.students.length ? 'По этому запросу никого нет.' : 'Пока нет ни одной отправленной работы.'}
+          ${state.students.length ? 'По этому запросу никого нет.' : 'Пока нет кандидатов с ролью новичка.'}
         </div>
       `;
       return;
@@ -202,8 +234,10 @@
       const progress = student.state || {};
       const completed = finiteNumber(progress.completedTasks, 0);
       const total = finiteNumber(progress.totalTasks, (state.program && state.program.tasks || []).length);
-      const average = formatScore(progress.averageScore);
+      const average = completed > 0 ? formatScore(progress.averageScore) : '—';
       const selected = student.nickname === state.selectedNickname;
+      const theory = theoryProgress(progress);
+      const status = candidateStatus(progress);
       return `
         <button
           class="candidate-row"
@@ -213,9 +247,13 @@
         >
           <span class="candidate-row__main">
             <span class="candidate-row__name">${escapeHtml(student.nickname || 'Без ника')}</span>
-            <span class="candidate-row__progress">${completed} / ${total} · ${escapeHtml(formatDate(latestActivity(student)))}</span>
+            <span class="candidate-row__progress">Теория ${theory.completed} / ${theory.total} · Практика ${completed} / ${total}</span>
+            <span class="candidate-row__activity">${escapeHtml(formatDate(latestActivity(student)))}</span>
           </span>
-          <span class="candidate-row__score" data-passed="${Boolean(progress.passed)}">${average}</span>
+          <span class="candidate-row__side">
+            <span class="candidate-status" data-tone="${status.tone}">${status.label}</span>
+            <span class="candidate-row__score" data-passed="${Boolean(progress.passed)}">${average}</span>
+          </span>
         </button>
       `;
     }).join('');
@@ -263,17 +301,14 @@
           return `
             <article class="criterion">
               <div class="criterion__top">
-                <div class="criterion__name">
-                  ${escapeHtml(label)}
-                  <span class="criterion__id">${escapeHtml(id)}</span>
-                </div>
+                <div class="criterion__name">${escapeHtml(label)}</div>
                 <span class="criterion__rating">${rating === null ? '—' : rating} / 4</span>
               </div>
               <p class="criterion__copy">
-                <strong>Evidence:</strong> ${evidence ? `“${escapeHtml(evidence)}”` : 'нет цитаты'}
+                <strong>Цитата из ответа:</strong> ${evidence ? `“${escapeHtml(evidence)}”` : 'нет цитаты'}
               </p>
               <p class="criterion__copy">
-                <strong>reason_ru:</strong> ${reason ? escapeHtml(reason) : '—'}
+                <strong>Почему так:</strong> ${reason ? escapeHtml(reason) : '—'}
               </p>
             </article>
           `;
@@ -308,41 +343,51 @@
     const language = verdict.language && typeof verdict.language === 'object'
       ? verdict.language
       : {};
+    const criticalFailed = verdict.criticalOk === false || failedCritical.length > 0;
+    const scoreCapReason = String(verdict.scoreCapReasonRu || '').trim();
     return `
       <section class="decision-section">
-        <span class="section-label">Server decision</span>
-        <div class="decision-grid">
-          <span>Raw criteria score: <strong>${formatScore(verdict.rawScore)}</strong></span>
-          <span>Critical gate: <strong>${verdict.criticalOk === false ? 'failed' : 'ok'}</strong></span>
-          <span>Caps: <strong>${caps.length
-            ? escapeHtml(caps.map(item => `${item.reason} ≤ ${item.maximum}`).join(', '))
-            : 'none'}</strong></span>
-          <span>Hard-fail IDs: <strong>${hardFailIds.length
-            ? escapeHtml(hardFailIds.join(', '))
-            : 'none'}</strong></span>
-          <span>English: <strong>${language.is_english === false ? 'no' : 'yes'}</strong></span>
-        </div>
-        ${failedCritical.length
-          ? `<p class="decision-copy">Failed critical: ${escapeHtml(failedCritical.map(item => item.id).join(', '))}</p>`
-          : ''}
-        ${integrity.hard_fail_evidence
-          ? `<p class="decision-copy"><strong>Hard-fail evidence:</strong> “${escapeHtml(integrity.hard_fail_evidence)}”</p>`
-          : ''}
-        ${integrity.prompt_injection_evidence
-          ? `<p class="decision-copy"><strong>Prompt-injection evidence:</strong> “${escapeHtml(integrity.prompt_injection_evidence)}”</p>`
-          : ''}
-        ${integrity.hostile_evidence
-          ? `<p class="decision-copy"><strong>Hostile evidence:</strong> “${escapeHtml(integrity.hostile_evidence)}”</p>`
-          : ''}
+        <span class="section-label">Обязательные условия</span>
+        <p class="decision-copy decision-copy--status" data-pass="${!criticalFailed}">
+          ${criticalFailed
+            ? escapeHtml(scoreCapReason || 'Не выполнено хотя бы одно обязательное требование. Даже балл 60 или выше в таком случае не даёт зачёт.')
+            : 'Обязательные требования выполнены.'}
+        </p>
         ${integrity.reason_ru
-          ? `<p class="decision-copy"><strong>Integrity:</strong> ${escapeHtml(integrity.reason_ru)}</p>`
+          ? `<p class="decision-copy"><strong>Проверка ответа:</strong> ${escapeHtml(integrity.reason_ru)}</p>`
           : ''}
         ${language.reason_ru
-          ? `<p class="decision-copy"><strong>Language:</strong> ${escapeHtml(language.reason_ru)}</p>`
+          ? `<p class="decision-copy"><strong>Язык:</strong> ${escapeHtml(language.reason_ru)}</p>`
           : ''}
-        ${language.non_english_evidence
-          ? `<p class="decision-copy"><strong>Non-English evidence:</strong> “${escapeHtml(language.non_english_evidence)}”</p>`
-          : ''}
+        <details class="technical-details">
+          <summary>Технические детали</summary>
+          <div class="decision-grid">
+            <span>Исходный балл критериев: <strong>${formatScore(verdict.rawScore)}</strong></span>
+            <span>Обязательный фильтр: <strong>${criticalFailed ? 'не пройден' : 'пройден'}</strong></span>
+            <span>Ограничения балла: <strong>${caps.length
+              ? escapeHtml(caps.map(item => `${item.reason} ≤ ${item.maximum}`).join(', '))
+              : 'нет'}</strong></span>
+            <span>ID жёстких нарушений: <strong>${hardFailIds.length
+              ? escapeHtml(hardFailIds.join(', '))
+              : 'нет'}</strong></span>
+            <span>Английский язык: <strong>${language.is_english === false ? 'нет' : 'да'}</strong></span>
+          </div>
+          ${failedCritical.length
+            ? `<p class="decision-copy"><strong>ID проваленных требований:</strong> ${escapeHtml(failedCritical.map(item => item.id).join(', '))}</p>`
+            : ''}
+          ${integrity.hard_fail_evidence
+            ? `<p class="decision-copy"><strong>Фрагмент жёсткого нарушения:</strong> “${escapeHtml(integrity.hard_fail_evidence)}”</p>`
+            : ''}
+          ${integrity.prompt_injection_evidence
+            ? `<p class="decision-copy"><strong>Попытка вмешаться в проверку:</strong> “${escapeHtml(integrity.prompt_injection_evidence)}”</p>`
+            : ''}
+          ${integrity.hostile_evidence
+            ? `<p class="decision-copy"><strong>Давление или оскорбление:</strong> “${escapeHtml(integrity.hostile_evidence)}”</p>`
+            : ''}
+          ${language.non_english_evidence
+            ? `<p class="decision-copy"><strong>Неанглийский фрагмент:</strong> “${escapeHtml(language.non_english_evidence)}”</p>`
+            : ''}
+        </details>
       </section>
     `;
   }
@@ -362,26 +407,31 @@
             <span class="score-pill" data-pass="${Boolean(attempt.pass)}">
               ${formatScore(attempt.score)} / 100 · ${attempt.pass ? 'зачёт' : 'не зачёт'}
             </span>
-            ${isBest ? '<span class="attempt-badge attempt-badge--best">Best</span>' : ''}
-            ${isLatest ? '<span class="attempt-badge attempt-badge--latest">Latest</span>' : ''}
-            ${attempt.cacheHit ? '<span class="attempt-badge">Кэш</span>' : ''}
-            <span class="attempt__time">${escapeHtml(formatDate(attempt.createdAt))}${model ? ` · ${escapeHtml(model)}` : ''}</span>
+            ${isBest ? '<span class="attempt-badge attempt-badge--best">Лучший</span>' : ''}
+            ${isLatest ? '<span class="attempt-badge attempt-badge--latest">Последний</span>' : ''}
+            <span class="attempt__time">${escapeHtml(formatDate(attempt.createdAt))}</span>
           </span>
         </summary>
         <div class="attempt__body">
           <section class="answer-section">
-            <span class="section-label">Полный answer</span>
+            <span class="section-label">Ответ кандидата</span>
             <pre class="answer-text">${escapeHtml(attempt.answer || '')}</pre>
           </section>
           <section class="feedback-section">
-            <span class="section-label">feedback_ru</span>
+            <span class="section-label">Комментарий Grok</span>
             <p class="feedback-text">${feedback ? escapeHtml(feedback) : 'Обратная связь не сохранена.'}</p>
           </section>
           ${renderDecision(attempt.verdict)}
           <section class="criteria-section">
-            <span class="section-label">Criteria · rating / evidence / reason_ru</span>
+            <span class="section-label">Оценка по критериям</span>
             ${renderCriteria(attempt.criteria)}
           </section>
+          <details class="technical-details technical-details--attempt">
+            <summary>Технические данные попытки</summary>
+            <p>Модель: <strong>${model ? escapeHtml(model) : '—'}</strong></p>
+            <p>Источник: <strong>${attempt.cacheHit ? 'сохранённый вердикт' : 'новая проверка'}</strong></p>
+            <p>ID: <strong>${attempt.id === undefined ? '—' : escapeHtml(attempt.id)}</strong></p>
+          </details>
         </div>
       </details>
     `;
@@ -424,12 +474,11 @@
           <span class="task-number">${index + 1}</span>
           <div>
             <h3>${escapeHtml(task.title || `Задание ${index + 1}`)}</h3>
-            <span class="task-id">${escapeHtml(task.id)}</span>
           </div>
           <div class="task-status">
             <span class="attempt-count">${escapeHtml(pluralAttempts(attempts))}</span>
             <span class="score-pill" data-pass="${best ? Boolean(best.pass) : ''}">
-              Best: ${best ? `${formatScore(best.score)} / 100` : '—'}
+              Лучший: ${best ? `${formatScore(best.score)} / 100` : '—'}
             </span>
           </div>
         </header>
@@ -437,14 +486,14 @@
         <details class="task-reference">
           <summary>Показать контекст и формулировку задания</summary>
           <div class="task-reference__body">
-            <p class="reference-block"><strong>Context:</strong><br>${escapeHtml(task.context || '—')}</p>
-            <p class="reference-block"><strong>Prompt:</strong><br>${escapeHtml(task.prompt || '—')}</p>
+            <p class="reference-block"><strong>Контекст:</strong><br>${escapeHtml(task.context || '—')}</p>
+            <p class="reference-block"><strong>Задание:</strong><br>${escapeHtml(task.prompt || '—')}</p>
           </div>
         </details>
 
         <div class="task-state">
-          ${renderStateSummary('Best', best, history)}
-          ${renderStateSummary('Latest', latest, history)}
+          ${renderStateSummary('Лучший результат', best, history)}
+          ${renderStateSummary('Последняя попытка', latest, history)}
         </div>
 
         ${history.length ? `
@@ -472,7 +521,7 @@
           <p>
             ${state.students.length
               ? 'Нажмите на имя слева, чтобы открыть ответы и оценки по всем восьми заданиям.'
-              : 'Кандидат появится здесь после первой отправленной работы Day 1.'}
+              : 'Кандидат появится здесь, когда аккаунту назначат роль новичка.'}
           </p>
         </div>
       `;
@@ -486,6 +535,11 @@
     const total = finiteNumber(progress.totalTasks, tasks.length);
     const passingScore = finiteNumber(progress.passingScore, finiteNumber(state.program && state.program.passingScore, 85));
     const minimumTaskScore = finiteNumber(progress.minimumTaskScore, finiteNumber(state.program && state.program.minimumTaskScore, 60));
+    const theory = theoryProgress(progress);
+    const status = candidateStatus(progress);
+    const generation = finiteNumber(progress.resetGeneration, finiteNumber(progress.reset_generation, 0));
+    const programVersion = progress.programVersion ?? (state.program && state.program.version) ?? '—';
+    const rubricVersion = progress.rubricVersion ?? (state.program && state.program.rubricVersion) ?? '—';
 
     elements.candidateDetails.innerHTML = `
       <section class="candidate-hero">
@@ -496,7 +550,7 @@
         </div>
         <div class="candidate-hero__side">
           <div class="verdict" data-passed="${Boolean(progress.passed)}">
-            ${progress.passed ? 'DAY 1 ПРОЙДЕН' : 'НЕ ПРОЙДЕН'}
+            ${escapeHtml(status.label.toUpperCase())}
           </div>
           <button id="resetCandidateButton" class="danger-button" type="button">Сбросить Day 1</button>
         </div>
@@ -504,12 +558,16 @@
 
       <section class="candidate-metrics" aria-label="Результат кандидата">
         <article class="candidate-metric">
-          <span>Выполнено</span>
+          <span>Теория</span>
+          <strong>${theory.completed} / ${theory.total}</strong>
+        </article>
+        <article class="candidate-metric">
+          <span>Практика</span>
           <strong>${completed} / ${total}</strong>
         </article>
         <article class="candidate-metric">
-          <span>Средний балл по best</span>
-          <strong>${formatScore(progress.averageScore)} / 100</strong>
+          <span>Средний балл по лучшим попыткам</span>
+          <strong>${completed > 0 ? `${formatScore(progress.averageScore)} / 100` : '—'}</strong>
         </article>
         <article class="candidate-metric">
           <span>Порог программы</span>
@@ -520,6 +578,17 @@
           <strong>${formatScore(minimumTaskScore)} / 100</strong>
         </article>
       </section>
+
+      <p class="passing-note">
+        Для зачёта недостаточно только числа 60: в каждом задании должны быть выполнены обязательные требования.
+      </p>
+
+      <details class="technical-details candidate-technical">
+        <summary>Технические детали кандидата</summary>
+        <p>Поколение сброса: <strong>${formatScore(generation)}</strong></p>
+        <p>Версия программы: <strong>${escapeHtml(programVersion)}</strong></p>
+        <p>Версия критериев: <strong>${escapeHtml(rubricVersion)}</strong></p>
+      </details>
 
       <section class="task-stack">
         ${tasks.map((task, index) => renderTask(task, index, taskStates[task.id] || {})).join('')}
@@ -598,13 +667,20 @@
     button.disabled = true;
     button.textContent = 'Сбрасываю…';
     try {
-      await requestJson(API_RESET, {
+      const response = await requestJson(API_RESET, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname })
       });
-      state.selectedNickname = '';
-      showToast(`Day 1 для «${nickname}» сброшен`, 'success');
+      state.selectedNickname = nickname;
+      const generation = finiteNumber(
+        response.resetGeneration,
+        finiteNumber(response.reset_generation, null)
+      );
+      showToast(
+        `Day 1 для «${nickname}» сброшен${generation === null ? '' : ` · новая сессия №${generation}`}`,
+        'success'
+      );
       await loadResults();
     } catch (_) {
       button.disabled = false;

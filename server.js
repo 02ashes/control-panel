@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const socketIo = require('socket.io');
 const path = require('path');
 const bcrypt = require('bcrypt');
@@ -8,6 +9,10 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const app = express();
+// Railway terminates TLS at its proxy. Trust the first proxy so req.secure and
+// secure cookies reflect the public HTTPS request instead of the internal hop.
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
@@ -19,6 +24,11 @@ const io = socketIo(server, {
 const PORT = process.env.PORT || 3000;
 const AUTH_COOKIE_NAME = 'control_panel_session';
 const AUTH_SESSION_DAYS = 30;
+const MASTER_INVITE_CODE = String(process.env.MASTER_INVITE_CODE || '').trim();
+const DAY1_GROK_CONCURRENCY = Math.max(1, Math.min(8,
+    Number.parseInt(process.env.DAY1_GROK_CONCURRENCY || '2', 10) || 2));
+const DAY1_GROK_QUEUE_LIMIT = Math.max(DAY1_GROK_CONCURRENCY, Math.min(100,
+    Number.parseInt(process.env.DAY1_GROK_QUEUE_LIMIT || '20', 10) || 20));
 
 // Инициализация базы данных PostgreSQL
 const pool = new Pool({
@@ -36,10 +46,9 @@ pool.connect((err, client, release) => {
     }
 });
 
-// ===== Обучение чаттеров (learn/): уроки, ключ ответов, AI-проверка паст =====
-const TRAINING_LESSONS = require('./learn/lessons.js');
-const grading = require('./learn/grading.js');
+// ===== День 1: короткая теория + письменный отбор с Grok =====
 const DAY1_PROGRAM = require('./learn/programs/day1-v1.js');
+const DAY1_THEORY = require('./learn/day1-theory.js');
 const gradingV2 = require('./learn/grading-v2.js');
 const DAY1_ENABLED = process.env.TRAINING_DAY1_ENABLED !== '0';
 const day1GradingInFlight = new Map();
@@ -53,28 +62,8 @@ if (!XAI_API_KEY) {
         });
     } catch (e) {}
 }
-
-// Очищенные уроки для клиента (БЕЗ правильных ответов и пояснений)
-const TRAINING_CLIENT_LESSONS = TRAINING_LESSONS.map(l => ({
-    id: l.id, title: l.title, sub: l.sub || '', blocks: l.blocks || [],
-    quiz: (l.quiz || []).map(q => q.type === 'paste'
-        ? { type: 'paste', q: q.q, task: q.task, placeholder: q.placeholder || '' }
-        : { type: 'mc', q: q.q, opts: q.opts })
-}));
-// Серверный ключ ответов: lessonId -> { mc:{qIndex:correctText}, paste:{qIndex:task}, lesson }
-const TRAINING_KEY = {};
-TRAINING_LESSONS.forEach(l => {
-    const mc = {}, paste = {};
-    (l.quiz || []).forEach((q, i) => {
-        if (q.type === 'paste') paste[i] = q.task || grading.DEFAULT_TASK;
-        else mc[i] = q.opts[q.correct];
-    });
-    TRAINING_KEY[l.id] = { mc, paste, lesson: l };
-});
-const TRAINING_LESSON_COUNT = TRAINING_LESSONS.length;
-function nextTrainingLessonId(id) {
-    const idx = TRAINING_LESSONS.findIndex(x => x.id === id);
-    return (idx >= 0 && idx + 1 < TRAINING_LESSONS.length) ? TRAINING_LESSONS[idx + 1].id : null;
+if (!MASTER_INVITE_CODE) {
+    console.warn('MASTER_INVITE_CODE is not configured; master-code registration is disabled');
 }
 
 // Создание таблиц
@@ -265,6 +254,36 @@ const databaseReady = (async () => {
             ALTER TABLE training_v2_attempt_slots
             ALTER COLUMN reservation_token SET NOT NULL
         `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS training_v2_theory_progress (
+                nickname TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                program_version INTEGER NOT NULL,
+                theory_id TEXT NOT NULL,
+                theory_version INTEGER NOT NULL,
+                module_id TEXT NOT NULL,
+                selected_index INTEGER NOT NULL,
+                completed_at TIMESTAMP NOT NULL,
+                PRIMARY KEY (
+                    nickname, program_id, program_version,
+                    theory_id, theory_version, module_id
+                )
+            )
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_training_v2_theory_nick
+            ON training_v2_theory_progress(nickname, program_id, program_version)
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS training_v2_reset_state (
+                nickname TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                program_version INTEGER NOT NULL,
+                reset_generation INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP NOT NULL,
+                PRIMARY KEY (nickname, program_id, program_version)
+            )
+        `);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_v2_submissions_nick ON training_v2_submissions(nickname, program_id, program_version)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_v2_submissions_task ON training_v2_submissions(task_id, created_at)`);
         await pool.query(`
@@ -287,9 +306,25 @@ const databaseReady = (async () => {
                 END IF;
             END $$;
         `);
+        // CREATE TABLE already creates a unique backing index on this exact
+        // column set. Older installations may only have the explicit index,
+        // so create it only when no equivalent unique index exists.
         await pool.query(`
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_training_v2_submissions_cache_unique
-            ON training_v2_submissions(nickname, program_id, program_version, task_id, cache_key)
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_index i
+                    JOIN pg_class t ON t.oid=i.indrelid
+                    WHERE t.relname='training_v2_submissions'
+                      AND i.indisunique
+                      AND pg_get_indexdef(i.indexrelid) LIKE
+                        '%(nickname, program_id, program_version, task_id, cache_key)%'
+                ) THEN
+                    CREATE UNIQUE INDEX idx_training_v2_submissions_cache_unique
+                    ON training_v2_submissions(nickname, program_id, program_version, task_id, cache_key);
+                END IF;
+            END $$;
         `);
         await pool.query(`
             CREATE INDEX IF NOT EXISTS idx_training_v2_attempt_slots_expiry
@@ -426,6 +461,8 @@ const databaseReady = (async () => {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_openings_worker ON case_openings(worker_nickname)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_tier_prizes_tier ON case_tier_prizes(tier)`);
 
+        await cleanupAuthSessions();
+
         console.log('Database tables initialized');
 
         // Загружаем данные из БД при старте
@@ -438,6 +475,21 @@ const databaseReady = (async () => {
         throw err;
     }
 })();
+
+async function cleanupAuthSessions() {
+    try {
+        await pool.query(`
+            DELETE FROM auth_sessions
+            WHERE expires_at <= NOW()
+               OR (revoked_at IS NOT NULL AND revoked_at < NOW() - INTERVAL '7 days')
+        `);
+    } catch (err) {
+        console.error('Auth session cleanup error:', err.message);
+    }
+}
+
+const authSessionCleanupTimer = setInterval(cleanupAuthSessions, 60 * 60 * 1000);
+if (typeof authSessionCleanupTimer.unref === 'function') authSessionCleanupTimer.unref();
 
 // Загрузка данных из БД при старте сервера
 async function loadDataFromDatabase() {
@@ -580,7 +632,53 @@ app.get(['/learn', '/learn/', '/learn/index.html'], (req, res, next) => {
     return res.redirect('/learn/day1.html');
 });
 
-// Не отдаём файл с ответами на тесты напрямую — клиент берёт очищенную версию через /api/training/lessons
+function normalizedRequestPath(req) {
+    try {
+        return path.posix.normalize('/' + decodeURIComponent(String(req.path || ''))
+            .replace(/\\/g, '/')).toLowerCase();
+    } catch (_) {
+        return '';
+    }
+}
+
+// These files contain the complete Day 1 course (and real account screenshots),
+// so they must never fall through to the public static server.
+const DAY1_PROTECTED_ASSETS = new Map([
+    ['/learn/day1.html', { file: 'learn/day1.html' }],
+    ['/learn/day1-app.js', { file: 'learn/day1-app.js' }],
+    ['/learn/day1-styles.css', { file: 'learn/day1-styles.css' }],
+    ['/learn/day1-theory.js', { file: 'learn/day1-theory.js' }],
+    ['/learn/day1-dashboard.html', { file: 'learn/day1-dashboard.html', admin: true }],
+    ['/learn/day1-dashboard.js', { file: 'learn/day1-dashboard.js', admin: true }],
+    ['/learn/day1-dashboard.css', { file: 'learn/day1-dashboard.css', admin: true }],
+    ['/onlyfans/карточка фана.jpg', { file: 'onlyfans/Карточка фана.jpg' }],
+    ['/onlyfans/контент.jpg', { file: 'onlyfans/Контент.jpg' }],
+    ['/молчуны/лайкает соо.jpg', { file: 'Молчуны/Лайкает соо.jpg' }],
+    ['/кастом/photo_2025-01-17_05-27-05 (2).jpg', { file: 'кастом/photo_2025-01-17_05-27-05 (2).jpg' }],
+    ['/видеочат/photo_2025-04-09_21-28-49 (3).jpg', { file: 'видеочат/photo_2025-04-09_21-28-49 (3).jpg' }]
+]);
+
+app.use((req, res, next) => {
+    const asset = DAY1_PROTECTED_ASSETS.get(normalizedRequestPath(req));
+    if (!asset) return next();
+    if (!DAY1_ENABLED && !asset.admin) return res.status(404).send('not found');
+
+    return requireAuthenticatedSession(req, res, () => {
+        const send = () => {
+            res.setHeader('Cache-Control', 'private, no-store');
+            res.sendFile(path.join(__dirname, asset.file), err => {
+                if (!err || res.headersSent) return;
+                console.error('Protected Day 1 asset error:', err.message);
+                res.status(err.statusCode === 404 ? 404 : 500).send('not found');
+            });
+        };
+        return asset.admin
+            ? requireLogAccess(req, res, send)
+            : requireDay1Role(req, res, send);
+    });
+});
+
+// Server-only graders and retired course assets are never public static files.
 app.get('/learn/lessons.js', (req, res) => res.status(404).send('not found'));
 app.get('/learn/grading.js', (req, res) => res.status(404).send('not found'));
 app.get('/learn/grading-v2.js', (req, res) => res.status(404).send('not found'));
@@ -599,6 +697,9 @@ const PRIVATE_STATIC_PATHS = new Set([
     '/server.js',
     '/clear-db.js',
     '/learn/lessons.js',
+    '/learn/app.js',
+    '/learn/styles.css',
+    '/learn/dashboard.html',
     '/learn/grading.js',
     '/learn/grading-v2.js',
     '/learn/grading-v2.test.js',
@@ -610,19 +711,15 @@ const PRIVATE_STATIC_PATHS = new Set([
     '/learn/programs/day1-v1-rubrics.js'
 ]);
 app.use((req, res, next) => {
-    let decodedPath;
-    try {
-        decodedPath = decodeURIComponent(String(req.path || ''));
-    } catch (_) {
-        return res.status(404).send('not found');
-    }
-    const slashPath = decodedPath.replace(/\\/g, '/');
-    if (slashPath.split('/').some(segment => segment === '..')) {
-        return res.status(404).send('not found');
-    }
-    const normalizedPath = path.posix.normalize('/' + slashPath).toLowerCase();
+    const normalizedPath = normalizedRequestPath(req);
+    if (!normalizedPath) return res.status(404).send('not found');
     if (
         PRIVATE_STATIC_PATHS.has(normalizedPath) ||
+        normalizedPath === '/learn/evals' ||
+        normalizedPath.startsWith('/learn/evals/') ||
+        normalizedPath === '/learn/programs' ||
+        normalizedPath.startsWith('/learn/programs/') ||
+        (normalizedPath.startsWith('/learn/') && normalizedPath.endsWith('.test.js')) ||
         normalizedPath.startsWith('/.env.') ||
         normalizedPath === '/node_modules' ||
         normalizedPath.startsWith('/node_modules/') ||
@@ -640,24 +737,6 @@ app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '10mb' })); // Увеличенный лимит для больших объемов снипетов
 
 app.use('/voice', express.static(path.join(__dirname, 'voice_messages')));
-
-// Ученики (роль 'new') имеют доступ ТОЛЬКО к обучению и проверке авторизации — всё остальное под /api/* им закрыто.
-app.use((req, res, next) => {
-    if (!req.path.startsWith('/api/')) return next();
-    const nick = req.headers['x-nickname'] || (req.body && req.body.nickname);
-    const u = nick ? users.get(nick) : null;
-    if (u && u.role === 'new') {
-        const p = req.path;
-        const allowed =
-            p.startsWith('/api/training/') ||
-            p === '/api/auth/check' ||
-            p === '/api/login' ||
-            p === '/api/logout' ||
-            p === '/api/user/role';
-        if (!allowed) return res.status(403).json({ error: 'trainee_restricted' });
-    }
-    next();
-});
 
 app.get('/control.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'control.html'));
@@ -694,7 +773,6 @@ app.get('/logs.html', (req, res) => {
 
 const sessions = new Map();
 const expiryTimers = new Map();
-const MASTER_INVITE_CODE = 'wearetop1';
 const SUPER_ADMIN = '02ashes'; // Permanent admin, cannot be changed
 const users = new Map();
 
@@ -707,7 +785,7 @@ const voiceMessages = [
     { id: 'wanttofuckyou', name: 'Want To Fuck You', file: 'want to fuck you.ogg', duration: '0:09' }
 ];
 const invites = new Map();
-const onlineUsers = new Set();
+const onlineUserSockets = new Map();
 const wheelCodes = new Map();
 
 // Text Snippets хранилище (общее для всех админов)
@@ -764,7 +842,6 @@ async function getOrCreateSessionInMemory(sessionId, callback) {
                 wasCreated: false,
                 creatorNickname: null
             };
-            sessions.set(sessionId, session);
             callback(null, session);
         }
     } catch (err) {
@@ -772,28 +849,49 @@ async function getOrCreateSessionInMemory(sessionId, callback) {
     }
 }
 
+function canManageControlSession(user, session) {
+    if (!user || !session || !session.wasCreated) return false;
+    return user.role === 'admin' || session.creatorNickname === user.nickname;
+}
+
+function parseControlSessionExpiry(value) {
+    if (value === null || value === undefined || value === '') {
+        return { ok: true, value: null };
+    }
+    const timestamp = Date.parse(String(value));
+    if (!Number.isFinite(timestamp) || timestamp <= Date.now()) {
+        return { ok: false, value: null };
+    }
+    return { ok: true, value: new Date(timestamp).toISOString() };
+}
+
 // Revoke session API
 app.post('/api/revoke', requireRegistration, async (req, res) => {
-    const { sessionId } = req.body || {};
-    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+    const sessionId = normalizeSocketSessionId(req.body?.sessionId);
+    if (!sessionId) return res.status(400).json({ error: 'invalid_session_id' });
 
     getOrCreateSessionInMemory(sessionId, async (err, session) => {
         if (err) return res.status(500).json({ error: 'database_error' });
 
-        session.revoked = true;
-        session.isActive = false;
-        sessions.set(sessionId, session);
+        if (!session.wasCreated) {
+            return res.status(404).json({ error: 'session_not_found' });
+        }
+        if (!canManageControlSession(req.user, session)) {
+            return res.status(403).json({ error: 'permission_denied' });
+        }
 
         try {
             // Отзываем сессию
             const updateResult = await pool.query('UPDATE sessions SET revoked = true, is_active = false WHERE id = $1', [sessionId]);
 
-            // Логируем только если сессия была найдена и обновлена
-            if (updateResult.rowCount > 0) {
-                await logAction(sessionId, req.user.nickname, 'revoke', 'Session revoked');
-            } else {
-                console.log(`Session ${sessionId} not found for revoke, skipping log`);
+            if (updateResult.rowCount === 0) {
+                sessions.delete(sessionId);
+                return res.status(404).json({ error: 'session_not_found' });
             }
+            session.revoked = true;
+            session.isActive = false;
+            sessions.set(sessionId, session);
+            await logAction(sessionId, req.user.nickname, 'revoke', 'Session revoked');
 
             io.to(sessionId).emit('session-revoked');
 
@@ -812,23 +910,18 @@ app.post('/api/revoke', requireRegistration, async (req, res) => {
 
 // Delete session API (удаляет историю)
 app.post('/api/delete', requireRegistration, async (req, res) => {
-    const { sessionId } = req.body || {};
-    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+    const sessionId = normalizeSocketSessionId(req.body?.sessionId);
+    if (!sessionId) return res.status(400).json({ error: 'invalid_session_id' });
 
-    // Check if user is admin
     const nickname = req.user.nickname;
-    let isAdmin = false;
-    try {
-        const roleResult = await pool.query('SELECT role FROM user_registrations WHERE nickname = $1', [nickname]);
-        isAdmin = (nickname === SUPER_ADMIN) || (roleResult.rows[0]?.role === 'admin');
-    } catch (err) {
-        console.error('Role check error:', err);
-    }
 
     getOrCreateSessionInMemory(sessionId, async (err, session) => {
         if (err) return res.status(500).json({ error: 'database_error' });
 
-        if (session.creatorNickname && session.creatorNickname !== nickname && !isAdmin) {
+        if (!session.wasCreated) {
+            return res.status(404).json({ error: 'session_not_found' });
+        }
+        if (!canManageControlSession(req.user, session)) {
             return res.status(403).json({ error: 'permission_denied' });
         }
 
@@ -862,8 +955,11 @@ app.post('/api/delete', requireRegistration, async (req, res) => {
 
 // Create session API
 app.post('/api/create', requireRegistration, async (req, res) => {
-    const { sessionId, expiresAt } = req.body || {};
-    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+    const sessionId = normalizeSocketSessionId(req.body?.sessionId);
+    if (!sessionId) return res.status(400).json({ error: 'invalid_session_id' });
+    const parsedExpiry = parseControlSessionExpiry(req.body?.expiresAt);
+    if (!parsedExpiry.ok) return res.status(400).json({ error: 'invalid_expiry' });
+    const expiresAt = parsedExpiry.value;
 
     const nickname = req.user.nickname;
     const now = new Date();
@@ -873,20 +969,40 @@ app.post('/api/create', requireRegistration, async (req, res) => {
         const existingSession = result.rows[0];
 
         if (existingSession) {
+            const canManageExisting = req.user.role === 'admin' ||
+                existingSession.creator_nickname === nickname;
+            if (!canManageExisting) {
+                return res.status(403).json({ error: 'permission_denied' });
+            }
             getOrCreateSessionInMemory(sessionId, async (err, session) => {
                 if (err) return res.status(500).json({ error: 'database_error' });
 
-                session.revoked = false;
-                session.isActive = true;
-                session.wasCreated = true;
-                session.expiresAt = expiresAt || null;
-                session.creatorNickname = nickname;
-                sessions.set(sessionId, session);
+                try {
+                    const updateResult = await pool.query(
+                        `UPDATE sessions
+                         SET revoked=false, is_active=true, expires_at=$1
+                         WHERE id=$2 AND deleted_at IS NULL`,
+                        [expiresAt || null, sessionId]
+                    );
+                    if (updateResult.rowCount !== 1) {
+                        sessions.delete(sessionId);
+                        return res.status(404).json({ error: 'session_not_found' });
+                    }
+                    session.revoked = false;
+                    session.isActive = true;
+                    session.wasCreated = true;
+                    session.expiresAt = expiresAt || null;
+                    session.creatorNickname = existingSession.creator_nickname;
+                    sessions.set(sessionId, session);
 
-                setupExpiry(sessionId, expiresAt);
-                await logAction(sessionId, nickname, 'create', expiresAt ? `Expires at: ${expiresAt}` : 'No expiration (infinite)');
+                    setupExpiry(sessionId, expiresAt);
+                    await logAction(sessionId, nickname, 'create', expiresAt ? `Expires at: ${expiresAt}` : 'No expiration (infinite)');
 
-                return res.json({ ok: true });
+                    return res.json({ ok: true });
+                } catch (updateError) {
+                    console.error('Reactivate session error:', updateError);
+                    return res.status(500).json({ error: 'database_error' });
+                }
             });
         } else {
             await pool.query('INSERT INTO sessions (id, creator_nickname, is_active, revoked, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
@@ -1246,7 +1362,69 @@ app.post('/api/logs/delete-session', requireRegistration, requireLogAccess, asyn
     }
 });
 
-app.post('/api/register', async (req, res) => {
+const memoryRateLimitBuckets = new Map();
+
+function memoryRateLimit({ name, windowMs, max, key, message }) {
+    return (req, res, next) => {
+        const now = Date.now();
+        const rawKey = typeof key === 'function' ? key(req) : req.ip;
+        const bucketKey = `${name}:${String(rawKey || 'unknown')}`;
+        let bucket = memoryRateLimitBuckets.get(bucketKey);
+        if (!bucket || bucket.resetAt <= now) {
+            bucket = { count: 0, resetAt: now + windowMs };
+            memoryRateLimitBuckets.set(bucketKey, bucket);
+        }
+        bucket.count++;
+        if (bucket.count <= max) return next();
+
+        const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+        res.setHeader('Retry-After', String(retryAfterSeconds));
+        return res.status(429).json({
+            error: 'rate_limited',
+            message,
+            retryAfterSeconds
+        });
+    };
+}
+
+const registerRateLimit = memoryRateLimit({
+    name: 'register',
+    windowMs: 60 * 60 * 1000,
+    max: 8,
+    key: req => req.ip,
+    message: 'Слишком много попыток регистрации. Попробуйте позже.'
+});
+const loginRateLimit = memoryRateLimit({
+    name: 'login',
+    windowMs: 15 * 60 * 1000,
+    max: 12,
+    key: req => `${req.ip}:${String(req.body?.nickname || '').trim().toLowerCase()}`,
+    message: 'Слишком много попыток входа. Подождите несколько минут.'
+});
+const loginIpRateLimit = memoryRateLimit({
+    name: 'login-ip',
+    windowMs: 15 * 60 * 1000,
+    max: 40,
+    key: req => req.ip,
+    message: 'Слишком много попыток входа с этого адреса. Подождите несколько минут.'
+});
+const day1GradeRateLimit = memoryRateLimit({
+    name: 'day1-grade',
+    windowMs: 10 * 60 * 1000,
+    max: 20,
+    key: req => req.user?.nickname || req.ip,
+    message: 'Слишком много проверок подряд. Подождите несколько минут и повторите.'
+});
+
+const memoryRateLimitCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, bucket] of memoryRateLimitBuckets) {
+        if (bucket.resetAt <= now) memoryRateLimitBuckets.delete(key);
+    }
+}, 15 * 60 * 1000);
+if (typeof memoryRateLimitCleanupTimer.unref === 'function') memoryRateLimitCleanupTimer.unref();
+
+app.post('/api/register', registerRateLimit, async (req, res) => {
     const { nickname, password, code } = req.body || {};
     if (!nickname || !password || !code) return res.status(400).json({ error: 'nickname, password and code required' });
 
@@ -1269,7 +1447,7 @@ app.post('/api/register', async (req, res) => {
         const saltRounds = 10;
         const passwordHash = await bcrypt.hash(password, saltRounds);
 
-        if (code === MASTER_INVITE_CODE) {
+        if (MASTER_INVITE_CODE && code === MASTER_INVITE_CODE) {
             invitedBy = 'MASTER_CODE';
             // 02ashes (SUPER_ADMIN) gets admin role, others get reader
             const role = (nickname === SUPER_ADMIN) ? 'admin' : 'reader';
@@ -1282,7 +1460,7 @@ app.post('/api/register', async (req, res) => {
             users.set(nickname, { role });
 
             console.log(`New user registered: ${nickname} (via master code, role: ${role})`);
-            await issueAuthSession(res, nickname);
+            await issueAuthSession(req, res, nickname);
             return res.json({ ok: true, role });
         }
 
@@ -1328,7 +1506,7 @@ app.post('/api/register', async (req, res) => {
         users.set(nickname, { role });
 
         console.log(`New user registered: ${nickname} (invited by ${invitedBy}, role: ${role})`);
-        await issueAuthSession(res, nickname);
+        await issueAuthSession(req, res, nickname);
         return res.json({ ok: true, role });
     } catch (err) {
         console.error('Registration error:', err);
@@ -1356,7 +1534,36 @@ function authTokenHash(token) {
     return crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
 }
 
-function setAuthCookie(res, token, maxAgeSeconds) {
+function authSessionSocketRoom(tokenHash) {
+    return `auth-session:${String(tokenHash || '')}`;
+}
+
+function authUserSocketRoom(nickname) {
+    return `auth-user:${authTokenHash(String(nickname || ''))}`;
+}
+
+function disconnectAuthSessionSockets(tokenHash) {
+    if (!tokenHash) return;
+    io.in(authSessionSocketRoom(tokenHash)).disconnectSockets(true);
+}
+
+function disconnectAuthenticatedUserSockets(nickname) {
+    if (!nickname) return;
+    io.in(authUserSocketRoom(nickname)).disconnectSockets(true);
+}
+
+function shouldUseSecureCookie(req) {
+    return Boolean(
+        req?.secure ||
+        process.env.NODE_ENV === 'production' ||
+        process.env.RAILWAY_ENVIRONMENT ||
+        process.env.RAILWAY_ENVIRONMENT_NAME ||
+        process.env.RAILWAY_PROJECT_ID ||
+        process.env.RAILWAY_PUBLIC_DOMAIN
+    );
+}
+
+function setAuthCookie(req, res, token, maxAgeSeconds) {
     const parts = [
         `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}`,
         'Path=/',
@@ -1364,11 +1571,11 @@ function setAuthCookie(res, token, maxAgeSeconds) {
         'SameSite=Lax',
         `Max-Age=${maxAgeSeconds}`
     ];
-    if (process.env.NODE_ENV === 'production') parts.push('Secure');
+    if (shouldUseSecureCookie(req)) parts.push('Secure');
     res.setHeader('Set-Cookie', parts.join('; '));
 }
 
-async function issueAuthSession(res, nickname) {
+async function issueAuthSession(req, res, nickname) {
     const token = crypto.randomBytes(32).toString('hex');
     const now = new Date();
     const expiresAt = new Date(now.getTime() + AUTH_SESSION_DAYS * 24 * 60 * 60 * 1000);
@@ -1377,7 +1584,33 @@ async function issueAuthSession(res, nickname) {
          VALUES ($1,$2,$3,$4)`,
         [authTokenHash(token), nickname, expiresAt, now]
     );
-    setAuthCookie(res, token, AUTH_SESSION_DAYS * 24 * 60 * 60);
+    setAuthCookie(req, res, token, AUTH_SESSION_DAYS * 24 * 60 * 60);
+}
+
+async function getAuthenticatedUserFromToken(token) {
+    if (!token) return null;
+    return getAuthenticatedUserFromTokenHash(authTokenHash(token));
+}
+
+async function getAuthenticatedUserFromTokenHash(tokenHash) {
+    if (!tokenHash) return null;
+    const result = await pool.query(
+        `SELECT s.nickname, s.expires_at, u.role
+         FROM auth_sessions s
+         JOIN user_registrations u ON u.nickname=s.nickname
+         WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at > NOW()
+         LIMIT 1`,
+        [tokenHash]
+    );
+    if (!result.rows.length) return null;
+    const nickname = result.rows[0].nickname;
+    return {
+        nickname,
+        role: nickname === SUPER_ADMIN ? 'admin' : (result.rows[0].role || 'reader'),
+        sessionExpiresAt: result.rows[0].expires_at
+            ? new Date(result.rows[0].expires_at).getTime()
+            : 0
+    };
 }
 
 async function requireAuthenticatedSession(req, res, next) {
@@ -1385,29 +1618,23 @@ async function requireAuthenticatedSession(req, res, next) {
     if (!token) return res.status(401).json({ error: 'login_required' });
 
     try {
-        const result = await pool.query(
-            `SELECT s.nickname, u.role
-             FROM auth_sessions s
-             JOIN user_registrations u ON u.nickname=s.nickname
-             WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at > NOW()
-             LIMIT 1`,
-            [authTokenHash(token)]
-        );
-        if (!result.rows.length) {
-            setAuthCookie(res, '', 0);
+        const user = await getAuthenticatedUserFromToken(token);
+        if (!user) {
+            setAuthCookie(req, res, '', 0);
             return res.status(401).json({ error: 'login_required' });
         }
 
-        const nickname = result.rows[0].nickname;
-        const claimedNickname = String(req.headers['x-nickname'] || '').trim();
-        if (claimedNickname && claimedNickname !== nickname) {
-            return res.status(401).json({ error: 'identity_mismatch' });
-        }
+        req.user = user;
 
-        req.user = {
-            nickname,
-            role: nickname === SUPER_ADMIN ? 'admin' : (result.rows[0].role || 'reader')
-        };
+        // Trainee permissions are based only on the authenticated cookie. A
+        // nickname supplied by the browser is never an identity credential.
+        if (req.user.role === 'new' && req.path.startsWith('/api/')) {
+            const allowed =
+                req.path.startsWith('/api/training/v2/') ||
+                req.path === '/api/auth/check' ||
+                req.path === '/api/user/role';
+            if (!allowed) return res.status(403).json({ error: 'trainee_restricted' });
+        }
         next();
     } catch (err) {
         console.error('Authenticated session check error:', err);
@@ -1416,7 +1643,7 @@ async function requireAuthenticatedSession(req, res, next) {
 }
 
 // Login endpoint
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginIpRateLimit, loginRateLimit, async (req, res) => {
     const { nickname, password } = req.body || {};
     if (!nickname || !password) return res.status(400).json({ error: 'nickname and password required' });
 
@@ -1449,7 +1676,7 @@ app.post('/api/login', async (req, res) => {
         users.set(nickname, { role });
 
         console.log(`User logged in: ${nickname} (role: ${role})`);
-        await issueAuthSession(res, nickname);
+        await issueAuthSession(req, res, nickname);
         return res.json({ ok: true, nickname, role });
     } catch (err) {
         console.error('Login error:', err);
@@ -1459,18 +1686,20 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/logout', async (req, res) => {
     const token = readCookie(req, AUTH_COOKIE_NAME);
+    const tokenHash = token ? authTokenHash(token) : '';
     try {
         if (token) {
             await pool.query(
                 'UPDATE auth_sessions SET revoked_at=$1 WHERE token_hash=$2',
-                [new Date(), authTokenHash(token)]
+                [new Date(), tokenHash]
             );
+            disconnectAuthSessionSockets(tokenHash);
         }
-        setAuthCookie(res, '', 0);
+        setAuthCookie(req, res, '', 0);
         return res.json({ ok: true });
     } catch (err) {
         console.error('Logout error:', err);
-        setAuthCookie(res, '', 0);
+        setAuthCookie(req, res, '', 0);
         return res.status(500).json({ error: 'database_error' });
     }
 });
@@ -1533,6 +1762,7 @@ app.post('/api/user/role', requireRegistration, async (req, res) => {
 
         // Update in memory cache (always — чтобы гард ученика сразу видел новую роль)
         users.set(targetNickname, { role: newRole });
+        disconnectAuthenticatedUserSockets(targetNickname);
 
         console.log(`Role changed: ${targetNickname} -> ${newRole} (by ${adminNickname})`);
         return res.json({ ok: true, nickname: targetNickname, role: newRole });
@@ -1620,6 +1850,7 @@ app.post('/api/users/delete', requireRegistration, requireLogAccess, async (req,
         if (result.rowCount > 0) {
             // Удаляем из памяти
             users.delete(nickname);
+            disconnectAuthenticatedUserSockets(nickname);
             console.log(`User ${nickname} deleted by ${req.user.nickname}`);
             return res.json({ ok: true, message: `User ${nickname} deleted` });
         } else {
@@ -1632,47 +1863,21 @@ app.post('/api/users/delete', requireRegistration, requireLogAccess, async (req,
 });
 
 async function requireRegistration(req, res, next) {
-    const nickname = req.headers['x-nickname'] || req.body?.nickname;
-    if (!nickname) {
-        return res.status(401).json({ error: 'registration_required' });
-    }
-
-    // Проверяем в памяти
-    if (!users.has(nickname)) {
-        // Если нет в памяти - проверяем в БД (может быть новый пользователь)
-        try {
-            const result = await pool.query('SELECT nickname, role FROM user_registrations WHERE nickname = $1', [nickname]);
-            if (result.rows.length === 0) {
-                return res.status(401).json({ error: 'registration_required' });
-            }
-            // Добавляем в память с ролью
-            const role = (nickname === SUPER_ADMIN) ? 'admin' : (result.rows[0].role || 'reader');
-            users.set(nickname, { role });
-        } catch (err) {
-            console.error('Registration check error:', err);
-            return res.status(500).json({ error: 'database_error' });
-        }
-    }
-
-    req.user = { nickname };
-    next();
+    return requireAuthenticatedSession(req, res, next);
 }
 
 async function requireLogAccess(req, res, next) {
-    try {
-        // Check if user is admin (only admins can view logs)
-        const nickname = req.user.nickname;
-        const result = await pool.query('SELECT role FROM user_registrations WHERE nickname = $1', [nickname]);
-        const isAdmin = (nickname === SUPER_ADMIN) || (result.rows[0]?.role === 'admin');
-
-        if (!isAdmin) {
-            return res.status(403).json({ error: 'admin_required' });
-        }
-        next();
-    } catch (err) {
-        console.error('requireLogAccess error:', err);
-        return res.status(500).json({ error: 'database_error' });
+    if (!req.user || req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'admin_required' });
     }
+    next();
+}
+
+function requireDay1Role(req, res, next) {
+    if (!req.user || !['new', 'admin'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'day1_access_required' });
+    }
+    next();
 }
 
 function getDay1Task(taskId) {
@@ -1688,9 +1893,20 @@ function getPublicDay1Program() {
         title: DAY1_PROGRAM.title,
         subtitle: DAY1_PROGRAM.subtitle,
         instructions: DAY1_PROGRAM.instructions || [],
+        responseLanguage: DAY1_PROGRAM.responseLanguage,
+        translatorAllowed: !!DAY1_PROGRAM.translatorAllowed,
+        snippetsAllowed: !!DAY1_PROGRAM.snippetsAllowed,
+        aiAllowed: !!DAY1_PROGRAM.aiAllowed,
         passingScore: DAY1_PROGRAM.passingScore,
         minimumTaskScore: DAY1_PROGRAM.minimumTaskScore,
         maxAttemptsPerTask: DAY1_PROGRAM.maxAttemptsPerTask,
+        theoryRequired: true,
+        serverTheoryProgress: true,
+        theory: {
+            id: DAY1_THEORY.id,
+            version: DAY1_THEORY.version,
+            totalModules: (DAY1_THEORY.modules || []).length
+        },
         tasks: (DAY1_PROGRAM.tasks || []).map(task => ({
             id: task.id,
             title: task.title,
@@ -1701,6 +1917,44 @@ function getPublicDay1Program() {
             minMessages: task.minMessages || 1,
             maxMessages: task.maxMessages || task.minMessages || 1
         }))
+    };
+}
+
+function getDay1TheoryModule(moduleId) {
+    return (DAY1_THEORY.modules || []).find(module => module.id === moduleId) || null;
+}
+
+async function getDay1TheoryState(nickname, queryable = pool) {
+    const [progressResult, resetResult] = await Promise.all([
+        queryable.query(
+            `SELECT module_id
+             FROM training_v2_theory_progress
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3
+               AND theory_id=$4 AND theory_version=$5`,
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version,
+                DAY1_THEORY.id, DAY1_THEORY.version]
+        ),
+        queryable.query(
+            `SELECT reset_generation
+             FROM training_v2_reset_state
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3
+             LIMIT 1`,
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version]
+        )
+    ]);
+    const recordedModuleIds = new Set(progressResult.rows.map(row => row.module_id));
+    const completed = (DAY1_THEORY.modules || [])
+        .map(module => module.id)
+        .filter(id => recordedModuleIds.has(id));
+    const totalModules = (DAY1_THEORY.modules || []).length;
+    return {
+        theory: {
+            completed,
+            completedCount: completed.length,
+            totalModules,
+            complete: totalModules > 0 && completed.length === totalModules
+        },
+        resetGeneration: Number(resetResult.rows[0]?.reset_generation || 0)
     };
 }
 
@@ -1721,13 +1975,16 @@ function serializeDay1Submission(row) {
 }
 
 async function computeDay1State(nickname, persist = true) {
-    const result = await pool.query(
-        `SELECT id, task_id, answer_text, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at
-         FROM training_v2_submissions
-         WHERE nickname=$1 AND program_id=$2 AND program_version=$3 AND rubric_version=$4
-         ORDER BY created_at ASC, id ASC`,
-        [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, DAY1_PROGRAM.rubricVersion]
-    );
+    const [result, theoryState] = await Promise.all([
+        pool.query(
+            `SELECT id, task_id, answer_text, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at
+             FROM training_v2_submissions
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3 AND rubric_version=$4
+             ORDER BY created_at ASC, id ASC`,
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, DAY1_PROGRAM.rubricVersion]
+        ),
+        getDay1TheoryState(nickname)
+    ]);
 
     const tasks = {};
     let completedTasks = 0;
@@ -1769,7 +2026,8 @@ async function computeDay1State(nickname, persist = true) {
 
     const totalTasks = (DAY1_PROGRAM.tasks || []).length;
     const averageScore = completedTasks ? Math.round((scoreSum / completedTasks) * 100) / 100 : 0;
-    const passed = completedTasks === totalTasks &&
+    const passed = theoryState.theory.complete &&
+        completedTasks === totalTasks &&
         averageScore >= DAY1_PROGRAM.passingScore &&
         everyTaskPassed;
 
@@ -1805,6 +2063,8 @@ async function computeDay1State(nickname, persist = true) {
         passingScore: DAY1_PROGRAM.passingScore,
         minimumTaskScore: DAY1_PROGRAM.minimumTaskScore,
         passed,
+        theory: theoryState.theory,
+        resetGeneration: theoryState.resetGeneration,
         tasks
     };
 }
@@ -1836,7 +2096,7 @@ function getDay1Hashes(taskId, answer) {
     };
 }
 
-async function reserveDay1Attempt(nickname, taskId, answerHash) {
+async function reserveDay1Attempt(nickname, taskId, answerHash, cacheKey) {
     const key = [
         nickname,
         DAY1_PROGRAM.id,
@@ -1850,10 +2110,25 @@ async function reserveDay1Attempt(nickname, taskId, answerHash) {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        await client.query(
+        const userResult = await client.query(
             'SELECT nickname FROM user_registrations WHERE nickname=$1 FOR UPDATE',
             [nickname]
         );
+        if (!userResult.rows.length) {
+            const error = new Error('login_required');
+            error.code = 'login_required';
+            error.statusCode = 401;
+            throw error;
+        }
+        const theoryState = await getDay1TheoryState(nickname, client);
+        if (!theoryState.theory.complete) {
+            const error = new Error('theory_required');
+            error.code = 'theory_required';
+            error.statusCode = 409;
+            error.theory = theoryState.theory;
+            error.resetGeneration = theoryState.resetGeneration;
+            throw error;
+        }
         await client.query(
             `DELETE FROM training_v2_attempt_slots
              WHERE nickname=$1 AND program_id=$2 AND program_version=$3
@@ -1861,6 +2136,34 @@ async function reserveDay1Attempt(nickname, taskId, answerHash) {
                AND status='reserved' AND reserved_until < NOW()`,
             key
         );
+
+        const existingSubmission = await client.query(
+            `SELECT id, task_id, answer_text, score, pass, criteria, feedback, verdict,
+                    grader_model, cache_hit, created_at
+             FROM training_v2_submissions
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3
+               AND task_id=$4 AND cache_key=$5
+             LIMIT 1`,
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, taskId, cacheKey]
+        );
+        if (existingSubmission.rows.length) {
+            await client.query('COMMIT');
+            return { existing: existingSubmission.rows[0] };
+        }
+
+        const sameAnswer = await client.query(
+            `SELECT status FROM training_v2_attempt_slots
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3
+               AND rubric_version=$4 AND task_id=$5 AND answer_hash=$6
+             LIMIT 1`,
+            [...key, answerHash]
+        );
+        if (sameAnswer.rows.length) {
+            const error = new Error('grading_in_progress');
+            error.code = 'grading_in_progress';
+            error.statusCode = 409;
+            throw error;
+        }
 
         for (let attempt = 0; attempt <= DAY1_PROGRAM.maxAttemptsPerTask; attempt++) {
             const result = await client.query(
@@ -1893,17 +2196,8 @@ async function reserveDay1Attempt(nickname, taskId, answerHash) {
             }
         }
 
-        const sameAnswer = await client.query(
-            `SELECT status FROM training_v2_attempt_slots
-             WHERE nickname=$1 AND program_id=$2 AND program_version=$3
-               AND rubric_version=$4 AND task_id=$5 AND answer_hash=$6
-             LIMIT 1`,
-            [...key, answerHash]
-        );
-        const error = new Error(sameAnswer.rows[0]?.status === 'reserved'
-            ? 'grading_in_progress'
-            : 'max_attempts_reached');
-        error.code = error.message;
+        const error = new Error('max_attempts_reached');
+        error.code = 'max_attempts_reached';
         error.statusCode = 409;
         throw error;
     } catch (error) {
@@ -1925,6 +2219,67 @@ async function releaseDay1Attempt(nickname, taskId, attemptNumber, reservationTo
     );
 }
 
+let activeDay1GrokRequests = 0;
+const waitingDay1GrokRequests = [];
+
+function drainDay1GrokQueue() {
+    while (
+        activeDay1GrokRequests < DAY1_GROK_CONCURRENCY &&
+        waitingDay1GrokRequests.length
+    ) {
+        const next = waitingDay1GrokRequests.shift();
+        if (next.cancelled) continue;
+        clearTimeout(next.timer);
+        activeDay1GrokRequests++;
+        next.resolve(() => {
+            activeDay1GrokRequests = Math.max(0, activeDay1GrokRequests - 1);
+            drainDay1GrokQueue();
+        });
+    }
+}
+
+function acquireDay1GrokSlot() {
+    if (activeDay1GrokRequests < DAY1_GROK_CONCURRENCY) {
+        activeDay1GrokRequests++;
+        return Promise.resolve(() => {
+            activeDay1GrokRequests = Math.max(0, activeDay1GrokRequests - 1);
+            drainDay1GrokQueue();
+        });
+    }
+    if (waitingDay1GrokRequests.length >= DAY1_GROK_QUEUE_LIMIT) {
+        const error = new Error('Day 1 grader queue is full');
+        error.code = 'grader_busy';
+        error.retryable = true;
+        error.statusCode = 503;
+        return Promise.reject(error);
+    }
+
+    return new Promise((resolve, reject) => {
+        const entry = { resolve, reject, cancelled: false, timer: null };
+        entry.timer = setTimeout(() => {
+            entry.cancelled = true;
+            const index = waitingDay1GrokRequests.indexOf(entry);
+            if (index >= 0) waitingDay1GrokRequests.splice(index, 1);
+            const error = new Error('Day 1 grader queue wait timed out');
+            error.code = 'grader_busy';
+            error.retryable = true;
+            error.statusCode = 503;
+            reject(error);
+        }, 60 * 1000);
+        if (typeof entry.timer.unref === 'function') entry.timer.unref();
+        waitingDay1GrokRequests.push(entry);
+    });
+}
+
+async function callDay1GrokBounded(answer, taskId) {
+    const release = await acquireDay1GrokSlot();
+    try {
+        return await gradingV2.callGrok(answer, taskId, XAI_API_KEY);
+    } finally {
+        release();
+    }
+}
+
 app.get('/api/auth/check', requireAuthenticatedSession, async (req, res) => {
     const nickname = req.user.nickname;
     try {
@@ -1938,12 +2293,17 @@ app.get('/api/auth/check', requireAuthenticatedSession, async (req, res) => {
 
 // ===================== ДЕНЬ 1 · ПРАКТИЧЕСКИЙ ТЕСТ v2 =====================
 
-app.get('/api/training/v2/programs/day1-v1', requireAuthenticatedSession, (req, res) => {
+app.use('/api/training/v2', (req, res, next) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    next();
+});
+
+app.get('/api/training/v2/programs/day1-v1', requireAuthenticatedSession, requireDay1Role, (req, res) => {
     if (!DAY1_ENABLED) return res.status(404).json({ error: 'day1_disabled' });
     res.json({ ok: true, program: getPublicDay1Program() });
 });
 
-app.get('/api/training/v2/programs/day1-v1/state', requireAuthenticatedSession, async (req, res) => {
+app.get('/api/training/v2/programs/day1-v1/state', requireAuthenticatedSession, requireDay1Role, async (req, res) => {
     if (!DAY1_ENABLED) return res.status(404).json({ error: 'day1_disabled' });
     try {
         const state = await computeDay1State(req.user.nickname);
@@ -1954,7 +2314,92 @@ app.get('/api/training/v2/programs/day1-v1/state', requireAuthenticatedSession, 
     }
 });
 
-app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthenticatedSession, async (req, res) => {
+app.post('/api/training/v2/programs/day1-v1/theory', requireAuthenticatedSession, requireDay1Role, async (req, res) => {
+    if (!DAY1_ENABLED) return res.status(404).json({ error: 'day1_disabled' });
+
+    const moduleId = String(req.body?.moduleId || '').trim();
+    const theoryId = String(req.body?.theoryId || '').trim();
+    const theoryVersion = Number(req.body?.theoryVersion);
+    const selectedIndex = Number(req.body?.selectedIndex);
+    const module = getDay1TheoryModule(moduleId);
+
+    if (!module) return res.status(400).json({ error: 'unknown_theory_module' });
+    if (theoryId !== DAY1_THEORY.id || theoryVersion !== Number(DAY1_THEORY.version)) {
+        return res.status(409).json({
+            error: 'theory_version_mismatch',
+            theoryId: DAY1_THEORY.id,
+            theoryVersion: DAY1_THEORY.version
+        });
+    }
+    const options = Array.isArray(module.check?.options) ? module.check.options : [];
+    if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= options.length) {
+        return res.status(400).json({ error: 'invalid_selected_index' });
+    }
+
+    let client;
+    let transactionOpen = false;
+    try {
+        client = await pool.connect();
+        await client.query('BEGIN');
+        transactionOpen = true;
+        const userResult = await client.query(
+            'SELECT nickname FROM user_registrations WHERE nickname=$1 FOR UPDATE',
+            [req.user.nickname]
+        );
+        if (!userResult.rows.length) {
+            await client.query('ROLLBACK');
+            transactionOpen = false;
+            return res.status(401).json({ error: 'login_required' });
+        }
+
+        const before = await getDay1TheoryState(req.user.nickname, client);
+        const modules = DAY1_THEORY.modules || [];
+        const moduleIndex = modules.findIndex(item => item.id === moduleId);
+        const completedSet = new Set(before.theory.completed);
+        const firstIncompleteIndex = modules.findIndex(item => !completedSet.has(item.id));
+        if (!completedSet.has(moduleId) && firstIncompleteIndex !== moduleIndex) {
+            await client.query('ROLLBACK');
+            transactionOpen = false;
+            return res.status(409).json({ error: 'theory_module_locked' });
+        }
+
+        if (selectedIndex !== Number(module.check?.correctIndex)) {
+            await client.query('ROLLBACK');
+            transactionOpen = false;
+            client.release();
+            client = null;
+            const state = await computeDay1State(req.user.nickname);
+            return res.json({ ok: true, correct: false, state, theory: state.theory });
+        }
+
+        await client.query(
+            `INSERT INTO training_v2_theory_progress
+             (nickname, program_id, program_version, theory_id, theory_version,
+              module_id, selected_index, completed_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             ON CONFLICT (nickname, program_id, program_version, theory_id, theory_version, module_id)
+             DO UPDATE SET selected_index=EXCLUDED.selected_index`,
+            [req.user.nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version,
+                DAY1_THEORY.id, DAY1_THEORY.version, moduleId, selectedIndex, new Date()]
+        );
+        await client.query('COMMIT');
+        transactionOpen = false;
+        client.release();
+        client = null;
+        const state = await computeDay1State(req.user.nickname);
+        return res.json({ ok: true, correct: true, state, theory: state.theory });
+    } catch (err) {
+        if (client && transactionOpen) {
+            try { await client.query('ROLLBACK'); } catch (_) {}
+        }
+        console.error('Day 1 theory progress error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    } finally {
+        if (client) client.release();
+    }
+});
+
+app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthenticatedSession, requireDay1Role, day1GradeRateLimit, async (req, res) => {
     if (!DAY1_ENABLED) return res.status(404).json({ error: 'day1_disabled' });
 
     const taskId = String(req.params.taskId || '');
@@ -1985,6 +2430,20 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
         });
     }
 
+    try {
+        const theoryState = await getDay1TheoryState(req.user.nickname);
+        if (!theoryState.theory.complete) {
+            return res.status(409).json({
+                error: 'theory_required',
+                theory: theoryState.theory,
+                resetGeneration: theoryState.resetGeneration
+            });
+        }
+    } catch (err) {
+        console.error('Day 1 theory gate error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+
     let reservedAttemptNumber = null;
     let reservedAttemptToken = null;
     try {
@@ -2005,7 +2464,20 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
             });
         }
 
-        const reservation = await reserveDay1Attempt(req.user.nickname, taskId, answerHash);
+        const reservation = await reserveDay1Attempt(
+            req.user.nickname,
+            taskId,
+            answerHash,
+            cacheKey
+        );
+        if (reservation.existing) {
+            const state = await computeDay1State(req.user.nickname);
+            return res.json({
+                ok: true,
+                result: { ...serializeDay1Submission(reservation.existing), reused: true },
+                state
+            });
+        }
         reservedAttemptNumber = reservation.attemptNumber;
         reservedAttemptToken = reservation.reservationToken;
 
@@ -2029,7 +2501,7 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
             let gradingPromise = day1GradingInFlight.get(cacheKey);
             if (!gradingPromise) {
                 gradingPromise = (async () => {
-                    const modelResult = await gradingV2.callGrok(normalized, taskId, XAI_API_KEY);
+                    const modelResult = await callDay1GrokBounded(normalized, taskId);
                     const computed = gradingV2.computeVerdict(modelResult, taskId, normalized);
                     const canonical = await pool.query(
                         `INSERT INTO training_v2_grade_cache
@@ -2058,6 +2530,10 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
         let inserted;
         try {
             await client.query('BEGIN');
+            await client.query(
+                'SELECT nickname FROM user_registrations WHERE nickname=$1 FOR UPDATE',
+                [req.user.nickname]
+            );
             const completed = await client.query(
                 `UPDATE training_v2_attempt_slots
                  SET status='completed', reserved_until=NULL, completed_at=$8
@@ -2113,11 +2589,24 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
                 console.error('Day 1 attempt release error:', releaseError);
             }
         }
-        const status = Number(err.statusCode) === 409 ? 409 : (err.retryable ? 503 : 500);
-        res.status(status).json({
-            error: status === 409
+        const errorStatus = Number(err.statusCode);
+        const status = errorStatus === 401
+            ? 401
+            : (errorStatus === 409 ? 409 : (err.retryable ? 503 : 500));
+        const publicError = status === 401
+            ? 'login_required'
+            : (status === 409
                 ? (err.code || 'max_attempts_reached')
-                : (status === 503 ? 'grader_unavailable' : 'grading_error'),
+                : (status === 503
+                    ? (['grader_busy', 'attempt_reservation_lost'].includes(err.code)
+                        ? err.code
+                        : 'grader_unavailable')
+                    : 'grading_error'));
+        res.status(status).json({
+            error: publicError,
+            message: status === 503
+                ? 'Grok сейчас занят или временно недоступен. Попытка не потрачена — повторите позже.'
+                : undefined,
             retryable: status === 503
         });
     }
@@ -2126,18 +2615,48 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
 app.get('/api/training/v2/admin/day1-v1/results', requireAuthenticatedSession, requireLogAccess, async (req, res) => {
     try {
         const namesResult = await pool.query(
-            `SELECT DISTINCT nickname
-             FROM training_v2_submissions
-             WHERE program_id=$1 AND program_version=$2 AND rubric_version=$3
-             ORDER BY nickname`,
-            [DAY1_PROGRAM.id, DAY1_PROGRAM.version, DAY1_PROGRAM.rubricVersion]
+            `SELECT u.nickname, u.role, u.registered_at,
+                    GREATEST(
+                      COALESCE((
+                        SELECT MAX(s.created_at)
+                        FROM training_v2_submissions s
+                        WHERE s.nickname=u.nickname AND s.program_id=$1
+                          AND s.program_version=$2 AND s.rubric_version=$3
+                      ), TIMESTAMP 'epoch'),
+                      COALESCE((
+                        SELECT MAX(t.completed_at)
+                        FROM training_v2_theory_progress t
+                        WHERE t.nickname=u.nickname AND t.program_id=$1
+                          AND t.program_version=$2 AND t.theory_id=$4
+                          AND t.theory_version=$5
+                      ), TIMESTAMP 'epoch'),
+                      COALESCE(u.registered_at, TIMESTAMP 'epoch')
+                    ) AS last_activity
+             FROM user_registrations u
+             WHERE u.role='new'
+                OR EXISTS (
+                  SELECT 1 FROM training_v2_submissions s
+                  WHERE s.nickname=u.nickname AND s.program_id=$1
+                    AND s.program_version=$2 AND s.rubric_version=$3
+                )
+                OR EXISTS (
+                  SELECT 1 FROM training_v2_theory_progress t
+                  WHERE t.nickname=u.nickname AND t.program_id=$1
+                    AND t.program_version=$2 AND t.theory_id=$4
+                    AND t.theory_version=$5
+                )
+             ORDER BY last_activity DESC, u.nickname`,
+            [DAY1_PROGRAM.id, DAY1_PROGRAM.version, DAY1_PROGRAM.rubricVersion,
+                DAY1_THEORY.id, DAY1_THEORY.version]
         );
         const students = await Promise.all(namesResult.rows.map(async row => {
             const state = await computeDay1State(row.nickname, false);
-            const activity = Object.values(state.tasks)
-                .flatMap(task => task.history || [])
-                .reduce((latest, attempt) => Math.max(latest, attempt.createdAt || 0), 0);
-            return { nickname: row.nickname, lastActivity: activity, state };
+            return {
+                nickname: row.nickname,
+                role: row.nickname === SUPER_ADMIN ? 'admin' : row.role,
+                lastActivity: row.last_activity ? new Date(row.last_activity).getTime() : 0,
+                state
+            };
         }));
         students.sort((a, b) => b.lastActivity - a.lastActivity);
         res.json({ ok: true, program: getPublicDay1Program(), students });
@@ -2154,10 +2673,14 @@ app.post('/api/training/v2/admin/day1-v1/reset', requireAuthenticatedSession, re
     try {
         client = await pool.connect();
         await client.query('BEGIN');
-        await client.query(
+        const userResult = await client.query(
             'SELECT nickname FROM user_registrations WHERE nickname=$1 FOR UPDATE',
             [nickname]
         );
+        if (!userResult.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'user_not_found' });
+        }
         await client.query(
             `DELETE FROM training_v2_attempt_slots
              WHERE nickname=$1 AND program_id=$2 AND program_version=$3`,
@@ -2173,10 +2696,30 @@ app.post('/api/training/v2/admin/day1-v1/reset', requireAuthenticatedSession, re
              WHERE nickname=$1 AND program_id=$2 AND program_version=$3`,
             [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version]
         );
+        await client.query(
+            `DELETE FROM training_v2_theory_progress
+             WHERE nickname=$1 AND program_id=$2 AND program_version=$3`,
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version]
+        );
+        const resetResult = await client.query(
+            `INSERT INTO training_v2_reset_state
+             (nickname, program_id, program_version, reset_generation, updated_at)
+             VALUES ($1,$2,$3,1,$4)
+             ON CONFLICT (nickname, program_id, program_version) DO UPDATE SET
+               reset_generation=training_v2_reset_state.reset_generation + 1,
+               updated_at=EXCLUDED.updated_at
+             RETURNING reset_generation`,
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, new Date()]
+        );
         await client.query('COMMIT');
-        res.json({ ok: true });
+        res.json({
+            ok: true,
+            resetGeneration: Number(resetResult.rows[0].reset_generation)
+        });
     } catch (err) {
-        try { await client.query('ROLLBACK'); } catch (_) {}
+        if (client) {
+            try { await client.query('ROLLBACK'); } catch (_) {}
+        }
         console.error('Day 1 reset error:', err);
         res.status(500).json({ error: 'database_error' });
     } finally {
@@ -2184,123 +2727,13 @@ app.post('/api/training/v2/admin/day1-v1/reset', requireAuthenticatedSession, re
     }
 });
 
-// ===================== ОБУЧЕНИЕ (learn/) =====================
-
-// Очищенные уроки (без ответов) — для рендера в обучалке
-app.get('/api/training/lessons', requireRegistration, (req, res) => {
-    res.json({ ok: true, lessons: TRAINING_CLIENT_LESSONS, count: TRAINING_LESSON_COUNT });
-});
-
-// Свой прогресс: какие уроки реально сданы (источник правды для разблокировки)
-app.get('/api/training/progress', requireRegistration, async (req, res) => {
-    try {
-        const r = await pool.query('SELECT lesson FROM training_progress WHERE nickname = $1 ORDER BY lesson', [req.user.nickname]);
-        res.json({ ok: true, passed: r.rows.map(x => x.lesson), count: TRAINING_LESSON_COUNT });
-    } catch (e) { res.status(500).json({ error: 'database_error' }); }
-});
-
-// AI-проверка пасты (ник берётся из сессии, task — из серверного ключа)
-app.post('/api/training/check-paste', requireRegistration, async (req, res) => {
-    const nickname = req.user.nickname;
-    const { paste, lesson, qindex } = req.body || {};
-    try {
-        if (!paste || !String(paste).trim()) throw new Error('пустая паста');
-        if (!XAI_API_KEY) throw new Error('нет XAI_API_KEY на сервере');
-        const lessonKey = TRAINING_KEY[lesson];
-        const task = (lessonKey && lessonKey.paste && lessonKey.paste[qindex]) || grading.DEFAULT_TASK;
-        const lessonTitle = lessonKey ? lessonKey.lesson.title : '';
-        const raw = await grading.callGrok(String(paste).trim(), task, XAI_API_KEY);
-        const result = grading.clampVerdict(raw, task);
-        await pool.query(
-            'INSERT INTO training_events (nickname, type, lesson, qindex, lesson_title, task, paste, score, pass, feedback, ts) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-            [nickname, 'paste', lesson || null, (qindex != null ? qindex : null), lessonTitle, task, String(paste).trim(), result.score, result.pass, result.feedback, new Date()]
-        );
-        res.json(result);
-    } catch (e) {
-        res.json({ error: e.message || String(e) });
-    }
-});
-
-// Сдача теста: сервер сам проверяет MC по своему ключу и наличие сданных паст, затем пишет прогресс
-app.post('/api/training/submit', requireRegistration, async (req, res) => {
-    const nickname = req.user.nickname;
-    const { lesson, mc } = req.body || {};
-    const key = TRAINING_KEY[lesson];
-    if (!key) return res.status(400).json({ error: 'unknown_lesson' });
-    try {
-        const quiz = key.lesson.quiz || [];
-        const mcAnswers = {};
-        (Array.isArray(mc) ? mc : []).forEach(a => { if (a && a.i != null) mcAnswers[a.i] = a.choice; });
-
-        let allOk = true; let correct = 0; const wrong = [];
-        for (let i = 0; i < quiz.length; i++) {
-            const q = quiz[i];
-            if (q.type === 'paste') {
-                const ev = await pool.query(
-                    'SELECT 1 FROM training_events WHERE nickname=$1 AND lesson=$2 AND qindex=$3 AND pass=true LIMIT 1',
-                    [nickname, lesson, i]
-                );
-                if (ev.rows.length) correct++; else { allOk = false; wrong.push(i); }
-            } else {
-                if (mcAnswers[i] != null && mcAnswers[i] === key.mc[i]) correct++;
-                else { allOk = false; wrong.push(i); }
-            }
-        }
-        const total = quiz.length;
-
-        if (allOk) {
-            await pool.query(
-                `INSERT INTO training_progress (nickname, lesson, passed_at, correct, total) VALUES ($1,$2,$3,$4,$5)
-                 ON CONFLICT (nickname, lesson) DO UPDATE SET passed_at=EXCLUDED.passed_at, correct=EXCLUDED.correct, total=EXCLUDED.total`,
-                [nickname, lesson, new Date(), correct, total]
-            );
-            await pool.query(
-                'INSERT INTO training_events (nickname, type, lesson, lesson_title, score, pass, ts) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-                [nickname, 'lesson_done', lesson, key.lesson.title, correct, true, new Date()]
-            );
-            const doneCount = await pool.query('SELECT COUNT(*)::int AS c FROM training_progress WHERE nickname=$1', [nickname]);
-            const courseDone = doneCount.rows[0].c >= TRAINING_LESSON_COUNT;
-            if (courseDone) {
-                await pool.query('INSERT INTO training_events (nickname, type, ts) VALUES ($1,$2,$3)', [nickname, 'course_done', new Date()]);
-            }
-            return res.json({ ok: true, passed: true, correct, total, nextLesson: nextTrainingLessonId(lesson), courseDone });
-        } else {
-            await pool.query(
-                'INSERT INTO training_events (nickname, type, lesson, lesson_title, score, pass, ts) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-                [nickname, 'lesson_fail', lesson, key.lesson.title, correct, false, new Date()]
-            );
-            return res.json({ ok: true, passed: false, correct, total, wrong });
-        }
-    } catch (e) {
-        res.status(500).json({ error: 'database_error' });
-    }
-});
-
-// Дашборд для админа: все события + прогресс по ученикам
-app.get('/api/training/results', requireRegistration, requireLogAccess, async (req, res) => {
-    try {
-        const ev = await pool.query('SELECT nickname, type, lesson, lesson_title, task, paste, score, pass, feedback, ts FROM training_events ORDER BY ts DESC LIMIT 5000');
-        const pr = await pool.query('SELECT nickname, lesson FROM training_progress');
-        const progress = {};
-        pr.rows.forEach(r => { (progress[r.nickname] = progress[r.nickname] || []).push(r.lesson); });
-        const events = ev.rows.map(r => ({
-            name: r.nickname, type: r.type, lesson: r.lesson, lessonTitle: r.lesson_title,
-            task: r.task, paste: r.paste, score: r.score, pass: r.pass, feedback: r.feedback,
-            ts: r.ts ? new Date(r.ts).getTime() : 0
-        }));
-        res.json({ ok: true, events, progress, count: TRAINING_LESSON_COUNT });
-    } catch (e) { res.status(500).json({ error: 'database_error' }); }
-});
-
-// Сброс прогресса ученика (админ)
-app.post('/api/training/reset', requireRegistration, requireLogAccess, async (req, res) => {
-    const { nickname } = req.body || {};
-    if (!nickname) return res.status(400).json({ error: 'nickname required' });
-    try {
-        await pool.query('DELETE FROM training_progress WHERE nickname=$1', [nickname]);
-        await pool.query('DELETE FROM training_events WHERE nickname=$1', [nickname]);
-        res.json({ ok: true });
-    } catch (e) { res.status(500).json({ error: 'database_error' }); }
+// Legacy course endpoints are intentionally disabled. Their database tables are
+// retained so historical data can still be inspected or migrated later.
+app.all(/^\/api\/training\/(?!v2(?:\/|$)).*/, (req, res) => {
+    return res.status(410).json({
+        error: 'legacy_training_disabled',
+        message: 'Старая обучалка отключена. Используйте День 1.'
+    });
 });
 
 app.get('/api/voice/list', requireRegistration, (req, res) => {
@@ -2867,107 +3300,300 @@ setInterval(() => {
     }
 }, 3600000); // 1 час
 
-io.on('connection', (socket) => {
-    socket.on('identify', (nickname) => {
-        if (typeof nickname === 'string' && nickname.trim()) {
-            onlineUsers.add(nickname);
-            socket.data.nickname = nickname;
-            socket.join('user:' + nickname);
-            io.emit('online-update', Array.from(onlineUsers));
+io.use(async (socket, next) => {
+    socket.data.authenticatedUser = null;
+    socket.data.authTokenHash = '';
+    try {
+        const token = readCookie({
+            headers: socket.request?.headers || socket.handshake?.headers || {}
+        }, AUTH_COOKIE_NAME);
+        if (token) {
+            const tokenHash = authTokenHash(token);
+            const user = await getAuthenticatedUserFromTokenHash(tokenHash);
+            if (user) {
+                socket.data.authenticatedUser = user;
+                socket.data.authTokenHash = tokenHash;
+            }
         }
+    } catch (err) {
+        // A control-link visitor is intentionally allowed to connect without an
+        // account. A database/auth lookup failure must never turn untrusted
+        // handshake fields into a fallback identity.
+        console.error('Socket session lookup error:', err.message);
+    }
+    next();
+});
+
+function normalizeSocketSessionId(value) {
+    const sessionId = String(value || '').trim().toLowerCase();
+    return /^[a-z0-9]{8}$/.test(sessionId) ? sessionId : '';
+}
+
+function expireSocketAuthentication(socket) {
+    if (!socket.data.authenticatedUser) return;
+    socket.data.authenticatedUser = null;
+    socket.data.authTokenHash = '';
+    socket.emit('authorization-error', { error: 'login_required' });
+    socket.disconnect(true);
+}
+
+function scheduleSocketAuthenticationExpiry(socket) {
+    if (socket.data.authExpiryTimer) {
+        clearTimeout(socket.data.authExpiryTimer);
+        socket.data.authExpiryTimer = null;
+    }
+    const expiresAt = Number(socket.data.authenticatedUser?.sessionExpiresAt || 0);
+    if (!expiresAt) return;
+
+    const armTimer = () => {
+        if (!socket.connected || !socket.data.authenticatedUser) return;
+        const remaining = expiresAt - Date.now();
+        if (remaining <= 0) {
+            expireSocketAuthentication(socket);
+            return;
+        }
+        // Re-arm at most daily instead of relying on Node's ~24.8-day timer cap.
+        socket.data.authExpiryTimer = setTimeout(
+            armTimer,
+            Math.min(remaining, 24 * 60 * 60 * 1000)
+        );
+        if (typeof socket.data.authExpiryTimer.unref === 'function') {
+            socket.data.authExpiryTimer.unref();
+        }
+    };
+    armTimer();
+}
+
+function currentSocketAuthenticatedUser(socket) {
+    const user = socket.data.authenticatedUser;
+    if (!user) return null;
+    const expiresAt = Number(user.sessionExpiresAt || 0);
+    if (expiresAt && Date.now() >= expiresAt) {
+        expireSocketAuthentication(socket);
+        return null;
+    }
+    return user;
+}
+
+function onlineNicknames() {
+    return Array.from(onlineUserSockets.keys());
+}
+
+function removeOnlineSocket(socket) {
+    const nickname = socket.data.nickname;
+    if (!nickname) return;
+    const count = Number(onlineUserSockets.get(nickname) || 0);
+    if (count <= 1) onlineUserSockets.delete(nickname);
+    else onlineUserSockets.set(nickname, count - 1);
+    socket.data.nickname = null;
+}
+
+function identifyOnlineSocket(socket, nickname) {
+    if (socket.data.nickname === nickname) return;
+    removeOnlineSocket(socket);
+    socket.data.nickname = nickname;
+    onlineUserSockets.set(nickname, Number(onlineUserSockets.get(nickname) || 0) + 1);
+}
+
+function rejectSocketSessionJoin(socket, channelRole, error) {
+    if (channelRole === 'controller') {
+        socket.emit('session-revoked');
+        socket.disconnect(true);
+        return;
+    }
+    socket.emit('session-error', { error });
+}
+
+function operatorSessionRoom(sessionId) {
+    return `session-operators:${sessionId}`;
+}
+
+function serializeSocketMessage(sessionId, raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const from = ['admin', 'controller', 'system'].includes(source.from)
+        ? source.from
+        : 'system';
+    const knownVoice = from === 'admin' && source.type === 'voice'
+        ? voiceMessages.find(item => item.file === String(source.voiceFile || ''))
+        : null;
+    const timestamp = new Date(source.timestamp);
+    return {
+        id: String(source.id || crypto.randomUUID()).slice(0, 128),
+        sessionId,
+        from,
+        type: knownVoice ? 'voice' : 'text',
+        text: knownVoice ? null : String(source.text || '').slice(0, 1000),
+        voiceFile: knownVoice ? knownVoice.file : null,
+        duration: knownVoice ? knownVoice.duration : null,
+        timestamp: Number.isFinite(timestamp.getTime()) ? timestamp : new Date(0)
+    };
+}
+
+function publicSocketSessionData(sessionId, session, channelRole) {
+    const normalizedMessages = (session.messages || [])
+        .map(message => serializeSocketMessage(sessionId, message));
+    const visibleMessages = channelRole === 'operator'
+        ? normalizedMessages
+        : normalizedMessages.filter(message => message.from !== 'system');
+    return {
+        sessionId,
+        messages: visibleMessages,
+        intensity: Number(session.intensity || 0),
+        expiresAt: session.expiresAt || null
+    };
+}
+
+function socketCurrentSession(socket, rawSessionId, requiredRole) {
+    const sessionId = normalizeSocketSessionId(rawSessionId);
+    if (!sessionId || socket.data.currentSession !== sessionId) return null;
+    if (!socket.rooms.has(sessionId)) return null;
+    if (requiredRole && socket.data.channelRole !== requiredRole) return null;
+    const session = sessions.get(sessionId);
+    if (!session || !session.wasCreated || !session.isActive || session.revoked) return null;
+    if (session.expiresAt && Date.now() >= new Date(session.expiresAt).getTime()) return null;
+    return { sessionId, session };
+}
+
+function recordControllerConnection(socket, sessionId, sessionData) {
+    const forwarded = socket.handshake.headers['x-forwarded-for'];
+    const ip = forwarded?.split(',')[0].trim() ||
+        socket.handshake.headers['x-real-ip'] ||
+        socket.handshake.address ||
+        socket.conn.remoteAddress ||
+        'Unknown';
+    const userAgent = socket.handshake.headers['user-agent'] || 'Unknown';
+    const isMobile = /mobile|android|iphone|ipad|ipod/i.test(userAgent);
+    const deviceType = isMobile ? '📱 Mobile' : '💻 Desktop';
+
+    const appendConnectionMessage = async (locationInfo = '') => {
+        if (socket.data.currentSession !== sessionId || socket.data.channelRole !== 'controller') {
+            return;
+        }
+        const connectionMessage = {
+            id: crypto.randomUUID(),
+            sessionId,
+            text: `👤 User connected\n${deviceType}\nIP: ${ip}${locationInfo}`,
+            from: 'system',
+            type: 'text',
+            timestamp: new Date()
+        };
+        sessionData.messages.push(connectionMessage);
+        try {
+            await pool.query(
+                `INSERT INTO messages
+                 (session_id, message_id, from_user, message_type, text, voice_file, voice_duration, timestamp)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                [sessionId, connectionMessage.id, 'system', 'text',
+                    connectionMessage.text, null, null, connectionMessage.timestamp]
+            );
+        } catch (err) {
+            console.error('Insert connection message error:', err);
+        }
+        io.to(operatorSessionRoom(sessionId)).emit('new-message', connectionMessage);
+    };
+
+    if (ip === 'Unknown' || ip.startsWith('127.') || ip.startsWith('::') || ip.includes('localhost')) {
+        void appendConnectionMessage();
+        return;
+    }
+
+    const request = https.get(`https://ipapi.co/${encodeURIComponent(ip)}/json/`, response => {
+        let data = '';
+        response.setEncoding('utf8');
+        response.on('data', chunk => {
+            if (data.length < 64 * 1024) data += chunk;
+        });
+        response.on('end', () => {
+            try {
+                const geoData = JSON.parse(data);
+                if (!geoData.country_code) {
+                    void appendConnectionMessage();
+                    return;
+                }
+                const countryFlag = String(geoData.country_code)
+                    .toUpperCase()
+                    .slice(0, 2)
+                    .split('')
+                    .map(char => String.fromCodePoint(127397 + char.charCodeAt(0)))
+                    .join('');
+                const city = String(geoData.city || '').replace(/[\r\n]/g, ' ').slice(0, 80);
+                const country = String(geoData.country_name || '').replace(/[\r\n]/g, ' ').slice(0, 80);
+                void appendConnectionMessage(`\n${countryFlag} ${city ? city + ', ' : ''}${country}`);
+            } catch (_) {
+                void appendConnectionMessage();
+            }
+        });
+    });
+    request.setTimeout(5000, () => request.destroy());
+    request.on('error', () => void appendConnectionMessage());
+}
+
+io.on('connection', (socket) => {
+    const connectedUser = currentSocketAuthenticatedUser(socket);
+    if (connectedUser) {
+        socket.join(authUserSocketRoom(connectedUser.nickname));
+        socket.join(authSessionSocketRoom(socket.data.authTokenHash));
+        scheduleSocketAuthenticationExpiry(socket);
+    }
+
+    socket.on('identify', (_claimedNickname, acknowledgement) => {
+        const user = currentSocketAuthenticatedUser(socket);
+        if (!user) {
+            if (typeof acknowledgement === 'function') acknowledgement({ ok: false, error: 'login_required' });
+            socket.emit('authorization-error', { error: 'login_required' });
+            return;
+        }
+        if (socket.data.nickname && socket.data.nickname !== user.nickname) {
+            socket.leave('user:' + socket.data.nickname);
+        }
+        identifyOnlineSocket(socket, user.nickname);
+        socket.join('user:' + user.nickname);
+        io.emit('online-update', onlineNicknames());
+        if (typeof acknowledgement === 'function') acknowledgement({ ok: true, nickname: user.nickname });
     });
 
-    // Подписка админа на живые обновления кейсов
     socket.on('cases-admin-join', () => {
+        if (currentSocketAuthenticatedUser(socket)?.role !== 'admin') {
+            socket.emit('authorization-error', { error: 'admin_required' });
+            return;
+        }
         socket.join('cases-admin');
     });
 
-    socket.on('join-session', (sessionId, role) => {
-        socket.join(sessionId);
-        socket.data.currentSession = sessionId;
-        socket.data.role = role || 'controller';
+    socket.on('join-session', (rawSessionId, requestedRole) => {
+        const sessionId = normalizeSocketSessionId(rawSessionId);
+        const channelRole = requestedRole === 'admin' || requestedRole === 'operator'
+            ? 'operator'
+            : 'controller';
+        if (!sessionId) {
+            rejectSocketSessionJoin(socket, channelRole, 'invalid_session');
+            return;
+        }
 
-        getOrCreateSessionInMemory(sessionId, (err, sessionData) => {
-            if (err) {
-                socket.emit('error', { message: 'Session load error' });
-                return;
-            }
+        const joinRequestId = crypto.randomUUID();
+        socket.data.joinRequestId = joinRequestId;
+        socket.data.pendingSession = sessionId;
 
-            if (role !== 'admin') {
-                const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0].trim() ||
-                    socket.handshake.headers['x-real-ip'] ||
-                    socket.handshake.address ||
-                    socket.conn.remoteAddress ||
-                    'Unknown';
-
-                const userAgent = socket.handshake.headers['user-agent'] || 'Unknown';
-                const isMobile = /mobile|android|iphone|ipad|ipod/i.test(userAgent);
-                const deviceType = isMobile ? '📱 Mobile' : '💻 Desktop';
-
-                const sendConnectionInfo = async (locationInfo = '') => {
-                    const connectionMessage = {
-                        id: Date.now(),
-                        sessionId: sessionId,
-                        text: `👤 User connected\n${deviceType}\nIP: ${ip}${locationInfo}`,
-                        from: 'system',
-                        timestamp: new Date()
-                    };
-
-                    sessionData.messages.push(connectionMessage);
-
-                    try {
-                        await pool.query('INSERT INTO messages (session_id, message_id, from_user, message_type, text, voice_file, voice_duration, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-                            [sessionId, connectionMessage.id.toString(), 'system', 'text', connectionMessage.text, null, null, connectionMessage.timestamp]);
-                    } catch (err) {
-                        console.error('Insert message error:', err);
-                    }
-
-                    io.to(sessionId).emit('new-message', connectionMessage);
-                };
-
-                if (ip !== 'Unknown' && !ip.startsWith('127.') && !ip.startsWith('::') && !ip.includes('localhost')) {
-                    const https = require('https');
-                    https.get(`https://ipapi.co/${ip}/json/`, (res) => {
-                        let data = '';
-                        res.on('data', chunk => data += chunk);
-                        res.on('end', () => {
-                            try {
-                                const geoData = JSON.parse(data);
-                                if (geoData.country_code) {
-                                    const countryFlag = geoData.country_code
-                                        .toUpperCase()
-                                        .split('')
-                                        .map(char => String.fromCodePoint(127397 + char.charCodeAt(0)))
-                                        .join('');
-
-                                    const city = geoData.city || '';
-                                    const country = geoData.country_name || '';
-                                    const locationInfo = `\n${countryFlag} ${city ? city + ', ' : ''}${country}`;
-                                    sendConnectionInfo(locationInfo);
-                                } else {
-                                    sendConnectionInfo();
-                                }
-                            } catch (e) {
-                                sendConnectionInfo();
-                            }
-                        });
-                    }).on('error', () => {
-                        sendConnectionInfo();
-                    });
-                } else {
-                    sendConnectionInfo();
+        getOrCreateSessionInMemory(sessionId, async (err, sessionData) => {
+            if (
+                !socket.connected ||
+                socket.data.joinRequestId !== joinRequestId ||
+                socket.data.pendingSession !== sessionId
+            ) return;
+            const clearPendingJoin = () => {
+                if (socket.data.joinRequestId === joinRequestId) {
+                    socket.data.joinRequestId = null;
+                    socket.data.pendingSession = null;
                 }
-            }
-
-            if (!sessionData.wasCreated && role !== 'admin') {
-                socket.emit('session-revoked');
-                socket.disconnect(true);
+            };
+            if (err) {
+                clearPendingJoin();
+                rejectSocketSessionJoin(socket, channelRole, 'session_load_error');
                 return;
             }
-
-            if (sessionData.revoked) {
-                socket.emit('session-revoked');
-                socket.disconnect(true);
+            if (!sessionData.wasCreated) {
+                clearPendingJoin();
+                rejectSocketSessionJoin(socket, channelRole, 'session_not_found');
                 return;
             }
 
@@ -2975,126 +3601,162 @@ io.on('connection', (socket) => {
                 sessionData.revoked = true;
                 sessionData.isActive = false;
                 sessions.set(sessionId, sessionData);
-                socket.emit('session-revoked');
-                socket.disconnect(true);
+                try {
+                    await pool.query(
+                        'UPDATE sessions SET revoked=true, is_active=false WHERE id=$1',
+                        [sessionId]
+                    );
+                } catch (updateError) {
+                    console.error('Expire session on join error:', updateError.message);
+                }
+            }
+            if (
+                !socket.connected ||
+                socket.data.joinRequestId !== joinRequestId ||
+                socket.data.pendingSession !== sessionId
+            ) return;
+            if (sessionData.revoked || !sessionData.isActive) {
+                clearPendingJoin();
+                rejectSocketSessionJoin(socket, channelRole, 'session_inactive');
                 return;
             }
 
-            socket.emit('session-data', {
-                ...sessionData,
-                sessionId: sessionId
-            });
+            if (channelRole === 'operator') {
+                const user = currentSocketAuthenticatedUser(socket);
+                if (!canManageControlSession(user, sessionData)) {
+                    clearPendingJoin();
+                    rejectSocketSessionJoin(socket, channelRole, 'permission_denied');
+                    return;
+                }
+            }
+
+            const previousSession = socket.data.currentSession;
+            if (previousSession) {
+                socket.leave(operatorSessionRoom(previousSession));
+                if (previousSession !== sessionId) socket.leave(previousSession);
+            }
+            socket.join(sessionId);
+            if (channelRole === 'operator') socket.join(operatorSessionRoom(sessionId));
+            socket.data.currentSession = sessionId;
+            socket.data.channelRole = channelRole;
+            clearPendingJoin();
+
+            socket.emit('session-data', publicSocketSessionData(sessionId, sessionData, channelRole));
+            if (channelRole === 'controller') {
+                recordControllerConnection(socket, sessionId, sessionData);
+            }
         });
     });
 
-    socket.on('leave-session', (sessionId) => {
-        socket.leave(sessionId);
-        if (socket.data.currentSession === sessionId) {
-            socket.data.currentSession = null;
-            socket.data.role = null;
+    socket.on('leave-session', (rawSessionId) => {
+        const sessionId = normalizeSocketSessionId(rawSessionId);
+        if (!sessionId) return;
+        if (socket.data.pendingSession === sessionId) {
+            socket.data.joinRequestId = null;
+            socket.data.pendingSession = null;
         }
+        if (socket.data.currentSession !== sessionId) return;
+        socket.leave(sessionId);
+        socket.leave(operatorSessionRoom(sessionId));
+        socket.data.currentSession = null;
+        socket.data.channelRole = null;
     });
 
     socket.on('chat-message', async (data) => {
         if (!checkRateLimit(socket.id, 'chat-message', MAX_MESSAGES_PER_WINDOW)) return;
+        if (
+            socket.data.channelRole === 'operator' &&
+            !currentSocketAuthenticatedUser(socket)
+        ) return;
+        const current = socketCurrentSession(socket, data?.sessionId);
+        const input = data?.message;
+        if (!current || !input || typeof input !== 'object' || Array.isArray(input)) return;
 
-        const { sessionId, message } = data;
+        const from = socket.data.channelRole === 'operator' ? 'admin' : 'controller';
+        const message = {
+            id: crypto.randomUUID(),
+            sessionId: current.sessionId,
+            from,
+            type: 'text',
+            text: null,
+            voiceFile: null,
+            duration: null,
+            timestamp: new Date()
+        };
 
-        if (!sessionId || !message) return;
-
-        if (message.type === 'voice') {
-            if (!message.voiceFile || !message.duration) return;
+        if (input.type === 'voice') {
+            if (socket.data.channelRole !== 'operator') return;
+            const voice = voiceMessages.find(item => item.file === String(input.voiceFile || ''));
+            if (!voice) return;
+            message.type = 'voice';
+            message.voiceFile = voice.file;
+            message.duration = voice.duration;
         } else {
-            if (typeof message.text !== 'string') return;
-            if (message.text.length > 1000) {
-                socket.emit('error', { message: 'Message too long (max 1000 characters)' });
-                return;
-            }
+            const text = typeof input.text === 'string' ? input.text.trim() : '';
+            if (!text || text.length > 1000) return;
+            message.text = text;
         }
 
-        if (sessions.has(sessionId)) {
-            const session = sessions.get(sessionId);
-            if (session.revoked) return;
-
-            if (!message.sessionId) {
-                message.sessionId = sessionId;
-            }
-
-            session.messages.push(message);
-
-            try {
-                await pool.query('INSERT INTO messages (session_id, message_id, from_user, message_type, text, voice_file, voice_duration, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-                    [sessionId, message.id.toString(), message.from, message.type || 'text', message.text || null, message.voiceFile || null, message.duration || null, message.timestamp]);
-            } catch (err) {
-                console.error('Insert message error:', err);
-            }
-
-            io.to(sessionId).emit('new-message', message);
+        current.session.messages.push(message);
+        try {
+            await pool.query(
+                `INSERT INTO messages
+                 (session_id, message_id, from_user, message_type, text, voice_file, voice_duration, timestamp)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                [current.sessionId, message.id, message.from, message.type,
+                    message.text, message.voiceFile, message.duration, message.timestamp]
+            );
+        } catch (err) {
+            console.error('Insert message error:', err);
         }
+        io.to(current.sessionId).emit('new-message', message);
     });
 
     socket.on('intensity-update', (data) => {
-        if (!checkRateLimit(socket.id, 'intensity-update', MAX_INTENSITY_UPDATES_PER_WINDOW)) {
-            return;
-        }
-
-        const { sessionId, intensity } = data;
-
-        if (!sessionId || typeof intensity !== 'number' || intensity < 0 || intensity > 100) {
-            return;
-        }
-
-        if (sessions.has(sessionId)) {
-            const session = sessions.get(sessionId);
-            if (session.revoked) return;
-            session.intensity = Math.round(intensity);
-            io.to(sessionId).emit('intensity-changed', session.intensity);
-        }
+        if (!checkRateLimit(socket.id, 'intensity-update', MAX_INTENSITY_UPDATES_PER_WINDOW)) return;
+        const current = socketCurrentSession(socket, data?.sessionId, 'controller');
+        const intensity = Number(data?.intensity);
+        if (!current || !Number.isFinite(intensity) || intensity < 0 || intensity > 100) return;
+        current.session.intensity = Math.round(intensity);
+        io.to(current.sessionId).emit('intensity-changed', current.session.intensity);
     });
 
     socket.on('control-action', async (data) => {
-        if (!checkRateLimit(socket.id, 'control-action', MAX_MESSAGES_PER_WINDOW)) {
-            return;
+        if (!checkRateLimit(socket.id, 'control-action', MAX_MESSAGES_PER_WINDOW)) return;
+        const current = socketCurrentSession(socket, data?.sessionId, 'controller');
+        if (!current || data?.action !== '▶️ Started') return;
+
+        const message = {
+            id: crypto.randomUUID(),
+            sessionId: current.sessionId,
+            text: '▶️ Started',
+            from: 'system',
+            type: 'text',
+            timestamp: new Date()
+        };
+        current.session.messages.push(message);
+        try {
+            await pool.query(
+                `INSERT INTO messages
+                 (session_id, message_id, from_user, message_type, text, voice_file, voice_duration, timestamp)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                [current.sessionId, message.id, 'system', 'text', message.text,
+                    null, null, message.timestamp]
+            );
+        } catch (err) {
+            console.error('Insert control action error:', err);
         }
-
-        const { sessionId, action } = data;
-
-        if (!sessionId || typeof action !== 'string' || action.length > 200) {
-            return;
-        }
-
-        if (sessions.has(sessionId)) {
-            const session = sessions.get(sessionId);
-            if (session.revoked) return;
-            const message = {
-                id: Date.now(),
-                sessionId: sessionId,
-                text: action,
-                from: 'system',
-                timestamp: new Date()
-            };
-            session.messages.push(message);
-
-            try {
-                await pool.query('INSERT INTO messages (session_id, message_id, from_user, message_type, text, voice_file, voice_duration, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-                    [sessionId, message.id.toString(), 'system', 'text', message.text, null, null, message.timestamp]);
-            } catch (err) {
-                console.error('Insert message error:', err);
-            }
-
-            io.to(sessionId).emit('new-message', message);
-        }
+        io.to(current.sessionId).emit('new-message', message);
     });
 
     socket.on('disconnect', () => {
-        if (socket.data && socket.data.nickname) {
-            onlineUsers.delete(socket.data.nickname);
-            io.emit('online-update', Array.from(onlineUsers));
+        if (socket.data.authExpiryTimer) {
+            clearTimeout(socket.data.authExpiryTimer);
+            socket.data.authExpiryTimer = null;
         }
-
-        // Очистка при отключении
-        if (socket.data && socket.data.currentSession) {
-            socket.leave(socket.data.currentSession);
+        if (socket.data.nickname) {
+            removeOnlineSocket(socket);
+            io.emit('online-update', onlineNicknames());
         }
     });
 });

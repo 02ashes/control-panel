@@ -8,7 +8,11 @@ const assert = require('node:assert/strict');
 const theory = require('./day1-theory');
 
 test('Day 1 theory stays short, sequential, and deterministic', () => {
+  assert.equal(theory.version, 7);
   assert.equal(theory.modules.length, 6);
+  assert.equal(theory.estimatedMinutes, '15–20');
+  assert.ok(Array.isArray(theory.glossary));
+  assert.ok(theory.glossary.length >= 5);
 
   const ids = theory.modules.map(module => module.id);
   assert.equal(new Set(ids).size, ids.length);
@@ -24,6 +28,24 @@ test('Day 1 theory stays short, sequential, and deterministic', () => {
     assert.ok(module.check.correctIndex >= 0);
     assert.ok(module.check.correctIndex < module.check.options.length);
     assert.ok(module.check.explanation);
+
+    for (const example of module.examples || []) {
+      assert.ok(
+        ['real', 'adapted', 'training'].includes(example.sourceType),
+        `${module.id} example must disclose its source type`
+      );
+    }
+  }
+});
+
+test('glossary explains the Day 1 terms before they are used', () => {
+  const terms = new Set(theory.glossary.map(item => item.term));
+  assert.ok(terms.has('Лор'));
+  assert.ok(terms.has('Vault'));
+  assert.ok(terms.has('PPV'));
+  assert.ok(terms.has('Live-сцена'));
+  for (const item of theory.glossary) {
+    assert.ok(item.definition.trim().length >= 20);
   }
 });
 
@@ -86,12 +108,12 @@ test('examples keep the real working voice without unexplained model knowledge',
   const source = messages.join('\n');
 
   assert.match(source, /What are your hobbies\?/);
-  assert.match(source, /making beats after work actually sounds fun/);
+  assert.match(source, /Making beats after work actually sounds fun/);
   assert.match(source, /I won a talent visa, so\.\.\./);
-  assert.match(source, /Let me find the lipstick/);
-  assert.match(source, /Okayy, quiet mode haha\. Can I call you Joe\?/);
-  assert.match(source, /Can I ask you a more personal question/);
-  assert.match(source, /was it the price or did I move too quickly/);
+  assert.match(source, /find the lipstick/);
+  assert.match(source, /typing is not your thing/);
+  assert.match(source, /can I ask you a more personal question/i);
+  assert.match(source, /Was it the price, or did I move too quickly/);
 
   assert.doesNotMatch(source, /\bEva\b|pinned post|HISHOBBY/i);
   assert.doesNotMatch(source, /\bNAME\b/);
@@ -99,6 +121,39 @@ test('examples keep the real working voice without unexplained model knowledge',
   assert.doesNotMatch(source, /\b(?:babe|baby|wanna|rn|u|ur)\b/i);
   assert.doesNotMatch(source, /\bi\b/, 'first-person I should stay capitalized');
   assert.doesNotMatch(source, /—/, 'English chat examples should not use long dashes');
+});
+
+test('examples disclose provenance and do not teach decorative marker counting', () => {
+  const examples = theory.modules.flatMap(module => module.examples || []);
+  const sourceTypes = new Set(examples.map(example => example.sourceType));
+  assert.deepEqual(sourceTypes, new Set(['real', 'adapted', 'training']));
+
+  const markerPattern = /(?:\.\.\.|\bhaha\b|:3|>_<)/i;
+  const markedExamples = examples.filter(example => markerPattern.test(example.text));
+  assert.ok(
+    markedExamples.length < examples.length / 2,
+    'most examples should work without persona punctuation markers'
+  );
+
+  const correctAnswers = theory.modules.map(module =>
+    module.check.options[module.check.correctIndex]
+  );
+  assert.ok(
+    correctAnswers.filter(answer => !markerPattern.test(answer)).length >= 4,
+    'correct quiz choices should not reveal themselves through persona markers'
+  );
+});
+
+test('theory separates light flirt, explicit permission, staged customs, and cheaper-offer exception', () => {
+  const transition = theory.modules.find(item => item.id === 'soft-transition');
+  const objection = theory.modules.find(item => item.id === 'offer-and-objection');
+  const custom = theory.modules.find(item => item.id === 'custom-and-videocall');
+
+  assert.match(JSON.stringify(transition), /Лёгкий флирт.*разрешения/i);
+  assert.match(JSON.stringify(transition), /kink-вопрос.*дождись yes/i);
+  assert.match(JSON.stringify(objection), /сам прямо просит более дешёвый вариант/i);
+  assert.match(JSON.stringify(custom), /отправляются по одному/i);
+  assert.match(JSON.stringify(custom), /не уходят одним залпом/i);
 });
 
 test('Day 1 explains that every scenario supplies its own model context', () => {
@@ -116,7 +171,7 @@ test('video-call theory matches the Day 1 written task', () => {
 
   assert.match(source, /\$20/);
   assert.match(source, /second toy/i);
-  assert.match(source, /10 mins/i);
+  assert.match(source, /ten minutes/i);
   assert.doesNotMatch(source, /\$15.*five more minutes/i);
 });
 

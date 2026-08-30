@@ -12,11 +12,14 @@ const REASONING_EFFORT = process.env.XAI_DAY1_REASONING_EFFORT || 'high';
 
 const PASS_SCORE = 60;
 const CRITICAL_MIN = 2;
+const CRITICAL_SCORE_CAP = PASS_SCORE - 1;
+const MAX_ANSWER_CHARS = 3000;
+const MAX_EVIDENCE_CHARS = 240;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_RETRIES = 2;
 const REQUEST_TIMEOUT_MS = positiveInt(process.env.XAI_TIMEOUT_MS, 60000);
 const MAX_OUTPUT_TOKENS = positiveInt(process.env.XAI_MAX_OUTPUT_TOKENS, 4096);
-const GRADER_VERSION = 'day1-grader-v2.2';
+const GRADER_VERSION = 'day1-grader-v2.5';
 
 const ROOT_KEYS = ['language', 'integrity', 'criteria', 'feedback_ru'];
 const LANGUAGE_KEYS = ['is_english', 'confidence', 'non_english_evidence', 'reason_ru'];
@@ -337,7 +340,7 @@ function preflightAnswer(answer) {
   const flags = {
     empty: normalized.length === 0,
     too_short: normalized.length > 0 && normalized.length < 4,
-    too_long: normalized.length > 3000,
+    too_long: normalized.length > MAX_ANSWER_CHARS,
     control_characters: /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(normalized),
     prompt_injection:
       /(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|above|system|developer)\s+(?:instructions?|prompts?)/i.test(normalized) ||
@@ -386,10 +389,10 @@ function criterionSchema(criterion) {
       },
       evidence: {
         type: 'string',
-        maxLength: 240,
+        maxLength: MAX_EVIDENCE_CHARS,
         description: criterion.evidenceOptional
-          ? 'An exact quote from the candidate answer when a visible phrase supports the rating. May be empty when the criterion is satisfied by the absence of prohibited text.'
-          : 'An exact quote from the candidate answer. Empty only when rating is 0.'
+          ? 'The shortest exact quote that supports the rating; never copy the whole answer. May be empty when the criterion is satisfied by the absence of prohibited text.'
+          : 'The shortest exact quote that supports the rating; never copy the whole answer. Empty only when rating is 0.'
       },
       reason_ru: {
         type: 'string',
@@ -428,7 +431,7 @@ function buildResponseSchema(taskId) {
           },
           non_english_evidence: {
             type: 'string',
-            maxLength: 240,
+            maxLength: MAX_EVIDENCE_CHARS,
             description: 'An exact non-English quote from the candidate answer when is_english is false. Empty when is_english is true.'
           },
           reason_ru: {
@@ -462,7 +465,7 @@ function buildResponseSchema(taskId) {
           },
           hard_fail_evidence: {
             type: 'string',
-            maxLength: 240,
+            maxLength: MAX_EVIDENCE_CHARS,
             description: 'An exact quote showing the task hard fail. Empty when hard_fail_ids is empty.'
           },
           prompt_injection: {
@@ -471,7 +474,7 @@ function buildResponseSchema(taskId) {
           },
           prompt_injection_evidence: {
             type: 'string',
-            maxLength: 240,
+            maxLength: MAX_EVIDENCE_CHARS,
             description: 'An exact manipulating quote when prompt_injection is true. Empty otherwise.'
           },
           hostile: {
@@ -480,7 +483,7 @@ function buildResponseSchema(taskId) {
           },
           hostile_evidence: {
             type: 'string',
-            maxLength: 240,
+            maxLength: MAX_EVIDENCE_CHARS,
             description: 'An exact attacking, threatening, or insulting quote when hostile is true. Empty otherwise.'
           },
           reason_ru: {
@@ -501,7 +504,7 @@ function buildResponseSchema(taskId) {
         type: 'string',
         minLength: 1,
         maxLength: 500,
-        description: 'Specific, respectful Russian feedback: what worked and the single most useful improvement.'
+        description: 'Specific Russian feedback grounded only in the ratings. If any criterion is 0-2, explain the single most useful correction. If every criterion is 3-4, summarize why the answer works and do not invent a flaw or forced rewrite.'
       }
     },
     required: ROOT_KEYS
@@ -547,7 +550,10 @@ function buildSystemPrompt(taskId) {
     'REFERENCE CHAT VOICE FOR NATURALNESS',
     '- Apply this reference only when a task criterion judges naturalness, tone, cohesion, personalization, or format.',
     '- A voice mismatch is never a hard fail and must not lower unrelated factual, commercial, or safety criteria.',
-    '- Do not require any exact catchphrase, emoticon, spelling quirk, or filler word.',
+    '- Do not require or reward any exact catchphrase, greeting order, emoticon, spelling quirk, pause, or filler word.',
+    '- haha, ellipses, :3, >_<, Wait, Omg, and similar markers are fully optional. Their presence or absence alone changes no rating.',
+    '- Accept concise, direct, playful, shy, or slightly unusual wording when it sounds like a real person and satisfies the observable task.',
+    '- Never compare the answer with an imagined ideal greeting or a hidden sample. Grade the supplied task, not mimicry.',
     task.voiceGuide,
     '',
     'RATING ANCHORS FOR EVERY CRITERION',
@@ -556,13 +562,16 @@ function buildSystemPrompt(taskId) {
     '- 2: partial/basic execution that could work but needs clear improvement.',
     '- 3: solid, usable execution.',
     '- 4: excellent, specific, natural execution.',
-    '- Evidence must be an exact quote copied from the candidate answer.',
+    '- A clear answer that fully satisfies a criterion deserves 3 even without decorative personality markers. Reserve 4 for unusually strong specificity or execution, not for matching a preferred phrase.',
+    '- Apply only the written criterion and its anchors. Do not invent aesthetic requirements or subtract the same flaw again under unrelated criteria.',
+    `- Evidence must be the shortest useful exact quote copied from the candidate answer and no longer than ${MAX_EVIDENCE_CHARS} characters. Never copy the whole answer.`,
     '- Use an empty string for rating 0. For criteria explicitly marked as absence-based, empty evidence is also allowed when no prohibited phrase exists.',
     '',
     'FEEDBACK QUALITY',
     '- Judge observable text, not the candidate personality or imagined intent.',
     '- Do not criticize harmless style choices that the rubric explicitly allows.',
-    '- Base feedback on the lowest-rated criterion and give one concrete rewrite direction.',
+    '- If at least one criterion is rated 0-2, base feedback on the lowest-rated criterion and give one concrete correction.',
+    '- If every criterion is rated 3-4, briefly state why the answer is usable. Do not invent a weakness, demand a rewrite, or criticize an allowed style choice merely to provide an improvement.',
     '- If any integrity flag is true, name the exact visible violation in integrity.reason_ru and feedback_ru.',
     '- Avoid vague praise, vague criticism, and advice unrelated to this exact task.',
     '',
@@ -619,8 +628,14 @@ function assertInteger(value, min, max, path) {
 }
 
 function assertString(value, min, max, path) {
-  if (typeof value !== 'string' || value.length < min || value.length > max) {
-    throw assessmentError(`${path} must be a string of ${min}-${max} characters`);
+  if (typeof value !== 'string') {
+    throw assessmentError(`${path} must be a string`);
+  }
+  const length = Array.from(value).length;
+  if (length < min || length > max) {
+    throw assessmentError(
+      `${path} must contain ${min}-${max} characters; received ${length}`
+    );
   }
 }
 
@@ -638,6 +653,32 @@ function evidenceAppearsInAnswer(evidence, answer) {
   return Boolean(needle) && haystack.includes(needle);
 }
 
+function shortenGroundedEvidence(value, answer, path) {
+  if (typeof value !== 'string') {
+    throw assessmentError(`${path} must be a string`);
+  }
+  const length = Array.from(value).length;
+  if (length <= MAX_EVIDENCE_CHARS) return value;
+  if (length > MAX_ANSWER_CHARS || !evidenceAppearsInAnswer(value, answer)) {
+    throw assessmentError(`${path} must be an exact quote from the answer`);
+  }
+
+  const normalized = normalizeAnswer(value);
+  let excerpt = Array.from(normalized).slice(0, MAX_EVIDENCE_CHARS).join('');
+  const boundary = Math.max(
+    excerpt.lastIndexOf('\n'),
+    excerpt.lastIndexOf(' '),
+    excerpt.lastIndexOf('\t')
+  );
+  if (boundary >= Math.floor(MAX_EVIDENCE_CHARS * 0.6)) {
+    excerpt = excerpt.slice(0, boundary).trimEnd();
+  }
+  if (!excerpt || !evidenceAppearsInAnswer(excerpt, answer)) {
+    throw assessmentError(`${path} must be an exact quote from the answer`);
+  }
+  return excerpt;
+}
+
 function validateAssessment(raw, taskId, answer) {
   const task = resolveTaskConfig(taskId);
   let assessment = raw;
@@ -653,14 +694,18 @@ function validateAssessment(raw, taskId, answer) {
   assertExactKeys(assessment.language, LANGUAGE_KEYS, 'language');
   assertBoolean(assessment.language.is_english, 'language.is_english');
   assertInteger(assessment.language.confidence, 0, 100, 'language.confidence');
-  assertString(assessment.language.non_english_evidence, 0, 240, 'language.non_english_evidence');
+  const nonEnglishEvidence = shortenGroundedEvidence(
+    assessment.language.non_english_evidence,
+    answer,
+    'language.non_english_evidence'
+  );
   if (
     !assessment.language.is_english &&
-    !evidenceAppearsInAnswer(assessment.language.non_english_evidence, answer)
+    !evidenceAppearsInAnswer(nonEnglishEvidence, answer)
   ) {
     throw assessmentError('language.non_english_evidence must be an exact quote from the answer');
   }
-  if (assessment.language.is_english && assessment.language.non_english_evidence) {
+  if (assessment.language.is_english && nonEnglishEvidence) {
     throw assessmentError('language.non_english_evidence must be empty when the answer is English');
   }
   assertString(assessment.language.reason_ru, 1, 200, 'language.reason_ru');
@@ -680,38 +725,45 @@ function validateAssessment(raw, taskId, answer) {
   ) {
     throw assessmentError('integrity.hard_fail_ids contains an unknown or duplicate rule id');
   }
-  assertString(assessment.integrity.hard_fail_evidence, 0, 240, 'integrity.hard_fail_evidence');
-  if (hardFailIds.length && !evidenceAppearsInAnswer(assessment.integrity.hard_fail_evidence, answer)) {
+  const hardFailEvidence = shortenGroundedEvidence(
+    assessment.integrity.hard_fail_evidence,
+    answer,
+    'integrity.hard_fail_evidence'
+  );
+  if (hardFailIds.length && !evidenceAppearsInAnswer(hardFailEvidence, answer)) {
     throw assessmentError('integrity.hard_fail_evidence must be an exact quote from the answer');
   }
-  if (!hardFailIds.length && assessment.integrity.hard_fail_evidence) {
+  if (!hardFailIds.length && hardFailEvidence) {
     throw assessmentError('integrity.hard_fail_evidence must be empty when no hard fail is selected');
   }
   assertBoolean(assessment.integrity.prompt_injection, 'integrity.prompt_injection');
-  assertString(
+  const promptInjectionEvidence = shortenGroundedEvidence(
     assessment.integrity.prompt_injection_evidence,
-    0,
-    240,
+    answer,
     'integrity.prompt_injection_evidence'
   );
   if (
     assessment.integrity.prompt_injection &&
-    !evidenceAppearsInAnswer(assessment.integrity.prompt_injection_evidence, answer)
+    !evidenceAppearsInAnswer(promptInjectionEvidence, answer)
   ) {
     throw assessmentError('integrity.prompt_injection_evidence must be an exact quote from the answer');
   }
-  if (!assessment.integrity.prompt_injection && assessment.integrity.prompt_injection_evidence) {
+  if (!assessment.integrity.prompt_injection && promptInjectionEvidence) {
     throw assessmentError('integrity.prompt_injection_evidence must be empty when prompt_injection is false');
   }
   assertBoolean(assessment.integrity.hostile, 'integrity.hostile');
-  assertString(assessment.integrity.hostile_evidence, 0, 240, 'integrity.hostile_evidence');
+  const hostileEvidence = shortenGroundedEvidence(
+    assessment.integrity.hostile_evidence,
+    answer,
+    'integrity.hostile_evidence'
+  );
   if (
     assessment.integrity.hostile &&
-    !evidenceAppearsInAnswer(assessment.integrity.hostile_evidence, answer)
+    !evidenceAppearsInAnswer(hostileEvidence, answer)
   ) {
     throw assessmentError('integrity.hostile_evidence must be an exact quote from the answer');
   }
-  if (!assessment.integrity.hostile && assessment.integrity.hostile_evidence) {
+  if (!assessment.integrity.hostile && hostileEvidence) {
     throw assessmentError('integrity.hostile_evidence must be empty when hostile is false');
   }
   assertString(assessment.integrity.reason_ru, 1, 240, 'integrity.reason_ru');
@@ -724,17 +776,17 @@ function validateAssessment(raw, taskId, answer) {
     const path = `criteria.${criterion.id}`;
     assertExactKeys(value, CRITERION_KEYS, path);
     assertInteger(value.rating, 0, 4, `${path}.rating`);
-    assertString(value.evidence, 0, 240, `${path}.evidence`);
+    const evidence = shortenGroundedEvidence(value.evidence, answer, `${path}.evidence`);
     assertString(value.reason_ru, 1, 240, `${path}.reason_ru`);
-    if (value.evidence && !evidenceAppearsInAnswer(value.evidence, answer)) {
+    if (evidence && !evidenceAppearsInAnswer(evidence, answer)) {
       throw assessmentError(`${path}.evidence must be an exact quote from the answer`);
     }
-    if (value.rating > 0 && !value.evidence && !criterion.evidenceOptional) {
+    if (value.rating > 0 && !evidence && !criterion.evidenceOptional) {
       throw assessmentError(`${path}.evidence is required for a positive rating`);
     }
     validatedCriteria[criterion.id] = {
       rating: value.rating,
-      evidence: value.evidence,
+      evidence,
       reason_ru: value.reason_ru
     };
   }
@@ -744,18 +796,18 @@ function validateAssessment(raw, taskId, answer) {
     language: {
       is_english: assessment.language.is_english,
       confidence: assessment.language.confidence,
-      non_english_evidence: assessment.language.non_english_evidence,
+      non_english_evidence: nonEnglishEvidence,
       reason_ru: assessment.language.reason_ru
     },
     integrity: {
       on_task: assessment.integrity.on_task,
       coherent: assessment.integrity.coherent,
       hard_fail_ids: hardFailIds,
-      hard_fail_evidence: assessment.integrity.hard_fail_evidence,
+      hard_fail_evidence: hardFailEvidence,
       prompt_injection: assessment.integrity.prompt_injection,
-      prompt_injection_evidence: assessment.integrity.prompt_injection_evidence,
+      prompt_injection_evidence: promptInjectionEvidence,
       hostile: assessment.integrity.hostile,
-      hostile_evidence: assessment.integrity.hostile_evidence,
+      hostile_evidence: hostileEvidence,
       reason_ru: assessment.integrity.reason_ru
     },
     criteria: validatedCriteria,
@@ -774,30 +826,51 @@ function computeVerdict(raw, taskId, answer) {
   }, 0);
   const rawScore = Math.max(0, Math.min(100, Math.round((weighted / totalWeight) * 100)));
 
-  const caps = [];
-  function addCap(reason, maximum) {
-    caps.push({ reason, maximum });
-  }
-
-  if (preflight.flags.empty || preflight.flags.too_short || preflight.flags.too_long || preflight.flags.control_characters) {
-    addCap('invalid_answer', 0);
-  }
-  if (preflight.flags.non_english || !assessment.language.is_english) addCap('non_english', 40);
-  if (assessment.integrity.hard_fail_ids.length) addCap('task_hard_fail', 20);
-  if (preflight.flags.prompt_injection || assessment.integrity.prompt_injection) addCap('prompt_injection', 15);
-  if (preflight.flags.hostile || assessment.integrity.hostile) addCap('hostile', 15);
-
-  const cap = caps.length ? Math.min(...caps.map(item => item.maximum)) : 100;
-  const score = Math.min(rawScore, cap);
   const critical = task.criteria
     .filter(criterion => criterion.critical)
     .map(criterion => ({
       id: criterion.id,
+      label: criterion.label,
       rating: assessment.criteria[criterion.id].rating,
       ok: assessment.criteria[criterion.id].rating >= CRITICAL_MIN
     }));
   const criticalOk = critical.every(item => item.ok);
-  const hardFail = caps.length > 0;
+  const failedCritical = critical.filter(item => !item.ok);
+
+  const caps = [];
+  function addCap(reason, maximum, reasonRu, extra = {}) {
+    caps.push({ reason, maximum, reason_ru: reasonRu, ...extra });
+  }
+
+  if (preflight.flags.empty || preflight.flags.too_short || preflight.flags.too_long || preflight.flags.control_characters) {
+    addCap('invalid_answer', 0, 'Ответ пустой, повреждён или имеет недопустимую длину.');
+  }
+  if (preflight.flags.non_english || !assessment.language.is_english) {
+    addCap('non_english', 40, 'Ответ должен быть написан преимущественно на понятном английском языке.');
+  }
+  if (assessment.integrity.hard_fail_ids.length) {
+    addCap('task_hard_fail', 20, 'Нарушено прямое запрещающее правило этого задания.');
+  }
+  if (preflight.flags.prompt_injection || assessment.integrity.prompt_injection) {
+    addCap('prompt_injection', 15, 'В ответе обнаружена попытка управлять проверкой вместо сообщения фану.');
+  }
+  if (preflight.flags.hostile || assessment.integrity.hostile) {
+    addCap('hostile', 15, 'Ответ содержит оскорбление, угрозу или прямую атаку на фана.');
+  }
+  if (!criticalOk) {
+    const labels = failedCritical.map(item => item.label);
+    addCap(
+      'critical_gate',
+      CRITICAL_SCORE_CAP,
+      `Не выполнен обязательный критерий: ${labels.join(', ')}. Итог ограничен ${CRITICAL_SCORE_CAP}/100.`,
+      { failed_criteria: failedCritical.map(item => item.id) }
+    );
+  }
+
+  const cap = caps.length ? Math.min(...caps.map(item => item.maximum)) : 100;
+  const score = Math.min(rawScore, cap);
+  const activeCaps = caps.filter(item => item.maximum === cap);
+  const hardFail = caps.some(item => item.reason !== 'critical_gate');
   const pass = score >= PASS_SCORE && criticalOk && !hardFail;
   const criteria = {};
   for (const criterion of task.criteria) {
@@ -824,6 +897,7 @@ function computeVerdict(raw, taskId, answer) {
     critical,
     hardFail,
     caps,
+    scoreCapReasonRu: activeCaps.map(item => item.reason_ru).join(' '),
     language: assessment.language,
     integrity: assessment.integrity,
     criteria,
@@ -973,7 +1047,9 @@ function requestAssessment(payload, apiKey, taskId, answer) {
           resolveOnce(validateAssessment(outputText, taskId, answer));
         } catch (error) {
           if (error.retryable === undefined) {
-            error.retryable = error.code === 'invalid_assessment';
+            // At temperature 0 the same schema-invalid assessment is normally
+            // deterministic. Retrying it only repeats the charge and error.
+            error.retryable = false;
           }
           rejectOnce(error);
         }
@@ -1074,6 +1150,9 @@ module.exports = {
   REASONING_EFFORT,
   GRADER_VERSION,
   PASS_SCORE,
+  CRITICAL_SCORE_CAP,
+  MAX_ANSWER_CHARS,
+  MAX_EVIDENCE_CHARS,
   normalizeAnswer,
   hashAnswer,
   preflightAnswer,

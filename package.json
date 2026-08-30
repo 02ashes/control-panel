@@ -7,7 +7,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "preview:day1": "node learn/day1-preview-server.js",
-    "test": "node --test learn/*.test.js"
+    "test": "node --test learn/*.test.js learn/evals/*.test.js",
+    "eval:day1": "node learn/evals/run-day1-evals.js --dry-run",
+    "eval:day1:live": "node learn/evals/run-day1-evals.js --live"
   },
   "keywords": [
     "lovense",

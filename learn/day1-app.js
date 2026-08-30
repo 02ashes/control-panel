@@ -10,9 +10,8 @@
     window.location.hostname === '127.0.0.1' ||
     window.location.hostname === 'localhost'
   ) && new URLSearchParams(window.location.search).get('preview') === '1';
-  const NICKNAME = (
-    PREVIEW_MODE ? 'preview-worker' : (localStorage.getItem('nickname') || '')
-  ).trim();
+  let NICKNAME = PREVIEW_MODE ? 'preview-worker' : '';
+  let resetGeneration = 0;
   const THEORY = window.DAY1_THEORY && typeof window.DAY1_THEORY === 'object'
     ? window.DAY1_THEORY
     : { id: 'day1-theory', version: 1, modules: [] };
@@ -31,6 +30,7 @@
     progress: document.getElementById('courseProgress'),
     progressBar: document.getElementById('courseProgressBar'),
     theoryStageButton: document.getElementById('theoryStageButton'),
+    theoryStageMeta: document.querySelector('#theoryStageButton small'),
     practiceStageButton: document.getElementById('practiceStageButton'),
     courseSidebar: document.getElementById('courseSidebar'),
     briefingTitle: document.getElementById('briefingTitle'),
@@ -50,10 +50,13 @@
   let toastTimer = null;
   let activeStage = 'theory';
   let activeTheoryIndex = 0;
-  let theoryState = readTheoryState();
+  let activeTaskIndex = 0;
+  let theoryState = { completed: [] };
   const views = new Map();
   const navViews = new Map();
   const resultOverrides = new Map();
+  const touchedTasks = new Set();
+  const submissionErrors = new Map();
 
   function emptyState() {
     return {
@@ -61,7 +64,9 @@
       completedTasks: 0,
       totalTasks: EXPECTED_TASKS,
       averageScore: null,
-      passed: false
+      passed: false,
+      theory: null,
+      resetGeneration: 0
     };
   }
 
@@ -72,6 +77,8 @@
       'theory',
       encodeURIComponent(String(THEORY.id || 'day1-theory')),
       encodeURIComponent(String(THEORY.version || 1)),
+      'generation',
+      encodeURIComponent(String(resetGeneration || 0)),
       encodeURIComponent(NICKNAME)
     ].join(':');
   }
@@ -102,6 +109,70 @@
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  function normalizeTheoryProgress(value) {
+    const raw = value && typeof value === 'object' ? value : {};
+    const source = Array.isArray(raw.completed)
+      ? raw.completed
+      : (Array.isArray(raw.completedModules)
+        ? raw.completedModules
+        : (Array.isArray(raw.moduleIds) ? raw.moduleIds : []));
+    const validIds = new Set(THEORY_MODULES.map(function (module) {
+      return String(module.id || '');
+    }));
+    return {
+      completed: source.map(String).filter(function (id, index, all) {
+        return validIds.has(id) && all.indexOf(id) === index;
+      })
+    };
+  }
+
+  function stateHasTheory(value) {
+    return Boolean(value && typeof value === 'object' &&
+      Object.prototype.hasOwnProperty.call(value, 'theory') && value.theory);
+  }
+
+  function cleanupStaleLocalGenerations(nextGeneration) {
+    if (!NICKNAME) return;
+    const encodedNickname = encodeURIComponent(NICKNAME);
+    const generationMarker = ':generation:' + String(nextGeneration) + ':';
+    const prefix = 'training:' + PROGRAM_SLUG + ':';
+    try {
+      const staleKeys = [];
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (!key || !key.startsWith(prefix)) continue;
+        const belongsToWorker = key.endsWith(':' + encodedNickname) ||
+          key.includes(':draft:' + encodedNickname + ':task:');
+        if (!belongsToWorker) continue;
+        if (!key.includes(generationMarker)) staleKeys.push(key);
+      }
+      staleKeys.forEach(function (key) { localStorage.removeItem(key); });
+    } catch (_) {}
+  }
+
+  function applyServerState(value) {
+    const raw = value && typeof value === 'object' ? value : {};
+    const nextGeneration = finiteNumber(
+      raw.resetGeneration !== undefined ? raw.resetGeneration : raw.reset_generation
+    );
+    if (nextGeneration !== null) {
+      const normalizedGeneration = Math.max(0, Math.floor(nextGeneration));
+      if (normalizedGeneration !== resetGeneration) {
+        cleanupStaleLocalGenerations(normalizedGeneration);
+      }
+      resetGeneration = normalizedGeneration;
+    }
+    state = normalizeState(raw);
+    state.resetGeneration = resetGeneration;
+
+    if (stateHasTheory(raw)) {
+      theoryState = normalizeTheoryProgress(raw.theory);
+      writeTheoryState();
+    } else {
+      theoryState = readTheoryState();
     }
   }
 
@@ -143,6 +214,11 @@
     const score = finiteNumber(value);
     if (score === null) return '—';
     return Number.isInteger(score) ? String(score) : score.toFixed(1);
+  }
+
+  function theoryMinutesLabel() {
+    const value = String(THEORY.estimatedMinutes || '10–15').trim();
+    return value ? value.replace(/\s*мин(?:ут[ыа]?)?\.?$/i, '') + ' мин' : '10–15 мин';
   }
 
   function normalizeAnswer(value) {
@@ -256,7 +332,8 @@
       incoherent: 'ответ нельзя использовать как связное сообщение',
       task_hard_fail: 'нарушено критическое правило задания',
       prompt_injection: 'попытка повлиять на проверяющего',
-      hostile: 'оскорбление или угроза клиенту'
+      hostile: 'оскорбление или угроза клиенту',
+      critical_gate: 'не выполнено обязательное требование задания'
     };
     return labels[reason] || String(reason || 'ограничение');
   }
@@ -288,6 +365,8 @@
       encodeURIComponent(String(programVersion)),
       'rubric',
       encodeURIComponent(String(rubricVersion)),
+      'generation',
+      encodeURIComponent(String(resetGeneration || 0)),
       'draft',
       encodeURIComponent(NICKNAME),
       'task',
@@ -344,7 +423,7 @@
   async function api(path, options) {
     const config = Object.assign({}, options || {});
     const headers = new Headers(config.headers || {});
-    headers.set('X-Nickname', NICKNAME);
+    if (PREVIEW_MODE) headers.set('X-Nickname', NICKNAME || 'preview-worker');
     headers.set('Accept', 'application/json');
     if (config.body && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json');
@@ -352,7 +431,8 @@
 
     const response = await fetch(path, Object.assign({}, config, {
       headers: headers,
-      cache: 'no-store'
+      cache: 'no-store',
+      credentials: 'same-origin'
     }));
 
     let data = {};
@@ -369,6 +449,56 @@
       throw error;
     }
     return data;
+  }
+
+  async function persistTheoryAnswer(module, selectedIndex) {
+    const moduleId = String(module && module.id || '');
+    if (!moduleId) return true;
+
+    try {
+      const response = await api(API_ROOT + '/theory', {
+        method: 'POST',
+        body: JSON.stringify({
+          moduleId: moduleId,
+          selectedIndex: selectedIndex,
+          theoryId: String(THEORY.id || 'day1-theory'),
+          theoryVersion: finiteNumber(THEORY.version) || 1
+        })
+      });
+
+      if (response.correct === false) {
+        if (response.state) applyServerState(response.state);
+        const error = new Error('Сервер не принял ответ на мини-проверку.');
+        error.status = 409;
+        error.data = { error: 'incorrect_theory_answer' };
+        throw error;
+      }
+
+      if (response.state && response.state.tasks) {
+        applyServerState(response.state);
+      } else if (response.state && response.state.theory) {
+        theoryState = normalizeTheoryProgress(response.state.theory);
+        const generation = finiteNumber(response.state.resetGeneration);
+        if (generation !== null) resetGeneration = Math.max(0, Math.floor(generation));
+        writeTheoryState();
+      } else if (response.theory) {
+        theoryState = normalizeTheoryProgress(response.theory);
+        writeTheoryState();
+      }
+      return true;
+    } catch (error) {
+      const code = error && error.data && error.data.error;
+      if (code === 'theory_module_locked' || code === 'theory_version_mismatch') {
+        try { await refreshServerState(); } catch (_) {}
+      }
+      throw error;
+    }
+  }
+
+  async function refreshServerState() {
+    const response = await api(API_ROOT + '/state');
+    if (response && response.state) applyServerState(response.state);
+    return response && response.state;
   }
 
   function validationErrors(task, answer) {
@@ -537,7 +667,10 @@
       dom.averageLabel.textContent = 'Мини-проверки';
       dom.average.textContent = completedTheory + ' / ' + totalTheory;
       dom.targetLabel.textContent = 'Время';
-      dom.target.textContent = '10–15 мин';
+      dom.target.textContent = theoryMinutesLabel();
+      if (dom.theoryStageMeta) {
+        dom.theoryStageMeta.textContent = totalTheory + ' тем · ' + theoryMinutesLabel();
+      }
       dom.progress.setAttribute('aria-valuemax', String(totalTheory));
       dom.progress.setAttribute('aria-valuenow', String(completedTheory));
       dom.progressBar.style.width = percentageTheory + '%';
@@ -623,7 +756,7 @@
       ]);
       dom.navHeading.textContent = 'Короткая база';
       dom.navProgress.textContent = completedTheoryCount() + ' / ' + THEORY_MODULES.length;
-      dom.saveNote.textContent = 'Прогресс теории сохраняется на этом устройстве. К пройденным темам можно вернуться.';
+      dom.saveNote.textContent = 'Прогресс теории сохраняется в рабочем аккаунте. К пройденным темам можно вернуться.';
       renderTheoryNavigation();
       return;
     }
@@ -636,7 +769,7 @@
       'Переводчиком пользоваться можно.',
       'Готовые пасты и ИИ использовать нельзя.',
       'На каждое задание есть 2 попытки.',
-      'Для зачёта: все 8 ответов, средний балл 85 и минимум 60 за каждое задание.'
+      'Для зачёта нужны все 8 ответов, средний балл 85, минимум 60 и обязательные критерии каждого задания.'
     ]);
     dom.navHeading.textContent = 'Задания';
     dom.saveNote.textContent =
@@ -645,6 +778,8 @@
     tasks.forEach(function (task, index) {
       const button = createElement('button', 'task-nav__item');
       button.type = 'button';
+      button.dataset.active = index === activeTaskIndex ? 'true' : 'false';
+      button.setAttribute('aria-current', index === activeTaskIndex ? 'step' : 'false');
       button.setAttribute('aria-label', 'Перейти к заданию ' + (index + 1) + ': ' + task.title);
 
       const number = createElement('span', 'task-nav__number', index + 1);
@@ -654,12 +789,18 @@
 
       button.append(number, title, status);
       button.addEventListener('click', function () {
-        const card = document.getElementById('task-' + task.id);
-        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        selectTask(index, true);
       });
 
       dom.navList.appendChild(button);
       navViews.set(task.id, button);
+      const saved = taskState(task.id);
+      if (isGraded(saved.best) || isGraded(saved.latest) || resultOverrides.has(task.id)) {
+        button.dataset.status = 'checked';
+      } else {
+        const draft = readDraft(task.id);
+        button.dataset.status = draft && normalizeAnswer(draft.answer) ? 'draft' : 'empty';
+      }
     });
   }
 
@@ -755,11 +896,33 @@
 
   function renderTheoryIntro() {
     const intro = createElement('section', 'theory-intro');
-    intro.appendChild(createElement(
+    const main = createElement('div', 'theory-intro__main');
+    main.appendChild(createElement(
       'p',
       '',
       'Заранее знать модель не нужно: в каждой ситуации отдельно даны её факты, текущая сцена и доступный оффер. Реальные пасты ниже показывают манеру письма, но факты из одного примера нельзя переносить в другой.'
     ));
+
+    const glossary = Array.isArray(THEORY.glossary) ? THEORY.glossary : [];
+    if (glossary.length) {
+      const details = createElement('details', 'theory-glossary');
+      details.appendChild(createElement(
+        'summary',
+        '',
+        'Рабочие термины · ' + glossary.length
+      ));
+      const list = createElement('dl', 'theory-glossary__list');
+      glossary.forEach(function (item) {
+        if (!item || !item.term || !item.definition) return;
+        list.append(
+          createElement('dt', '', item.term),
+          createElement('dd', '', item.definition)
+        );
+      });
+      details.appendChild(list);
+      main.appendChild(details);
+    }
+    intro.appendChild(main);
 
     const cycle = createElement('div', 'theory-intro__cycle');
     ['Контекст', 'Реакция', 'Следующий ход'].forEach(function (label, index) {
@@ -815,10 +978,25 @@
       if (!example || !example.text) return;
       const box = createElement('section', 'theory-example');
       box.dataset.tone = example.tone || 'neutral';
-      box.append(
-        createElement('div', 'theory-example__label', example.label || 'Пример'),
-        createElement('blockquote', '', example.text)
-      );
+      const labelRow = createElement('div', 'theory-example__heading');
+      labelRow.appendChild(createElement(
+        'div',
+        'theory-example__label',
+        example.label || 'Пример'
+      ));
+      const sourceLabels = {
+        real: 'Реальная паста',
+        adapted: 'Адаптировано из пасты',
+        training: 'Учебный пример'
+      };
+      if (sourceLabels[example.sourceType]) {
+        labelRow.appendChild(createElement(
+          'span',
+          'theory-example__source',
+          sourceLabels[example.sourceType]
+        ));
+      }
+      box.append(labelRow, createElement('blockquote', '', example.text));
       copy.appendChild(box);
     });
 
@@ -885,7 +1063,7 @@
         button.disabled = true;
         if (optionIndex === correctIndex) button.dataset.state = 'correct';
       } else {
-        button.addEventListener('click', function () {
+        button.addEventListener('click', async function () {
           options.querySelectorAll('.theory-option').forEach(function (item) {
             item.dataset.state = '';
           });
@@ -905,9 +1083,24 @@
             theoryState.completed.push(moduleId);
             writeTheoryState();
           }
-          renderTheory();
-          renderNavigation();
-          renderSummary();
+          button.disabled = true;
+          feedback.textContent = 'Сохраняю прогресс…';
+          try {
+            await persistTheoryAnswer(module, optionIndex);
+            renderTheory();
+            renderNavigation();
+            renderSummary();
+          } catch (error) {
+            theoryState.completed = theoryState.completed.filter(function (id) {
+              return id !== moduleId;
+            });
+            writeTheoryState();
+            activeTheoryIndex = firstIncompleteTheoryIndex();
+            renderTheory();
+            renderNavigation();
+            renderSummary();
+            showToast(friendlyError(error), 'error');
+          }
         });
       }
       options.appendChild(button);
@@ -980,13 +1173,86 @@
     if (shouldScroll !== false) scrollToStageContent();
   }
 
+  function selectTask(index, shouldScroll) {
+    if (!tasks.length) return;
+    activeTaskIndex = Math.max(0, Math.min(Number(index) || 0, tasks.length - 1));
+    renderNavigation();
+    renderTasks();
+    renderSummary();
+    if (shouldScroll !== false) scrollToStageContent();
+  }
+
+  function firstUnfinishedTaskIndex() {
+    const index = tasks.findIndex(function (task) {
+      const saved = taskState(task.id);
+      return !isGraded(saved.best) && !isGraded(saved.latest);
+    });
+    return index === -1 ? 0 : index;
+  }
+
+  function renderProgramInstructions() {
+    const raw = program && program.instructions;
+    const lines = Array.isArray(raw)
+      ? raw.map(String).filter(Boolean)
+      : (typeof raw === 'string' && raw.trim() ? [raw.trim()] : []);
+    if (!lines.length) return null;
+
+    const details = createElement('details', 'practice-instructions');
+    const summary = createElement('summary', '', 'Как читать условия практики');
+    const body = createElement('div', 'practice-instructions__body');
+    lines.forEach(function (line) {
+      body.appendChild(createElement('p', '', line));
+    });
+    details.append(summary, body);
+    return details;
+  }
+
+  function renderPracticeNavigation() {
+    const nav = createElement('nav', 'practice-pagination');
+    nav.setAttribute('aria-label', 'Переход между письменными заданиями');
+
+    const position = createElement(
+      'span',
+      'practice-pagination__position',
+      'Задание ' + (activeTaskIndex + 1) + ' из ' + tasks.length
+    );
+    const controls = createElement('div', 'practice-pagination__controls');
+    const previous = createElement('button', 'practice-pagination__button', '← Предыдущее');
+    previous.type = 'button';
+    previous.disabled = activeTaskIndex === 0;
+    previous.addEventListener('click', function () {
+      selectTask(activeTaskIndex - 1, true);
+    });
+
+    const next = createElement(
+      'button',
+      'practice-pagination__button practice-pagination__button--primary',
+      activeTaskIndex === tasks.length - 1 ? 'К первому заданию' : 'Следующее →'
+    );
+    next.type = 'button';
+    next.addEventListener('click', function () {
+      selectTask(activeTaskIndex === tasks.length - 1 ? 0 : activeTaskIndex + 1, true);
+    });
+    controls.append(previous, next);
+    nav.append(position, controls);
+    return nav;
+  }
+
   function renderTasks() {
     const list = createElement('div', 'task-list');
     views.clear();
 
-    tasks.forEach(function (task, index) {
-      list.appendChild(renderTaskCard(task, index));
-    });
+    if (!tasks.length) {
+      list.appendChild(createElement('div', 'error-panel', 'Письменные задания не загрузились.'));
+      dom.content.replaceChildren(list);
+      return;
+    }
+
+    activeTaskIndex = Math.max(0, Math.min(activeTaskIndex, tasks.length - 1));
+    const instructions = renderProgramInstructions();
+    if (instructions) list.appendChild(instructions);
+    list.appendChild(renderTaskCard(tasks[activeTaskIndex], activeTaskIndex));
+    list.appendChild(renderPracticeNavigation());
 
     dom.content.replaceChildren(list);
     refreshAllViews();
@@ -1059,15 +1325,25 @@
       gradeButton: gradeButton,
       buttonNote: buttonNote,
       reviewPanel: reviewPanel,
-      busy: false
+      busy: false,
+      touched: touchedTasks.has(task.id)
     };
     views.set(task.id, view);
 
     textarea.addEventListener('input', function () {
+      touchedTasks.add(task.id);
+      view.touched = true;
       const saved = writeDraft(task.id, textarea.value);
       draftState.textContent = saved ? 'Черновик сохранён' : 'Не удалось сохранить локально';
       draftState.dataset.saved = saved ? 'true' : 'false';
       resultOverrides.delete(task.id);
+      submissionErrors.delete(task.id);
+      refreshTaskView(task.id);
+    });
+
+    textarea.addEventListener('blur', function () {
+      touchedTasks.add(task.id);
+      view.touched = true;
       refreshTaskView(task.id);
     });
 
@@ -1103,8 +1379,14 @@
       ? words + ' слов'
       : words + ' / ' + maxWords + ' слов';
     view.wordCounter.dataset.over = maxWords !== null && words > maxWords ? 'true' : 'false';
-    view.validation.textContent = errors[0] || '';
-    view.textarea.setAttribute('aria-invalid', errors.length ? 'true' : 'false');
+    const submissionError = submissionErrors.get(taskId) || '';
+    const visibleValidation = view.touched ? (errors[0] || '') : '';
+    view.validation.textContent = submissionError || visibleValidation;
+    view.validation.dataset.kind = submissionError ? 'connection' : (visibleValidation ? 'validation' : '');
+    view.textarea.setAttribute(
+      'aria-invalid',
+      visibleValidation && !submissionError ? 'true' : 'false'
+    );
 
     if (!view.draftState.textContent) {
       const local = readDraft(taskId);
@@ -1114,7 +1396,7 @@
       }
     }
 
-    view.gradeButton.disabled = view.busy || errors.length > 0 || exhausted || known;
+    view.gradeButton.disabled = view.busy || exhausted || known;
     view.gradeButton.replaceChildren();
 
     if (view.busy) {
@@ -1154,6 +1436,134 @@
     }
   }
 
+  function sameResultRecord(first, second) {
+    if (!first || !second) return false;
+    if (first === second) return true;
+    if (first.id !== undefined && second.id !== undefined) {
+      return String(first.id) === String(second.id);
+    }
+    if (first.answerHash && second.answerHash) {
+      return first.answerHash === second.answerHash && recordScore(first) === recordScore(second);
+    }
+    return normalizeAnswer(recordAnswer(first)) === normalizeAnswer(recordAnswer(second)) &&
+      recordScore(first) === recordScore(second) && recordTime(first) === recordTime(second);
+  }
+
+  function appendCriteriaReview(container, record) {
+    const criteria = criteriaRows(record);
+    const feedback = recordFeedback(record);
+    if (!criteria.length) {
+      if (!feedback) container.appendChild(createElement(
+        'div',
+        'feedback-box',
+        'Вердикт сохранён. Детализация критериев для этой попытки не передана.'
+      ));
+      return;
+    }
+
+    const list = createElement('div', 'criteria-list');
+    criteria.forEach(function (criterion) {
+      const item = createElement('div', 'criterion');
+      const top = createElement('div', 'criterion__top');
+      top.appendChild(createElement('span', 'criterion__label', criterion.label));
+
+      const criterionScore = finiteNumber(criterion.score);
+      const criterionMax = finiteNumber(criterion.max);
+      let scoreText = '';
+      if (criterionScore !== null) {
+        scoreText = formatScore(criterionScore);
+        if (criterionMax !== null) scoreText += ' / ' + formatScore(criterionMax);
+      }
+      if (scoreText) top.appendChild(createElement('span', 'criterion__score', scoreText));
+      item.appendChild(top);
+      if (criterion.reason) item.appendChild(createElement('p', 'criterion__reason', criterion.reason));
+      if (criterion.evidence) {
+        item.appendChild(createElement(
+          'p',
+          'criterion__evidence',
+          'Фрагмент ответа: “' + criterion.evidence + '”'
+        ));
+      }
+      list.appendChild(item);
+    });
+    container.appendChild(list);
+  }
+
+  function renderReviewRecord(record, label) {
+    const section = createElement('section', 'review-record');
+    const summary = createElement('div', 'review-summary');
+    const scoreBlock = createElement('div', 'score-block');
+    const score = recordScore(record);
+    const passed = recordPass(record);
+    const minimum = finiteNumber(program && program.minimumTaskScore) || 60;
+    const verdict = recordVerdict(record);
+    const failedCritical = Array.isArray(verdict.critical)
+      ? verdict.critical.filter(function (item) { return item && item.ok === false; })
+      : [];
+    const criticalFailed = verdict.criticalOk === false || failedCritical.length > 0;
+    const capReason = String(verdict.scoreCapReasonRu || '').trim();
+
+    const scoreValue = createElement('span', 'score-value', formatScore(score));
+    scoreValue.dataset.passed = passed === true ? 'true' : 'false';
+    scoreBlock.append(
+      scoreValue,
+      createElement('span', 'score-suffix', '/ 100 · ' + label.toLowerCase())
+    );
+    summary.appendChild(scoreBlock);
+
+    const cached = record.cached === true || record.fromCache === true ||
+      record.cacheHit === true || record.reused === true;
+    summary.appendChild(createElement(
+      'span',
+      'result-origin',
+      cached ? 'Из сохранённых' : 'Сохранено'
+    ));
+    section.appendChild(summary);
+
+    const gate = createElement('div', 'gate-status');
+    if (passed === true) {
+      gate.dataset.state = 'passed';
+      gate.textContent = 'Зачёт: балл и обязательные требования выполнены.';
+    } else if (criticalFailed) {
+      gate.dataset.state = 'failed';
+      gate.textContent = capReason || (score !== null && score >= minimum
+        ? 'Не зачёт: балл выше минимума, но провалено обязательное требование.'
+        : 'Не зачёт: провалено обязательное требование задания.');
+    } else {
+      gate.dataset.state = 'failed';
+      gate.textContent = 'Не зачёт. 60 баллов — только числовой минимум; обязательные требования тоже должны быть выполнены.';
+    }
+    section.appendChild(gate);
+
+    const feedback = recordFeedback(record);
+    if (feedback) section.appendChild(createElement('div', 'feedback-box', feedback));
+
+    const caps = Array.isArray(verdict.caps) ? verdict.caps : [];
+    if (caps.length || criticalFailed) {
+      const reasons = [];
+      if (capReason) {
+        reasons.push(capReason);
+      } else if (caps.length) {
+        reasons.push('Оценка ограничена: ' + caps.map(function (item) {
+          return String(item.reason_ru || '').trim() || capLabel(item.reason);
+        }).join(', ') + '.');
+      }
+      if (criticalFailed) {
+        reasons.push('Посмотрите критерии ниже: хотя бы один обязательный пункт не выполнен.');
+      }
+      if (verdict.integrity && verdict.integrity.reason_ru) {
+        reasons.push(verdict.integrity.reason_ru);
+      }
+      if (verdict.language && verdict.language.is_english === false && verdict.language.reason_ru) {
+        reasons.push(verdict.language.reason_ru);
+      }
+      section.appendChild(createElement('div', 'decision-box', reasons.join(' ')));
+    }
+
+    appendCriteriaReview(section, record);
+    return section;
+  }
+
   function renderReview(taskId) {
     const view = views.get(taskId);
     if (!view) return;
@@ -1165,128 +1575,23 @@
     const primary = best || latest;
     const panel = view.reviewPanel;
     panel.replaceChildren();
-
     panel.appendChild(createElement('span', 'review-heading', 'Сохранённый разбор'));
 
     if (!primary || !isGraded(primary)) {
       const empty = createElement('div', 'review-empty');
       empty.append(
         createElement('strong', '', 'Результата пока нет'),
-        createElement(
-          'p',
-          '',
-          'После явной отправки здесь появятся балл, критерии и причины оценки.'
-        )
+        createElement('p', '', 'После отправки здесь появятся балл, критерии и причины оценки.')
       );
       panel.appendChild(empty);
       return;
     }
 
-    const summary = createElement('div', 'review-summary');
-    const scoreBlock = createElement('div', 'score-block');
-    const score = recordScore(primary);
-    const passed = recordPass(primary);
-    const scoreValue = createElement('span', 'score-value', formatScore(score));
-    scoreValue.dataset.passed = passed === null
-      ? (score !== null && score >= (finiteNumber(program && program.minimumTaskScore) || 60) ? 'true' : 'false')
-      : (passed ? 'true' : 'false');
-    scoreBlock.append(scoreValue, createElement('span', 'score-suffix', '/ 100 · лучший'));
-    summary.appendChild(scoreBlock);
-
-    const cached = primary.cached === true || primary.fromCache === true ||
-      primary.cacheHit === true || primary.reused === true ||
-      (override && (override.cached === true || override.fromCache === true ||
-        override.cacheHit === true || override.reused === true));
-    summary.appendChild(createElement(
-      'span',
-      'result-origin',
-      cached ? 'Из сохранённых' : 'Сохранено'
-    ));
-    panel.appendChild(summary);
-
-    const latestScore = recordScore(latest);
-    if (latest && best && latest !== best && latestScore !== null && latestScore !== score) {
-      panel.appendChild(createElement(
-        'p',
-        'latest-score',
-        'Последняя попытка: ' + formatScore(latestScore) + ' / 100'
-      ));
-    }
-
-    const feedback = recordFeedback(primary);
-    if (feedback) panel.appendChild(createElement('div', 'feedback-box', feedback));
-
-    const verdict = recordVerdict(primary);
-    const caps = Array.isArray(verdict.caps) ? verdict.caps : [];
-    const failedCritical = Array.isArray(verdict.critical)
-      ? verdict.critical.filter(function (item) { return item && item.ok === false; })
-      : [];
-    if (caps.length || failedCritical.length) {
-      const reasons = [];
-      if (caps.length) {
-        reasons.push('Ограничение: ' + caps.map(function (item) {
-          return capLabel(item.reason);
-        }).join(', ') + '.');
-      }
-      if (failedCritical.length) {
-        reasons.push('Критический критерий ниже минимума: ' +
-          failedCritical.map(function (item) { return item.id; }).join(', ') + '.');
-      }
-      if (verdict.integrity && verdict.integrity.reason_ru) {
-        reasons.push(verdict.integrity.reason_ru);
-      }
-      if (verdict.integrity && verdict.integrity.hard_fail_evidence) {
-        reasons.push('Фрагмент нарушения: “' + verdict.integrity.hard_fail_evidence + '”.');
-      }
-      if (verdict.integrity && verdict.integrity.prompt_injection_evidence) {
-        reasons.push('Фрагмент попытки повлиять на проверку: “' +
-          verdict.integrity.prompt_injection_evidence + '”.');
-      }
-      if (verdict.integrity && verdict.integrity.hostile_evidence) {
-        reasons.push('Фрагмент с давлением или оскорблением: “' +
-          verdict.integrity.hostile_evidence + '”.');
-      }
-      if (verdict.language && verdict.language.is_english === false && verdict.language.reason_ru) {
-        reasons.push(verdict.language.reason_ru);
-      }
-      if (verdict.language && verdict.language.non_english_evidence) {
-        reasons.push('Неанглийский фрагмент: “' + verdict.language.non_english_evidence + '”.');
-      }
-      panel.appendChild(createElement('div', 'decision-box', reasons.join(' ')));
-    }
-
-    const criteria = criteriaRows(primary);
-    if (criteria.length) {
-      const list = createElement('div', 'criteria-list');
-      criteria.forEach(function (criterion) {
-        const item = createElement('div', 'criterion');
-        const top = createElement('div', 'criterion__top');
-        top.appendChild(createElement('span', 'criterion__label', criterion.label));
-
-        const criterionScore = finiteNumber(criterion.score);
-        const criterionMax = finiteNumber(criterion.max);
-        let scoreText = '';
-        if (criterionScore !== null) {
-          scoreText = formatScore(criterionScore);
-          if (criterionMax !== null) scoreText += ' / ' + formatScore(criterionMax);
-        }
-        if (scoreText) top.appendChild(createElement('span', 'criterion__score', scoreText));
-        item.appendChild(top);
-        if (criterion.reason) {
-          item.appendChild(createElement('p', 'criterion__reason', criterion.reason));
-        }
-        if (criterion.evidence) {
-          item.appendChild(createElement('p', 'criterion__evidence', 'Фрагмент: “' + criterion.evidence + '”'));
-        }
-        list.appendChild(item);
-      });
-      panel.appendChild(list);
-    } else if (!feedback) {
-      panel.appendChild(createElement(
-        'div',
-        'feedback-box',
-        'Вердикт сохранён. Детализация критериев для этой попытки не передана.'
-      ));
+    if (best && latest && !sameResultRecord(best, latest)) {
+      panel.appendChild(renderReviewRecord(latest, 'Последняя попытка'));
+      panel.appendChild(renderReviewRecord(best, 'Лучший результат'));
+    } else {
+      panel.appendChild(renderReviewRecord(primary, 'Лучший результат'));
     }
   }
 
@@ -1325,8 +1630,13 @@
     const answer = normalizeAnswer(view.textarea.value);
     const errors = validationErrors(view.task, answer);
     const attempts = attemptCount(taskState(taskId));
+    touchedTasks.add(taskId);
+    view.touched = true;
+    submissionErrors.delete(taskId);
     if (errors.length) {
       view.validation.textContent = errors[0];
+      view.validation.dataset.kind = 'validation';
+      view.textarea.setAttribute('aria-invalid', 'true');
       view.textarea.focus();
       return;
     }
@@ -1348,7 +1658,7 @@
       );
 
       if (response.state) {
-        state = normalizeState(response.state);
+        applyServerState(response.state);
       } else {
         mergeFallbackResult(taskId, response.result, answer);
       }
@@ -1357,6 +1667,7 @@
         answer: recordAnswer(response.result) || answer
       });
       resultOverrides.set(taskId, result);
+      submissionErrors.delete(taskId);
       writeDraft(taskId, answer);
       refreshAllViews();
 
@@ -1369,7 +1680,18 @@
       );
     } catch (error) {
       const message = friendlyError(error);
-      view.validation.textContent = message;
+      const code = error && error.data && error.data.error;
+      if (code === 'theory_required') {
+        try { await refreshServerState(); } catch (_) {}
+        submissionErrors.delete(taskId);
+        activeStage = 'theory';
+        activeTheoryIndex = firstIncompleteTheoryIndex();
+        renderNavigation();
+        renderTheory();
+        renderSummary();
+      } else {
+        submissionErrors.set(taskId, message);
+      }
       showToast(message, 'error');
     } finally {
       view.busy = false;
@@ -1381,6 +1703,8 @@
     if (!error) return 'Не удалось проверить ответ. Попробуйте ещё раз.';
     const code = error.data && error.data.error;
     if (code === 'grader_unavailable') return 'Grok сейчас недоступен. Ответ не потрачен — попробуйте ещё раз чуть позже.';
+    if (code === 'grader_busy') return 'Сейчас слишком много проверок Grok. Попытка не потрачена — попробуйте ещё раз чуть позже.';
+    if (code === 'rate_limited') return 'Слишком много проверок подряд. Подождите несколько минут; попытка не потрачена.';
     if (code === 'word_limit_exceeded') return 'Ответ превышает лимит слов для этого задания.';
     if (code === 'message_count_mismatch') return 'Проверьте количество сообщений и разделите их переносами строк.';
     if (code === 'empty_answer' || code === 'answer_too_short') return 'Ответ слишком короткий для проверки.';
@@ -1388,11 +1712,24 @@
     if (code === 'max_attempts_reached') return 'Две попытки использованы. Обратитесь к наставнику.';
     if (code === 'grading_in_progress') return 'Этот ответ уже проверяется в другой вкладке. Подождите результат.';
     if (code === 'grading_error') return 'Grok не смог корректно разобрать ответ. Попытка не потрачена — отправьте ещё раз.';
+    if (code === 'attempt_reservation_lost') return 'Состояние теста изменилось во время проверки. Попытка не потрачена — обновите страницу.';
+    if (code === 'theory_required') return 'Прогресс Day 1 был сброшен. Сначала снова закончите короткую базу.';
+    if (code === 'theory_module_locked') return 'Прогресс теории изменился. Открыта первая непройденная тема.';
+    if (code === 'theory_version_mismatch') return 'Теория обновилась. Обновите страницу и пройдите актуальную версию.';
+    if (code === 'incorrect_theory_answer') return 'Этот вариант не принят. Посмотрите правило и попробуйте ещё раз.';
+    if (code === 'invalid_selected_index') return 'Не удалось сохранить вариант ответа. Обновите страницу.';
     if (error.status === 401) return 'Сессия не найдена. Снова войдите через панель.';
     if (error.status === 403) return 'Для этого аккаунта Day 1 недоступен.';
-    if (error.status === 409) return 'Две попытки использованы. Обратитесь к наставнику.';
-    if (error.status === 429) return 'Grok временно перегружен. Подождите и попробуйте ещё раз.';
-    return error.message || 'Не удалось проверить ответ. Попробуйте ещё раз.';
+    if (error.status === 409) return 'Состояние теста изменилось. Обновите страницу и попробуйте ещё раз.';
+    if (error.status === 429) return 'Слишком много проверок подряд. Подождите несколько минут и попробуйте ещё раз.';
+    if (
+      !error.status ||
+      error instanceof TypeError ||
+      /failed to fetch|network|load failed/i.test(String(error.message || ''))
+    ) {
+      return 'Соединение потеряно. Черновик сохранён, ошибка не расходует попытку. Проверьте интернет и отправьте ещё раз.';
+    }
+    return 'Не удалось проверить ответ. Черновик сохранён, попробуйте ещё раз.';
   }
 
   function renderLogin() {
@@ -1433,16 +1770,30 @@
     dom.content.appendChild(panel);
   }
 
-  async function load() {
-    if (!NICKNAME) {
-      renderLogin();
+  async function bootstrapIdentity() {
+    if (PREVIEW_MODE) {
+      NICKNAME = 'preview-worker';
       return;
     }
 
+    const identity = await api('/api/auth/check');
+    NICKNAME = String(identity && identity.nickname || '').trim();
+    if (!NICKNAME) {
+      const error = new Error('Сессия не найдена.');
+      error.status = 401;
+      throw error;
+    }
+    try {
+      localStorage.setItem('nickname', NICKNAME);
+    } catch (_) {}
+  }
+
+  async function load() {
     dom.overall.textContent = 'Загрузка сохранённых результатов…';
     dom.overall.dataset.state = '';
 
     try {
+      await bootstrapIdentity();
       const responses = await Promise.all([
         api(API_ROOT),
         api(API_ROOT + '/state')
@@ -1459,13 +1810,17 @@
         throw new Error('Day 1 должен содержать ровно 8 письменных заданий.');
       }
 
-      state = normalizeState(responses[1].state);
-      theoryState = readTheoryState();
+      applyServerState(responses[1].state);
       activeTheoryIndex = firstIncompleteTheoryIndex();
+      activeTaskIndex = firstUnfinishedTaskIndex();
       activeStage = isTheoryComplete() ? 'practice' : 'theory';
       switchStage(activeStage, false);
     } catch (error) {
-      renderLoadError(error);
+      if (error && error.status === 401) {
+        renderLogin();
+      } else {
+        renderLoadError(error);
+      }
     }
   }
 
