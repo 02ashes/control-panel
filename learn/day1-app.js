@@ -16,6 +16,12 @@
     ? window.DAY1_THEORY
     : { id: 'day1-theory', version: 1, modules: [] };
   const THEORY_MODULES = Array.isArray(THEORY.modules) ? THEORY.modules : [];
+  const TEXT = window.DAY1_TEXT && typeof window.DAY1_TEXT === 'object'
+    ? window.DAY1_TEXT
+    : null;
+  if (!TEXT || typeof TEXT.normalizeAnswer !== 'function') {
+    throw new Error('Day 1 text normalizer did not load.');
+  }
 
   const dom = {
     title: document.getElementById('programTitle'),
@@ -222,20 +228,15 @@
   }
 
   function normalizeAnswer(value) {
-    return String(value || '').replace(/\r\n?/g, '\n').trim();
+    return TEXT.normalizeAnswer(value);
   }
 
   function wordCount(value) {
-    const trimmed = String(value || '').trim();
-    return trimmed ? trimmed.split(/\s+/).length : 0;
+    return TEXT.wordCount(value);
   }
 
   function messageCount(value) {
-    return String(value || '')
-      .replace(/\r\n?/g, '\n')
-      .split('\n')
-      .filter(function (line) { return line.trim(); })
-      .length;
+    return TEXT.messageCount(value);
   }
 
   function hasNonEnglishLetters(value) {
@@ -476,6 +477,9 @@
       );
       error.status = response.status;
       error.data = data;
+      const retryAfterHeader = Number(response.headers.get('Retry-After'));
+      error.retryAfterSeconds = finiteNumber(data.retryAfterSeconds) ||
+        (Number.isFinite(retryAfterHeader) ? retryAfterHeader : 0);
       throw error;
     }
     return data;
@@ -1324,8 +1328,9 @@
 
     const meta = createElement('div', 'answer-meta');
     const wordCounter = createElement('span', 'word-count');
+    const messageCounter = createElement('span', 'message-count');
     const draftState = createElement('span', 'draft-state');
-    meta.append(wordCounter, draftState);
+    meta.append(wordCounter, messageCounter, draftState);
 
     const validation = createElement('div', 'validation-message');
     validation.id = 'validation-' + task.id;
@@ -1350,6 +1355,7 @@
       attempts: attempts,
       textarea: textarea,
       wordCounter: wordCounter,
+      messageCounter: messageCounter,
       draftState: draftState,
       validation: validation,
       gradeButton: gradeButton,
@@ -1398,7 +1404,10 @@
     const saved = taskState(taskId);
     const attempts = attemptCount(saved);
     const maxWords = finiteNumber(view.task.maxWords);
+    const minMessages = finiteNumber(view.task.minMessages) || 1;
+    const maxMessages = finiteNumber(view.task.maxMessages) || minMessages;
     const words = wordCount(view.textarea.value);
+    const messages = messageCount(view.textarea.value);
     const errors = validationErrors(view.task, view.textarea.value);
     const known = sameAsKnownResult(taskId, view.textarea.value);
     const exhausted = attempts >= MAX_ATTEMPTS && !known;
@@ -1409,6 +1418,18 @@
       ? words + ' слов'
       : words + ' / ' + maxWords + ' слов';
     view.wordCounter.dataset.over = maxWords !== null && words > maxWords ? 'true' : 'false';
+    if (minMessages > 1 || maxMessages > 1) {
+      const expected = minMessages === maxMessages
+        ? String(minMessages)
+        : minMessages + '–' + maxMessages;
+      view.messageCounter.textContent = 'Сообщения: ' + messages + ' / ' + expected;
+      view.messageCounter.dataset.invalid = (
+        messages < minMessages || messages > maxMessages
+      ) ? 'true' : 'false';
+    } else {
+      view.messageCounter.textContent = '';
+      view.messageCounter.dataset.invalid = 'false';
+    }
     const submissionError = submissionErrors.get(taskId) || '';
     const visibleValidation = view.touched ? (errors[0] || '') : '';
     view.validation.textContent = submissionError || visibleValidation;
@@ -1732,9 +1753,14 @@
   function friendlyError(error) {
     if (!error) return 'Не удалось проверить ответ. Попробуйте ещё раз.';
     const code = error.data && error.data.error;
-    if (code === 'grader_unavailable') return 'Grok сейчас недоступен. Ответ не потрачен — попробуйте ещё раз чуть позже.';
+    if (code === 'grader_unavailable') return 'Grok сейчас недоступен. Попытка не потрачена — попробуйте ещё раз чуть позже.';
     if (code === 'grader_busy') return 'Сейчас слишком много проверок Grok. Попытка не потрачена — попробуйте ещё раз чуть позже.';
-    if (code === 'rate_limited') return 'Слишком много проверок подряд. Подождите несколько минут; попытка не потрачена.';
+    if (code === 'rate_limited') {
+      const wait = finiteNumber(error.retryAfterSeconds);
+      return wait && wait <= 120
+        ? 'Слишком много проверок подряд. Подождите ' + Math.ceil(wait) + ' сек.; попытка не потрачена.'
+        : 'Слишком много проверок подряд. Подождите несколько минут; попытка не потрачена.';
+    }
     if (code === 'word_limit_exceeded') return 'Ответ превышает лимит слов для этого задания.';
     if (code === 'message_count_mismatch') return 'Проверьте количество сообщений и разделите их переносами строк.';
     if (code === 'empty_answer' || code === 'answer_too_short') return 'Ответ слишком короткий для проверки.';
@@ -1742,6 +1768,7 @@
     if (code === 'max_attempts_reached') return 'Две попытки использованы. Обратитесь к наставнику.';
     if (code === 'grading_in_progress') return 'Этот ответ уже проверяется в другой вкладке. Подождите результат.';
     if (code === 'grading_error') return 'Grok не смог корректно разобрать ответ. Попытка не потрачена — отправьте ещё раз.';
+    if (code === 'internal_error') return 'Внутренняя ошибка сайта. Черновик сохранён, попытка не потрачена; попробуйте чуть позже.';
     if (code === 'attempt_reservation_lost') return 'Состояние теста изменилось во время проверки. Попытка не потрачена — обновите страницу.';
     if (code === 'theory_required') return 'Прогресс Day 1 был сброшен. Сначала снова закончите короткую базу.';
     if (code === 'theory_module_locked') return 'Прогресс теории изменился. Открыта первая непройденная тема.';
@@ -1752,6 +1779,7 @@
     if (error.status === 403) return 'Для этого аккаунта Day 1 недоступен.';
     if (error.status === 409) return 'Состояние теста изменилось. Обновите страницу и попробуйте ещё раз.';
     if (error.status === 429) return 'Слишком много проверок подряд. Подождите несколько минут и попробуйте ещё раз.';
+    if (error.status >= 500) return 'Временная ошибка сайта. Черновик сохранён, попытка не потрачена; попробуйте чуть позже.';
     if (
       !error.status ||
       error instanceof TypeError ||

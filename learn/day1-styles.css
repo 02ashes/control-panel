@@ -1088,6 +1088,11 @@ h1 {
   font-weight: 800;
 }
 
+.message-count[data-invalid="true"] {
+  color: var(--danger);
+  font-weight: 800;
+}
+
 .draft-state[data-saved="true"] {
   color: var(--success);
 }

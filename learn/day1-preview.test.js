@@ -74,6 +74,10 @@ test('local preview mirrors Day 1 theory, reset, and private-file contracts', as
   assert.equal(result.response.status, 302);
   assert.equal(result.response.headers.get('location'), '/learn/day1.html?preview=1');
 
+  result = await request(base, '/learn/day1-normalize.js');
+  assert.equal(result.response.status, 200);
+  assert.match(result.data, /function normalizeAnswer\(value\)/);
+
   for (const privatePath of [
     '/learn/evals/day1-eval-cases.js',
     '/learn/programs/day1-v1-rubrics.js',
@@ -165,4 +169,36 @@ test('Day 1 migrates the old production draft only before an admin reset', () =>
   assert.match(source, /value === null && resetGeneration === 0/);
   assert.match(source, /localStorage\.getItem\(legacyDraftKey\(taskId\)\)/);
   assert.match(source, /localStorage\.setItem\(currentKey, value\)/);
+});
+
+test('Day 1 loads shared normalization before the app and shows a multiline counter', () => {
+  const html = fs.readFileSync(path.join(__dirname, 'day1.html'), 'utf8');
+  const app = fs.readFileSync(path.join(__dirname, 'day1-app.js'), 'utf8');
+  assert.ok(html.indexOf('/learn/day1-normalize.js') < html.indexOf('/learn/day1-app.js'));
+  assert.match(app, /TEXT\.normalizeAnswer\(value\)/);
+  assert.match(app, /Сообщения:.*messages.*expected/);
+});
+
+test('production Day 1 rate-limits real Grok calls, not formatting errors or cached reuse', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.doesNotMatch(
+    source,
+    /requireDay1Role,\s*day1GradeRateLimit/,
+    'the route-level limiter would charge validation and cache hits'
+  );
+  assert.match(source, /if \(!gradingPromise\) \{[\s\S]{0,500}consumeMemoryRateLimit\(/);
+  assert.match(source, /answerHash:\s*row\.answer_hash/);
+  assert.match(source, /SELECT id, task_id, answer_text, answer_hash/);
+});
+
+test('production maps every upstream xAI failure to retryable grader downtime', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.match(source, /const upstreamXaiError = \/\^xai_\//);
+  assert.match(source, /const status = upstreamXaiError\s*\?\s*503/);
+  assert.match(source, /status === 503[\s\S]{0,300}'grader_unavailable'/);
+  assert.match(
+    source,
+    /err\.code === 'invalid_assessment'\s*\?\s*'grading_error'\s*:\s*'internal_error'/,
+    'only deterministic Grok assessment failures should use the parse-error toast'
+  );
 });

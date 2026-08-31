@@ -183,9 +183,7 @@ function validationError(task, answer) {
   if (task.maxWords && preflight.wordCount > task.maxWords) {
     return 'word_limit_exceeded';
   }
-  const messageCount = preflight.normalized
-    .split('\n')
-    .filter(line => line.trim()).length;
+  const messageCount = grading.messageCount(preflight.normalized);
   const minMessages = task.minMessages || 1;
   const maxMessages = task.maxMessages || minMessages;
   if (messageCount < minMessages || messageCount > maxMessages) {
@@ -333,10 +331,17 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', async (req, re
     });
   } catch (error) {
     console.error('Preview grading error:', error && error.message);
-    return res.status(503).json({
-      error: 'grader_unavailable',
-      message: 'Grok сейчас недоступен. Попытка не потрачена — повторите позже.',
-      retryable: true
+    const invalidAssessment = error && error.code === 'invalid_assessment';
+    const retryable = Boolean(error && error.retryable);
+    const status = invalidAssessment ? 500 : (retryable ? 503 : 500);
+    return res.status(status).json({
+      error: invalidAssessment
+        ? 'grading_error'
+        : (retryable ? 'grader_unavailable' : 'internal_error'),
+      message: retryable
+        ? 'Grok сейчас недоступен. Попытка не потрачена — повторите позже.'
+        : undefined,
+      retryable
     });
   }
 });

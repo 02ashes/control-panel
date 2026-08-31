@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const https = require('https');
 const DAY1 = require('./programs/day1-v1.js');
 const DAY1_RUBRICS = require('./programs/day1-v1-rubrics.js');
+const DAY1_TEXT = require('./day1-normalize.js');
 
 const MODEL = process.env.XAI_DAY1_MODEL || 'grok-4.5';
 const REASONING_EFFORT = process.env.XAI_DAY1_REASONING_EFFORT || 'high';
@@ -19,7 +20,7 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_RETRIES = 2;
 const REQUEST_TIMEOUT_MS = positiveInt(process.env.XAI_TIMEOUT_MS, 60000);
 const MAX_OUTPUT_TOKENS = positiveInt(process.env.XAI_MAX_OUTPUT_TOKENS, 4096);
-const GRADER_VERSION = 'day1-grader-v2.5';
+const GRADER_VERSION = 'day1-grader-v2.6';
 
 const ROOT_KEYS = ['language', 'integrity', 'criteria', 'feedback_ru'];
 const LANGUAGE_KEYS = ['is_english', 'confidence', 'non_english_evidence', 'reason_ru'];
@@ -313,18 +314,7 @@ function resolveTaskConfig(taskId) {
  * It preserves meaningful line breaks and case while removing invisible
  * characters and inconsequential whitespace differences.
  */
-function normalizeAnswer(answer) {
-  if (answer === null || answer === undefined) return '';
-  return String(answer)
-    .normalize('NFKC')
-    .replace(/\r\n?/g, '\n')
-    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
-    .split('\n')
-    .map(line => line.replace(/[^\S\n]+/g, ' ').trim())
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
+const normalizeAnswer = DAY1_TEXT.normalizeAnswer;
 
 function hashAnswer(answer) {
   return crypto.createHash('sha256').update(normalizeAnswer(answer), 'utf8').digest('hex');
@@ -608,23 +598,29 @@ function assertPlainObject(value, path) {
   if (!asObject(value)) throw assessmentError(`${path} must be an object`);
 }
 
-function assertExactKeys(value, expected, path) {
+function assertRequiredKeys(value, expected, path) {
   assertPlainObject(value, path);
-  const actual = Object.keys(value).sort();
-  const wanted = expected.slice().sort();
-  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
-    throw assessmentError(`${path} must contain exactly: ${wanted.join(', ')}`);
+  const missing = expected.filter(key => !hasOwn(value, key));
+  if (missing.length) {
+    throw assessmentError(`${path} is missing: ${missing.join(', ')}`);
   }
 }
 
 function assertBoolean(value, path) {
-  if (typeof value !== 'boolean') throw assessmentError(`${path} must be boolean`);
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw assessmentError(`${path} must be boolean`);
 }
 
 function assertInteger(value, min, max, path) {
-  if (!Number.isInteger(value) || value < min || value > max) {
+  const parsed = typeof value === 'string' && /^\d+$/.test(value.trim())
+    ? Number(value)
+    : value;
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
     throw assessmentError(`${path} must be an integer from ${min} to ${max}`);
   }
+  return parsed;
 }
 
 function assertString(value, min, max, path) {
@@ -645,6 +641,8 @@ function evidenceAppearsInAnswer(evidence, answer) {
       .replace(/[‘’]/g, "'")
       .replace(/[“”]/g, '"')
       .replace(/[–—]/g, '-')
+      .replace(/…/g, '...')
+      .replace(/\uFE0F/g, '')
       .replace(/\s+/g, ' ')
       .toLocaleLowerCase('en-US');
   }
@@ -653,166 +651,416 @@ function evidenceAppearsInAnswer(evidence, answer) {
   return Boolean(needle) && haystack.includes(needle);
 }
 
-function shortenGroundedEvidence(value, answer, path) {
-  if (typeof value !== 'string') {
-    throw assessmentError(`${path} must be a string`);
-  }
-  const length = Array.from(value).length;
-  if (length <= MAX_EVIDENCE_CHARS) return value;
-  if (length > MAX_ANSWER_CHARS || !evidenceAppearsInAnswer(value, answer)) {
-    throw assessmentError(`${path} must be an exact quote from the answer`);
-  }
-
+function clipAtBoundary(value, max) {
   const normalized = normalizeAnswer(value);
-  let excerpt = Array.from(normalized).slice(0, MAX_EVIDENCE_CHARS).join('');
+  const characters = Array.from(normalized);
+  if (characters.length <= max) return normalized;
+
+  let excerpt = characters.slice(0, max).join('');
   const boundary = Math.max(
     excerpt.lastIndexOf('\n'),
     excerpt.lastIndexOf(' '),
     excerpt.lastIndexOf('\t')
   );
-  if (boundary >= Math.floor(MAX_EVIDENCE_CHARS * 0.6)) {
+  if (boundary >= Math.floor(max * 0.6)) {
     excerpt = excerpt.slice(0, boundary).trimEnd();
-  }
-  if (!excerpt || !evidenceAppearsInAnswer(excerpt, answer)) {
-    throw assessmentError(`${path} must be an exact quote from the answer`);
   }
   return excerpt;
 }
 
-function validateAssessment(raw, taskId, answer) {
-  const task = resolveTaskConfig(taskId);
-  let assessment = raw;
-  if (typeof raw === 'string') {
-    try {
-      assessment = JSON.parse(raw);
-    } catch (_) {
-      throw assessmentError('response is not valid JSON');
+function boundedText(value, min, max, path, fallback, repairs) {
+  let text = typeof value === 'string' ? normalizeAnswer(value) : '';
+  if (!text && fallback) {
+    text = fallback;
+    repairs.push(`${path}: used fallback text`);
+  }
+  if (Array.from(text).length > max) {
+    text = clipAtBoundary(text, max);
+    repairs.push(`${path}: shortened to ${max} characters`);
+  }
+  assertString(text, min, max, path);
+  return text;
+}
+
+function evidenceVariants(value) {
+  const normalized = normalizeAnswer(value);
+  if (!normalized) return [];
+  const variants = [normalized];
+  const withoutLabel = normalized.replace(/^(?:evidence|quote|цитата)\s*:\s*/iu, '');
+  if (withoutLabel && withoutLabel !== normalized) variants.push(withoutLabel);
+
+  for (const candidate of variants.slice()) {
+    const unwrapped = candidate
+      .replace(/^(?:["'“”‘’]|\.{3}|…)+\s*/u, '')
+      .replace(/\s*(?:["'“”‘’]|\.{3}|…)+$/u, '');
+    if (unwrapped && unwrapped !== candidate) variants.push(unwrapped);
+  }
+  return Array.from(new Set(variants));
+}
+
+function exactGroundedEvidence(value, answer) {
+  if (typeof value !== 'string') return '';
+  for (const candidate of evidenceVariants(value)) {
+    if (evidenceAppearsInAnswer(candidate, answer)) {
+      return clipAtBoundary(candidate, MAX_EVIDENCE_CHARS);
     }
   }
+  return '';
+}
 
-  assertExactKeys(assessment, ROOT_KEYS, 'root');
-  assertExactKeys(assessment.language, LANGUAGE_KEYS, 'language');
-  assertBoolean(assessment.language.is_english, 'language.is_english');
-  assertInteger(assessment.language.confidence, 0, 100, 'language.confidence');
-  const nonEnglishEvidence = shortenGroundedEvidence(
-    assessment.language.non_english_evidence,
-    answer,
-    'language.non_english_evidence'
+function evidenceTerms(value) {
+  return (normalizeAnswer(value).toLocaleLowerCase('en-US').match(/[\p{L}\p{N}]+/gu) || [])
+    .filter(term => term.length > 1);
+}
+
+function bestGroundedExcerpt(hint, answer) {
+  const source = normalizeAnswer(answer);
+  if (!source) return { text: '', overlap: 0 };
+
+  const lines = source.split('\n').map(line => line.trim()).filter(Boolean);
+  const candidates = [];
+  for (const line of lines) {
+    candidates.push(line);
+    const sentences = line.match(/[^.!?]+[.!?]?/gu) || [];
+    for (const sentence of sentences) {
+      const trimmed = sentence.trim();
+      if (trimmed && trimmed !== line) candidates.push(trimmed);
+    }
+  }
+  if (!candidates.length) candidates.push(source);
+
+  const hintTerms = new Set(evidenceTerms(hint));
+  let winner = candidates[0];
+  let bestOverlap = -1;
+  let bestDensity = -1;
+  for (const candidate of candidates) {
+    const candidateTerms = evidenceTerms(candidate);
+    const overlap = candidateTerms.filter(term => hintTerms.has(term)).length;
+    const density = candidateTerms.length ? overlap / candidateTerms.length : 0;
+    if (overlap > bestOverlap || (overlap === bestOverlap && density > bestDensity)) {
+      winner = candidate;
+      bestOverlap = overlap;
+      bestDensity = density;
+    }
+  }
+  return {
+    text: clipAtBoundary(winner || source, MAX_EVIDENCE_CHARS),
+    overlap: Math.max(0, bestOverlap)
+  };
+}
+
+function bestNonEnglishExcerpt(answer) {
+  const source = normalizeAnswer(answer);
+  if (!source) return '';
+  const candidates = source.split('\n').map(line => line.trim()).filter(Boolean);
+  candidates.push(source);
+
+  let winner = '';
+  let lowestLatinRatio = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    const candidatePreflight = preflightAnswer(candidate);
+    if (!candidatePreflight.flags.non_english) continue;
+    if (
+      candidatePreflight.latinRatio < lowestLatinRatio ||
+      (candidatePreflight.latinRatio === lowestLatinRatio && candidate.length > winner.length)
+    ) {
+      winner = candidate;
+      lowestLatinRatio = candidatePreflight.latinRatio;
+    }
+  }
+  return clipAtBoundary(winner || source, MAX_EVIDENCE_CHARS);
+}
+
+function repairEvidence(value, answer, path, options, repairs) {
+  const config = options || {};
+  if (value !== null && value !== undefined && typeof value !== 'string') {
+    repairs.push(`${path}: replaced non-string evidence`);
+    value = '';
+  }
+
+  const exact = exactGroundedEvidence(value || '', answer);
+  if (exact) {
+    if (normalizeAnswer(value) !== exact) repairs.push(`${path}: normalized exact quote`);
+    return { text: exact, grounded: true };
+  }
+
+  const hint = typeof value === 'string' ? value : '';
+  if (!hint && !config.required) return { text: '', grounded: false };
+  const fallback = bestGroundedExcerpt(hint, answer);
+  if (config.requireHintOverlap && fallback.overlap === 0) {
+    repairs.push(`${path}: dropped ungrounded evidence`);
+    return { text: '', grounded: false };
+  }
+  if (!fallback.text) {
+    if (config.required) throw assessmentError(`${path} could not be grounded in the answer`);
+    return { text: '', grounded: false };
+  }
+  repairs.push(`${path}: replaced with a grounded answer excerpt`);
+  return { text: fallback.text, grounded: false };
+}
+
+function requireExactGroundedEvidence(value, answer, path, repairs) {
+  if (typeof value !== 'string') {
+    throw assessmentError(`${path} must be a string`);
+  }
+  const exact = exactGroundedEvidence(value, answer);
+  if (!exact) {
+    throw assessmentError(`${path} must be an exact quote from the answer`);
+  }
+  if (normalizeAnswer(value) !== exact) {
+    repairs.push(`${path}: normalized exact quote`);
+  }
+  return exact;
+}
+
+function parseAssessment(raw) {
+  if (typeof raw !== 'string') return raw;
+  let text = raw.trim();
+  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/iu);
+  if (fenced) text = fenced[1].trim();
+
+  const candidates = [text];
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(text.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const candidate of Array.from(new Set(candidates))) {
+    try {
+      let parsed = JSON.parse(candidate);
+      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+      return parsed;
+    } catch (_) {}
+  }
+  throw assessmentError('response is not valid JSON');
+}
+
+function validateAssessment(raw, taskId, answer) {
+  const task = resolveTaskConfig(taskId);
+  const assessment = parseAssessment(raw);
+  const inheritedRepairs = asObject(raw) && Array.isArray(raw.normalization_repairs)
+    ? raw.normalization_repairs.map(String)
+    : [];
+  const repairs = inheritedRepairs.slice(0, 50);
+  const preflight = preflightAnswer(answer);
+
+  assertPlainObject(assessment, 'root');
+  assertRequiredKeys(assessment, ['criteria', 'integrity'], 'root');
+  const language = asObject(assessment.language) || {};
+  assertPlainObject(assessment.integrity, 'integrity');
+  const integrity = assessment.integrity;
+  const reportedIsEnglish = hasOwn(language, 'is_english')
+    ? assertBoolean(language.is_english, 'language.is_english')
+    : !preflight.flags.non_english;
+  if (!hasOwn(language, 'is_english')) {
+    repairs.push('language.is_english: derived from deterministic preflight');
+  }
+  let languageConfidence = hasOwn(language, 'confidence')
+    ? assertInteger(language.confidence, 0, 100, 'language.confidence')
+    : 50;
+  if (!hasOwn(language, 'confidence')) repairs.push('language.confidence: used neutral fallback');
+  const reportedNonEnglishEvidence = exactGroundedEvidence(
+    language.non_english_evidence || '',
+    answer
   );
-  if (
-    !assessment.language.is_english &&
-    !evidenceAppearsInAnswer(nonEnglishEvidence, answer)
-  ) {
-    throw assessmentError('language.non_english_evidence must be an exact quote from the answer');
-  }
-  if (assessment.language.is_english && nonEnglishEvidence) {
-    throw assessmentError('language.non_english_evidence must be empty when the answer is English');
-  }
-  assertString(assessment.language.reason_ru, 1, 200, 'language.reason_ru');
+  const evidencePreflight = reportedNonEnglishEvidence
+    ? preflightAnswer(reportedNonEnglishEvidence)
+    : null;
+  const modelNonEnglishConfirmed = reportedIsEnglish === false &&
+    Boolean(evidencePreflight?.flags.non_english);
+  const isEnglish = !(preflight.flags.non_english || modelNonEnglishConfirmed);
+  let nonEnglishEvidence = '';
 
-  assertExactKeys(assessment.integrity, INTEGRITY_KEYS, 'integrity');
-  assertBoolean(assessment.integrity.on_task, 'integrity.on_task');
-  assertBoolean(assessment.integrity.coherent, 'integrity.coherent');
-  if (!Array.isArray(assessment.integrity.hard_fail_ids)) {
+  if (!isEnglish) {
+    const reportedEvidenceConfirmsLanguage = Boolean(evidencePreflight?.flags.non_english);
+    nonEnglishEvidence = reportedEvidenceConfirmsLanguage
+      ? reportedNonEnglishEvidence
+      : bestNonEnglishExcerpt(answer);
+    if (!reportedEvidenceConfirmsLanguage) {
+      repairs.push('language.non_english_evidence: derived from deterministic preflight');
+    }
+    if (reportedIsEnglish) {
+      repairs.push('language.is_english: overridden by deterministic preflight');
+    }
+  } else if (reportedIsEnglish === false) {
+    repairs.push('language.is_english: ignored unconfirmed non-English flag');
+    if (language.non_english_evidence) {
+      repairs.push('language.non_english_evidence: cleared because it did not confirm non-English text');
+    }
+  } else if (language.non_english_evidence) {
+    repairs.push('language.non_english_evidence: cleared for English answer');
+  }
+  const languageWasReconciled = reportedIsEnglish !== isEnglish;
+  if (languageWasReconciled) languageConfidence = Math.min(languageConfidence, 50);
+  const languageReason = boundedText(
+    languageWasReconciled ? '' : language.reason_ru,
+    1,
+    200,
+    'language.reason_ru',
+    isEnglish ? 'Ответ преимущественно написан на понятном английском.' : 'Ответ не является преимущественно английским.',
+    repairs
+  );
+  if (languageWasReconciled && language.reason_ru) {
+    repairs.push('language.reason_ru: replaced after language reconciliation');
+  }
+
+  const onTask = hasOwn(integrity, 'on_task')
+    ? assertBoolean(integrity.on_task, 'integrity.on_task')
+    : true;
+  const coherent = hasOwn(integrity, 'coherent')
+    ? assertBoolean(integrity.coherent, 'integrity.coherent')
+    : true;
+  if (!hasOwn(integrity, 'on_task')) repairs.push('integrity.on_task: used safe fallback');
+  if (!hasOwn(integrity, 'coherent')) repairs.push('integrity.coherent: used safe fallback');
+  if (!hasOwn(integrity, 'hard_fail_ids')) {
+    throw assessmentError('integrity is missing: hard_fail_ids');
+  }
+  if (!Array.isArray(integrity.hard_fail_ids)) {
     throw assessmentError('integrity.hard_fail_ids must be an array');
   }
+  const suppliedHardFailIds = integrity.hard_fail_ids.map(String);
   const allowedHardFailIds = new Set(task.hardFails.map(item => item.id));
-  const hardFailIds = assessment.integrity.hard_fail_ids.map(String);
   if (
-    hardFailIds.length > 1 ||
-    new Set(hardFailIds).size !== hardFailIds.length ||
-    hardFailIds.some(id => !allowedHardFailIds.has(id))
+    suppliedHardFailIds.length > 1 ||
+    new Set(suppliedHardFailIds).size !== suppliedHardFailIds.length ||
+    suppliedHardFailIds.some(id => !allowedHardFailIds.has(id))
   ) {
-    throw assessmentError('integrity.hard_fail_ids contains an unknown or duplicate rule id');
+    throw assessmentError('integrity.hard_fail_ids contains an unknown, duplicate, or extra rule id');
   }
-  const hardFailEvidence = shortenGroundedEvidence(
-    assessment.integrity.hard_fail_evidence,
-    answer,
-    'integrity.hard_fail_evidence'
-  );
-  if (hardFailIds.length && !evidenceAppearsInAnswer(hardFailEvidence, answer)) {
-    throw assessmentError('integrity.hard_fail_evidence must be an exact quote from the answer');
-  }
-  if (!hardFailIds.length && hardFailEvidence) {
+  const hardFailIds = suppliedHardFailIds;
+  let hardFailEvidence = '';
+  if (hardFailIds.length) {
+    hardFailEvidence = requireExactGroundedEvidence(
+      integrity.hard_fail_evidence,
+      answer,
+      'integrity.hard_fail_evidence',
+      repairs
+    );
+  } else if (
+    integrity.hard_fail_evidence !== null &&
+    integrity.hard_fail_evidence !== undefined &&
+    (typeof integrity.hard_fail_evidence !== 'string' || normalizeAnswer(integrity.hard_fail_evidence))
+  ) {
     throw assessmentError('integrity.hard_fail_evidence must be empty when no hard fail is selected');
   }
-  assertBoolean(assessment.integrity.prompt_injection, 'integrity.prompt_injection');
-  const promptInjectionEvidence = shortenGroundedEvidence(
-    assessment.integrity.prompt_injection_evidence,
-    answer,
-    'integrity.prompt_injection_evidence'
+
+  let promptInjection = hasOwn(integrity, 'prompt_injection')
+    ? assertBoolean(integrity.prompt_injection, 'integrity.prompt_injection')
+    : preflight.flags.prompt_injection;
+  if (!hasOwn(integrity, 'prompt_injection')) {
+    repairs.push('integrity.prompt_injection: derived from deterministic preflight');
+  }
+  let promptInjectionEvidence = '';
+  if (promptInjection) {
+    promptInjectionEvidence = repairEvidence(
+      integrity.prompt_injection_evidence,
+      answer,
+      'integrity.prompt_injection_evidence',
+      { required: true, requireHintOverlap: !preflight.flags.prompt_injection },
+      repairs
+    ).text;
+    if (!promptInjectionEvidence && !preflight.flags.prompt_injection) {
+      promptInjection = false;
+      repairs.push('integrity.prompt_injection: cleared because evidence was not grounded');
+    }
+  } else if (integrity.prompt_injection_evidence) {
+    repairs.push('integrity.prompt_injection_evidence: cleared because flag is false');
+  }
+
+  let hostile = hasOwn(integrity, 'hostile')
+    ? assertBoolean(integrity.hostile, 'integrity.hostile')
+    : preflight.flags.hostile;
+  if (!hasOwn(integrity, 'hostile')) {
+    repairs.push('integrity.hostile: derived from deterministic preflight');
+  }
+  let hostileEvidence = '';
+  if (hostile) {
+    hostileEvidence = repairEvidence(
+      integrity.hostile_evidence,
+      answer,
+      'integrity.hostile_evidence',
+      { required: true, requireHintOverlap: !preflight.flags.hostile },
+      repairs
+    ).text;
+    if (!hostileEvidence && !preflight.flags.hostile) {
+      hostile = false;
+      repairs.push('integrity.hostile: cleared because evidence was not grounded');
+    }
+  } else if (integrity.hostile_evidence) {
+    repairs.push('integrity.hostile_evidence: cleared because flag is false');
+  }
+  const integrityReason = boundedText(
+    integrity.reason_ru,
+    1,
+    240,
+    'integrity.reason_ru',
+    'Ответ проверен на соответствие заданию и критические нарушения.',
+    repairs
   );
-  if (
-    assessment.integrity.prompt_injection &&
-    !evidenceAppearsInAnswer(promptInjectionEvidence, answer)
-  ) {
-    throw assessmentError('integrity.prompt_injection_evidence must be an exact quote from the answer');
-  }
-  if (!assessment.integrity.prompt_injection && promptInjectionEvidence) {
-    throw assessmentError('integrity.prompt_injection_evidence must be empty when prompt_injection is false');
-  }
-  assertBoolean(assessment.integrity.hostile, 'integrity.hostile');
-  const hostileEvidence = shortenGroundedEvidence(
-    assessment.integrity.hostile_evidence,
-    answer,
-    'integrity.hostile_evidence'
-  );
-  if (
-    assessment.integrity.hostile &&
-    !evidenceAppearsInAnswer(hostileEvidence, answer)
-  ) {
-    throw assessmentError('integrity.hostile_evidence must be an exact quote from the answer');
-  }
-  if (!assessment.integrity.hostile && hostileEvidence) {
-    throw assessmentError('integrity.hostile_evidence must be empty when hostile is false');
-  }
-  assertString(assessment.integrity.reason_ru, 1, 240, 'integrity.reason_ru');
 
   const criterionIds = task.criteria.map(criterion => criterion.id);
-  assertExactKeys(assessment.criteria, criterionIds, 'criteria');
+  assertRequiredKeys(assessment.criteria, criterionIds, 'criteria');
   const validatedCriteria = {};
   for (const criterion of task.criteria) {
     const value = assessment.criteria[criterion.id];
     const path = `criteria.${criterion.id}`;
-    assertExactKeys(value, CRITERION_KEYS, path);
-    assertInteger(value.rating, 0, 4, `${path}.rating`);
-    const evidence = shortenGroundedEvidence(value.evidence, answer, `${path}.evidence`);
-    assertString(value.reason_ru, 1, 240, `${path}.reason_ru`);
-    if (evidence && !evidenceAppearsInAnswer(evidence, answer)) {
-      throw assessmentError(`${path}.evidence must be an exact quote from the answer`);
-    }
-    if (value.rating > 0 && !evidence && !criterion.evidenceOptional) {
-      throw assessmentError(`${path}.evidence is required for a positive rating`);
-    }
+    assertRequiredKeys(value, ['rating'], path);
+    const rating = assertInteger(value.rating, 0, 4, `${path}.rating`);
+    const evidenceRequired = rating > 0 && !criterion.evidenceOptional;
+    const evidence = repairEvidence(
+      value.evidence,
+      answer,
+      `${path}.evidence`,
+      { required: evidenceRequired },
+      repairs
+    ).text;
+    const reason = boundedText(
+      value.reason_ru,
+      1,
+      240,
+      `${path}.reason_ru`,
+      `Оценка ${rating}/4 выставлена по тексту ответа и критерию «${criterion.label}».`,
+      repairs
+    );
     validatedCriteria[criterion.id] = {
-      rating: value.rating,
+      rating,
       evidence,
-      reason_ru: value.reason_ru
+      reason_ru: reason
     };
   }
 
-  assertString(assessment.feedback_ru, 1, 500, 'feedback_ru');
-  return {
+  const feedback = boundedText(
+    assessment.feedback_ru,
+    1,
+    500,
+    'feedback_ru',
+    'Ответ оценён по пяти критериям задания; ориентируйтесь на самый низкий балл в разборе.',
+    repairs
+  );
+  const validated = {
     language: {
-      is_english: assessment.language.is_english,
-      confidence: assessment.language.confidence,
+      is_english: isEnglish,
+      confidence: languageConfidence,
       non_english_evidence: nonEnglishEvidence,
-      reason_ru: assessment.language.reason_ru
+      reason_ru: languageReason
     },
     integrity: {
-      on_task: assessment.integrity.on_task,
-      coherent: assessment.integrity.coherent,
+      on_task: onTask,
+      coherent,
       hard_fail_ids: hardFailIds,
       hard_fail_evidence: hardFailEvidence,
-      prompt_injection: assessment.integrity.prompt_injection,
+      prompt_injection: promptInjection,
       prompt_injection_evidence: promptInjectionEvidence,
-      hostile: assessment.integrity.hostile,
+      hostile,
       hostile_evidence: hostileEvidence,
-      reason_ru: assessment.integrity.reason_ru
+      reason_ru: integrityReason
     },
     criteria: validatedCriteria,
-    feedback_ru: assessment.feedback_ru
+    feedback_ru: feedback
   };
+  if (repairs.length) validated.normalization_repairs = repairs.slice(0, 100);
+  return validated;
 }
 
 function computeVerdict(raw, taskId, answer) {
@@ -901,6 +1149,7 @@ function computeVerdict(raw, taskId, answer) {
     language: assessment.language,
     integrity: assessment.integrity,
     criteria,
+    normalizationRepairs: assessment.normalization_repairs || [],
     feedback_ru: assessment.feedback_ru,
     feedback: assessment.feedback_ru,
     answerHash: preflight.hash
@@ -933,7 +1182,12 @@ function apiError(statusCode, body, headers) {
 }
 
 function extractOutputText(response) {
-  if (!asObject(response)) throw assessmentError('xAI response must be an object');
+  if (!asObject(response)) {
+    const error = new Error('xAI response must be an object');
+    error.code = 'xai_invalid_response';
+    error.retryable = true;
+    throw error;
+  }
   if (response.error) {
     const error = new Error(String(response.error.message || response.error));
     error.code = 'xai_response_error';
@@ -953,10 +1207,17 @@ function extractOutputText(response) {
       if (content && content.type === 'output_text' && typeof content.text === 'string') {
         return content.text;
       }
+      if (content && content.type === 'text' && typeof content.text === 'string') {
+        return content.text;
+      }
     }
   }
   if (typeof response.output_text === 'string') return response.output_text;
-  throw assessmentError('xAI response has no output_text');
+  if (asObject(response.output_parsed)) return JSON.stringify(response.output_parsed);
+  const error = new Error('xAI response has no output_text');
+  error.code = 'xai_missing_output';
+  error.retryable = true;
+  throw error;
 }
 
 function requestAssessment(payload, apiKey, taskId, answer) {
@@ -1037,7 +1298,7 @@ function requestAssessment(payload, apiKey, taskId, answer) {
         } catch (_) {
           const error = new Error('xAI returned invalid JSON');
           error.code = 'xai_invalid_json';
-          error.retryable = false;
+          error.retryable = true;
           rejectOnce(error);
           return;
         }
@@ -1154,10 +1415,13 @@ module.exports = {
   MAX_ANSWER_CHARS,
   MAX_EVIDENCE_CHARS,
   normalizeAnswer,
+  wordCount: DAY1_TEXT.wordCount,
+  messageCount: DAY1_TEXT.messageCount,
   hashAnswer,
   preflightAnswer,
   buildResponseSchema,
   buildSystemPrompt,
+  extractOutputText,
   validateAssessment,
   computeVerdict,
   callGrok

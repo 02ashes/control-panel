@@ -646,6 +646,7 @@ function normalizedRequestPath(req) {
 const DAY1_PROTECTED_ASSETS = new Map([
     ['/learn/day1.html', { file: 'learn/day1.html' }],
     ['/learn/day1-app.js', { file: 'learn/day1-app.js' }],
+    ['/learn/day1-normalize.js', { file: 'learn/day1-normalize.js' }],
     ['/learn/day1-styles.css', { file: 'learn/day1-styles.css' }],
     ['/learn/day1-theory.js', { file: 'learn/day1-theory.js' }],
     ['/learn/day1-dashboard.html', { file: 'learn/day1-dashboard.html', admin: true }],
@@ -1364,25 +1365,32 @@ app.post('/api/logs/delete-session', requireRegistration, requireLogAccess, asyn
 
 const memoryRateLimitBuckets = new Map();
 
+function consumeMemoryRateLimit({ name, windowMs, max }, rawKey) {
+    const now = Date.now();
+    const bucketKey = `${name}:${String(rawKey || 'unknown')}`;
+    let bucket = memoryRateLimitBuckets.get(bucketKey);
+    if (!bucket || bucket.resetAt <= now) {
+        bucket = { count: 0, resetAt: now + windowMs };
+        memoryRateLimitBuckets.set(bucketKey, bucket);
+    }
+    bucket.count++;
+    return {
+        allowed: bucket.count <= max,
+        retryAfterSeconds: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))
+    };
+}
+
 function memoryRateLimit({ name, windowMs, max, key, message }) {
     return (req, res, next) => {
-        const now = Date.now();
         const rawKey = typeof key === 'function' ? key(req) : req.ip;
-        const bucketKey = `${name}:${String(rawKey || 'unknown')}`;
-        let bucket = memoryRateLimitBuckets.get(bucketKey);
-        if (!bucket || bucket.resetAt <= now) {
-            bucket = { count: 0, resetAt: now + windowMs };
-            memoryRateLimitBuckets.set(bucketKey, bucket);
-        }
-        bucket.count++;
-        if (bucket.count <= max) return next();
+        const result = consumeMemoryRateLimit({ name, windowMs, max }, rawKey);
+        if (result.allowed) return next();
 
-        const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
-        res.setHeader('Retry-After', String(retryAfterSeconds));
+        res.setHeader('Retry-After', String(result.retryAfterSeconds));
         return res.status(429).json({
             error: 'rate_limited',
             message,
-            retryAfterSeconds
+            retryAfterSeconds: result.retryAfterSeconds
         });
     };
 }
@@ -1408,11 +1416,10 @@ const loginIpRateLimit = memoryRateLimit({
     key: req => req.ip,
     message: 'Слишком много попыток входа с этого адреса. Подождите несколько минут.'
 });
-const day1GradeRateLimit = memoryRateLimit({
+const DAY1_GRADE_RATE_LIMIT = Object.freeze({
     name: 'day1-grade',
     windowMs: 10 * 60 * 1000,
     max: 20,
-    key: req => req.user?.nickname || req.ip,
     message: 'Слишком много проверок подряд. Подождите несколько минут и повторите.'
 });
 
@@ -1963,6 +1970,7 @@ function serializeDay1Submission(row) {
         id: Number(row.id),
         taskId: row.task_id,
         answer: row.answer_text,
+        answerHash: row.answer_hash || '',
         score: Number(row.score),
         pass: !!row.pass,
         criteria: row.criteria || {},
@@ -1977,7 +1985,7 @@ function serializeDay1Submission(row) {
 async function computeDay1State(nickname, persist = true) {
     const [result, theoryState] = await Promise.all([
         pool.query(
-            `SELECT id, task_id, answer_text, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at
+            `SELECT id, task_id, answer_text, answer_hash, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at
              FROM training_v2_submissions
              WHERE nickname=$1 AND program_id=$2 AND program_version=$3 AND rubric_version=$4
              ORDER BY created_at ASC, id ASC`,
@@ -2069,6 +2077,15 @@ async function computeDay1State(nickname, persist = true) {
     };
 }
 
+async function safeComputeDay1State(nickname, context) {
+    try {
+        return await computeDay1State(nickname);
+    } catch (error) {
+        console.error(`Day 1 state refresh failed after ${context}:`, error);
+        return null;
+    }
+}
+
 function getDay1Hashes(taskId, answer) {
     const normalized = gradingV2.normalizeAnswer(answer);
     const answerHash = gradingV2.hashAnswer(normalized);
@@ -2138,7 +2155,7 @@ async function reserveDay1Attempt(nickname, taskId, answerHash, cacheKey) {
         );
 
         const existingSubmission = await client.query(
-            `SELECT id, task_id, answer_text, score, pass, criteria, feedback, verdict,
+            `SELECT id, task_id, answer_text, answer_hash, score, pass, criteria, feedback, verdict,
                     grader_model, cache_hit, created_at
              FROM training_v2_submissions
              WHERE nickname=$1 AND program_id=$2 AND program_version=$3
@@ -2399,7 +2416,7 @@ app.post('/api/training/v2/programs/day1-v1/theory', requireAuthenticatedSession
     }
 });
 
-app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthenticatedSession, requireDay1Role, day1GradeRateLimit, async (req, res) => {
+app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthenticatedSession, requireDay1Role, async (req, res) => {
     if (!DAY1_ENABLED) return res.status(404).json({ error: 'day1_disabled' });
 
     const taskId = String(req.params.taskId || '');
@@ -2418,7 +2435,7 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
     if (task.maxWords && preflight.wordCount > task.maxWords) {
         return res.status(400).json({ error: 'word_limit_exceeded', maxWords: task.maxWords });
     }
-    const messageCount = normalized.split('\n').filter(line => line.trim()).length;
+    const messageCount = gradingV2.messageCount(normalized);
     const minMessages = task.minMessages || 1;
     const maxMessages = task.maxMessages || minMessages;
     if (messageCount < minMessages || messageCount > maxMessages) {
@@ -2448,7 +2465,7 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
     let reservedAttemptToken = null;
     try {
         const existing = await pool.query(
-            `SELECT id, task_id, answer_text, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at
+            `SELECT id, task_id, answer_text, answer_hash, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at
              FROM training_v2_submissions
              WHERE nickname=$1 AND program_id=$2 AND program_version=$3
                AND task_id=$4 AND cache_key=$5
@@ -2456,7 +2473,7 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
             [req.user.nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, taskId, cacheKey]
         );
         if (existing.rows.length) {
-            const state = await computeDay1State(req.user.nickname);
+            const state = await safeComputeDay1State(req.user.nickname, 'submission reuse');
             return res.json({
                 ok: true,
                 result: { ...serializeDay1Submission(existing.rows[0]), reused: true },
@@ -2471,7 +2488,7 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
             cacheKey
         );
         if (reservation.existing) {
-            const state = await computeDay1State(req.user.nickname);
+            const state = await safeComputeDay1State(req.user.nickname, 'reserved submission reuse');
             return res.json({
                 ok: true,
                 result: { ...serializeDay1Submission(reservation.existing), reused: true },
@@ -2500,6 +2517,17 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
 
             let gradingPromise = day1GradingInFlight.get(cacheKey);
             if (!gradingPromise) {
+                const rateLimit = consumeMemoryRateLimit(
+                    DAY1_GRADE_RATE_LIMIT,
+                    req.user?.nickname || req.ip
+                );
+                if (!rateLimit.allowed) {
+                    const error = new Error(DAY1_GRADE_RATE_LIMIT.message);
+                    error.code = 'rate_limited';
+                    error.statusCode = 429;
+                    error.retryAfterSeconds = rateLimit.retryAfterSeconds;
+                    throw error;
+                }
                 gradingPromise = (async () => {
                     const modelResult = await callDay1GrokBounded(normalized, taskId);
                     const computed = gradingV2.computeVerdict(modelResult, taskId, normalized);
@@ -2556,7 +2584,7 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
                  ON CONFLICT (nickname, program_id, program_version, task_id, cache_key)
                  DO UPDATE SET cache_hit=training_v2_submissions.cache_hit OR EXCLUDED.cache_hit
-                 RETURNING id, task_id, answer_text, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at`,
+                 RETURNING id, task_id, answer_text, answer_hash, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at`,
                 [req.user.nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, taskId, normalized, answerHash, cacheKey,
                     DAY1_PROGRAM.rubricVersion, verdict.score, !!verdict.pass, verdict.criteria || {}, feedback,
                     verdict, gradingV2.MODEL, cached, new Date()]
@@ -2569,7 +2597,7 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
             client.release();
         }
 
-        const state = await computeDay1State(req.user.nickname);
+        const state = await safeComputeDay1State(req.user.nickname, 'successful grading');
         res.json({
             ok: true,
             result: serializeDay1Submission(inserted.rows[0]),
@@ -2590,24 +2618,35 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
             }
         }
         const errorStatus = Number(err.statusCode);
-        const status = errorStatus === 401
+        const upstreamXaiError = /^xai_/.test(String(err.code || ''));
+        const status = upstreamXaiError
+            ? 503
+            : (errorStatus === 401
             ? 401
-            : (errorStatus === 409 ? 409 : (err.retryable ? 503 : 500));
+            : (errorStatus === 409
+                ? 409
+                : (errorStatus === 429 ? 429 : (err.retryable ? 503 : 500))));
         const publicError = status === 401
             ? 'login_required'
             : (status === 409
                 ? (err.code || 'max_attempts_reached')
-                : (status === 503
-                    ? (['grader_busy', 'attempt_reservation_lost'].includes(err.code)
-                        ? err.code
-                        : 'grader_unavailable')
-                    : 'grading_error'));
+                : (status === 429
+                    ? 'rate_limited'
+                    : (status === 503
+                        ? (['grader_busy', 'attempt_reservation_lost'].includes(err.code)
+                            ? err.code
+                            : 'grader_unavailable')
+                        : (err.code === 'invalid_assessment' ? 'grading_error' : 'internal_error'))));
+        if (status === 429 && err.retryAfterSeconds) {
+            res.setHeader('Retry-After', String(err.retryAfterSeconds));
+        }
         res.status(status).json({
             error: publicError,
             message: status === 503
                 ? 'Grok сейчас занят или временно недоступен. Попытка не потрачена — повторите позже.'
-                : undefined,
-            retryable: status === 503
+                : (status === 429 ? DAY1_GRADE_RATE_LIMIT.message : undefined),
+            retryable: status === 503 || status === 429,
+            retryAfterSeconds: status === 429 ? Number(err.retryAfterSeconds || 0) : undefined
         });
     }
 });
