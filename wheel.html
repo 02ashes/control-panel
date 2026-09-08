@@ -480,6 +480,9 @@
         let currentRotation = 0;
         let targetRotation = 0;
         let isSpinning = false;
+        let isChecking = false;
+        let isSavingResult = false;
+        let pendingWheelResult = null;
         let currentCode = '';
         let targetPrize = '';
         let animationId = null;
@@ -649,8 +652,8 @@
 
                 // Determine winning prize
                 const winningPrize = getWinningPrize();
-                showResult(winningPrize);
-                sendResult(winningPrize);
+                pendingWheelResult = { code: currentCode, prize: winningPrize };
+                sendResult();
             }
         }
 
@@ -804,25 +807,44 @@
         document.head.appendChild(style);
 
         // Send result to server
-        async function sendResult(prize) {
+        async function sendResult() {
+            if (!pendingWheelResult || isSavingResult) return false;
+            isSavingResult = true;
+            const result = { ...pendingWheelResult };
+            const button = document.getElementById('spinBtn');
+            button.disabled = true;
+            showLoading(true);
+            hideError();
             try {
-                await fetch('/api/wheel/result', {
+                const response = await fetch('/api/wheel/result', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        code: currentCode,
-                        prize: prize
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(result)
                 });
+                const data = await response.json();
+                if (!response.ok || !data.ok || data.prize !== result.prize) throw new Error(data.error || 'save_failed');
+                pendingWheelResult = null;
+                button.textContent = '💖 SPIN!';
+                showResult(result.prize);
+                return true;
             } catch (error) {
-                console.error('Error sending result:', error);
+                // Keep the exact result/code for an idempotent retry, rather than
+                // awarding an unrecorded prize or consuming a different code.
+                spinSound.pause();
+                button.textContent = 'Retry saving result';
+                showError('Result not confirmed. Check your connection and retry saving.');
+                return false;
+            } finally {
+                isSavingResult = false;
+                button.disabled = false;
+                showLoading(false);
             }
         }
 
         // Check code and spin wheel
         async function checkCodeAndSpin() {
+            if (isChecking || isSavingResult) return;
+            if (pendingWheelResult) { await sendResult(); return; }
             const codeInput = document.getElementById('codeInput');
             const code = codeInput.value.trim().toUpperCase();
 
@@ -836,6 +858,8 @@
                 return;
             }
 
+            isChecking = true;
+            document.getElementById('spinBtn').disabled = true;
             showLoading(true);
             hideError();
 
@@ -856,6 +880,8 @@
                     return;
                 }
 
+                if (!prizes.includes(data.targetPrize)) throw new Error('invalid_prize');
+
                 // Code is valid, spin the wheel
                 currentCode = code;
                 console.log('Code verified, target prize:', data.targetPrize);
@@ -864,8 +890,11 @@
 
             } catch (error) {
                 console.error('Error checking code:', error);
-                showError('Connection error!');
+                showError('Connection error or invalid result. Please retry.');
                 showLoading(false);
+            } finally {
+                isChecking = false;
+                document.getElementById('spinBtn').disabled = isSpinning;
             }
         }
 

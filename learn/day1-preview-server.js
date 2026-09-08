@@ -17,6 +17,7 @@ const histories = new Map();
 const theoryProgress = new Map();
 const resetGenerations = new Map();
 const gradeCache = new Map();
+const pendingGrades = new Map();
 let nextSubmissionId = 1;
 
 function readEnvValue(name) {
@@ -93,6 +94,15 @@ function theoryStateFor(name) {
 function nickname(req) {
   return String(req.get('X-Nickname') || 'preview-worker').trim().slice(0, 80) ||
     'preview-worker';
+}
+
+function checkResetGeneration(req, res, name) {
+  const current = resetGenerations.get(name) || 0;
+  if (req.body?.resetGeneration !== undefined && Number(req.body.resetGeneration) !== current) {
+    res.status(409).json({ error: 'training_reset', resetGeneration: current });
+    return false;
+  }
+  return true;
 }
 
 function userHistory(name) {
@@ -209,6 +219,7 @@ app.get('/api/training/v2/programs/day1-v1/state', (req, res) => {
 
 app.post('/api/training/v2/programs/day1-v1/theory', (req, res) => {
   const name = nickname(req);
+  if (!checkResetGeneration(req, res, name)) return;
   const moduleId = String(req.body?.moduleId || '').trim();
   const theoryId = String(req.body?.theoryId || '').trim();
   const theoryVersion = Number(req.body?.theoryVersion);
@@ -268,7 +279,11 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', async (req, re
   if (problem) return res.status(400).json({ error: problem });
 
   const name = nickname(req);
+  if (!checkResetGeneration(req, res, name)) return;
   const history = taskHistory(name, taskId);
+  const generation = resetGenerations.get(name) || 0;
+  const pendingKey = JSON.stringify([name, taskId, generation]);
+  const pending = pendingGrades.get(pendingKey) || new Set();
   const answerHash = grading.hashAnswer(answer);
   const existing = history.find(attempt => attempt.answerHash === answerHash);
   if (existing) {
@@ -279,7 +294,10 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', async (req, re
       preview: true
     });
   }
-  if (history.length >= DAY1_PROGRAM.maxAttemptsPerTask) {
+  if (pending.has(answerHash)) {
+    return res.status(409).json({ error: 'grading_in_progress' });
+  }
+  if (history.length + pending.size >= DAY1_PROGRAM.maxAttemptsPerTask) {
     return res.status(409).json({ error: 'max_attempts_reached' });
   }
   const theory = theoryStateFor(name);
@@ -299,6 +317,8 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', async (req, re
   }
 
   const cacheKey = [DAY1_PROGRAM.rubricVersion, taskId, answerHash].join(':');
+  pending.add(answerHash);
+  pendingGrades.set(pendingKey, pending);
   try {
     let verdict = gradeCache.get(cacheKey);
     const cacheHit = Boolean(verdict);
@@ -306,6 +326,13 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', async (req, re
       const assessment = await grading.callGrok(answer, taskId, XAI_API_KEY);
       verdict = grading.computeVerdict(assessment, taskId, answer);
       gradeCache.set(cacheKey, verdict);
+    }
+
+    if ((resetGenerations.get(name) || 0) !== generation) {
+      return res.status(409).json({
+        error: 'training_reset',
+        resetGeneration: resetGenerations.get(name) || 0
+      });
     }
 
     const result = {
@@ -343,6 +370,9 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', async (req, re
         : undefined,
       retryable
     });
+  } finally {
+    pending.delete(answerHash);
+    if (!pending.size) pendingGrades.delete(pendingKey);
   }
 });
 

@@ -18,7 +18,6 @@
 
 <body>
 
-<audio id="spinSound" src="spin.mp3" loop preload="auto"></audio>
 <audio id="winSound" src="win.mp3" preload="auto"></audio>
 
 <!-- Заглушка для незалогиненных -->
@@ -200,7 +199,6 @@
   let ROLE = 'reader';
   let opening = false;
 
-  const spinSound = document.getElementById('spinSound');
   const winSound = document.getElementById('winSound');
   const openOverlay = document.getElementById('openOverlay');
   const socket = (typeof io !== 'undefined') ? io() : null;
@@ -417,7 +415,6 @@
     const finalX = vpW / 2 - winCenter + jitter;
 
     strip.offsetHeight; // форс reflow
-    try { spinSound.currentTime = 0; spinSound.play(); } catch (e) {}
 
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
@@ -433,7 +430,6 @@
       strip.removeEventListener('transitionend', onEnd);
       const items = strip.children;
       if (items[WIN_INDEX]) items[WIN_INDEX].classList.add('center');
-      try { spinSound.pause(); spinSound.currentTime = 0; } catch (e) {}
       try { winSound.currentTime = 0; winSound.play(); } catch (e) {}
       done();
     }

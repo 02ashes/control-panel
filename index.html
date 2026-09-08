@@ -1054,10 +1054,13 @@
         </div>
     </div>
 
+    <script src="/snippets-sync.js"></script>
     <script>
         // Система регистрации с инвайт-кодом и паролем
         const socket = io();
         let currentNickname = localStorage.getItem('nickname') || '';
+        let authenticatedAccountEpoch = 0;
+        let panelAccountInvalidated = false;
 
         // Login/register may set the HttpOnly cookie after Socket.IO has already
         // connected. Reconnect so the next handshake carries the real session;
@@ -1307,11 +1310,11 @@
         let currentRole = 'reader'; // Global role storage
 
         async function ensureRegistration() {
+            const epoch = authenticatedAccountEpoch;
             // verify with server: only show UI if registered
             const app = document.getElementById('appRoot');
             async function checkAuth() {
                 const nick = localStorage.getItem('nickname') || '';
-                if (!nick) return { ok: false, role: null };
                 try {
                     const res = await fetch('/api/auth/check', {
                         headers: { 'X-Nickname': nick }
@@ -1331,10 +1334,12 @@
             }
 
             let authResult = await checkAuth();
+            if (epoch !== authenticatedAccountEpoch) return;
             if (!authResult.ok) {
                 localStorage.removeItem('nickname'); // Clear invalid session
                 await showAuthChoiceModal();
                 authResult = await checkAuth();
+                if (epoch !== authenticatedAccountEpoch) return;
             }
             if (authResult.ok) {
                 currentNickname = authResult.nickname || localStorage.getItem('nickname') || '';
@@ -1381,6 +1386,8 @@
                     if (btnInvite) btnInvite.style.display = 'none';
                 }
 
+                loadLinks();
+
                 // Загружаем snippets СРАЗУ после успешной регистрации
                 loadSnippets();
 
@@ -1407,6 +1414,7 @@
             if (lo) lo.onclick = async (e) => {
                 e.preventDefault();
                 try { await fetch('/api/logout', { method: 'POST' }); } catch (_) {}
+                invalidateAuthenticatedPanel();
                 localStorage.removeItem('nickname');
                 localStorage.removeItem('role');
                 location.reload();
@@ -1416,7 +1424,7 @@
         function applyRoleRestrictions() {
             if (currentRole === 'reader') {
                 // Disable snippet editing buttons for readers
-                document.querySelectorAll('.snippet-edit-btn, .snippet-delete-btn, .folder-edit-btn, .folder-delete-btn, .add-snippet-btn, .add-folder-btn').forEach(btn => {
+                document.querySelectorAll('.snippet-edit-btn, .snippet-delete-btn, .folder-edit-btn, .folder-delete-btn, .add-snippet-btn, .add-folder-btn, .snippet-mutation, .snippet-controls button').forEach(btn => {
                     btn.style.display = 'none';
                 });
             }
@@ -1431,6 +1439,7 @@
                 align-items: center; justify-content: center;
             `;
 
+            modal.classList.add('user-management-modal');
             const container = document.createElement('div');
             container.style.cssText = `
                 background: #C0C0C0; border: 2px solid #000; padding: 20px; 
@@ -1491,10 +1500,10 @@
                     const dateStr = new Date(user.registered_at).toLocaleDateString();
 
                     tr.innerHTML = `
-                        <td style="padding:6px;border:1px solid #000;">${user.nickname}${isSuperAdmin ? ' 👑' : ''}</td>
+                        <td style="padding:6px;border:1px solid #000;">${escapeHtml(user.nickname)}${isSuperAdmin ? ' 👑' : ''}</td>
                         <td style="padding:6px;border:1px solid #000;">
                             ${isSuperAdmin ? '<span style="color:gold;font-weight:bold;">admin</span>' : `
-                                <select class="role-select" data-nickname="${user.nickname}" style="padding:2px;">
+                                <select class="role-select" data-nickname="${escapeHtml(user.nickname)}" style="padding:2px;">
                                     <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>admin</option>
                                     <option value="user" ${user.role === 'user' ? 'selected' : ''}>user</option>
                                     <option value="reader" ${user.role === 'reader' ? 'selected' : ''}>reader</option>
@@ -1512,7 +1521,8 @@
                     select.addEventListener('change', async (e) => {
                         const targetNickname = e.target.dataset.nickname;
                         const newRole = e.target.value;
-
+                        const previousRole = data.users.find(user => user.nickname === targetNickname)?.role || 'reader';
+                        e.target.disabled = true;
                         try {
                             const res = await fetch('/api/user/role', {
                                 method: 'POST',
@@ -1521,16 +1531,21 @@
                             });
 
                             if (res.ok) {
+                                const user = data.users.find(user => user.nickname === targetNickname);
+                                if (user) user.role = newRole;
                                 e.target.style.background = '#90EE90';
                                 setTimeout(() => e.target.style.background = '', 1000);
                             } else {
                                 const err = await res.json();
                                 alert('Error: ' + (err.error || 'Unknown error'));
                                 // Revert selection
-                                showUsersModal();
+                                e.target.value = previousRole;
                             }
                         } catch (err) {
+                            e.target.value = previousRole;
                             alert('Network error');
+                        } finally {
+                            e.target.disabled = false;
                         }
                     });
                 });
@@ -1544,9 +1559,16 @@
 
 
         socket.on('online-update', (list) => {
+            if (panelAccountInvalidated) return;
             const ul = document.getElementById('onlineList');
             if (!ul) return;
-            ul.innerHTML = list.map(name => `<li>${name}</li>`).join('');
+            ul.replaceChildren();
+            if (!Array.isArray(list)) return;
+            list.forEach(name => {
+                const item = document.createElement('li');
+                item.textContent = String(name);
+                ul.appendChild(item);
+            });
         });
 
         document.getElementById('btnInvite').addEventListener('click', async () => {
@@ -1659,8 +1681,111 @@
             document.getElementById('prizeSelect').value = 'Lovense';
         }
 
-        // Загрузка ссылок из localStorage
-        let links = JSON.parse(localStorage.getItem('lovenseLinks')) || [];
+        // The authenticated server list is the source of truth, not shared storage.
+        let links = [];
+        let linksRequest = 0;
+        try { localStorage.removeItem('lovenseLinks'); } catch (_) {}
+
+        function linksCacheKey(nickname = currentNickname) {
+            return 'lovenseLinks:' + encodeURIComponent(nickname);
+        }
+
+        function cacheLinks() {
+            try { localStorage.setItem(linksCacheKey(), JSON.stringify(links)); } catch (_) {}
+        }
+
+        function clearAccountLinks(nickname = currentNickname) {
+            linksRequest++;
+            links = [];
+            try {
+                localStorage.removeItem('lovenseLinks');
+                localStorage.removeItem(linksCacheKey(nickname));
+            } catch (_) {}
+            renderLinks();
+            updateStats();
+            if (currentChatSessionId) closeChat();
+            chatDrafts.clear();
+            document.getElementById('chatInput').value = '';
+        }
+
+        function invalidateAuthenticatedPanel() {
+            // A forced account change must not be cancelable by a dirty-editor
+            // beforeunload prompt or resurrected by an old network response.
+            if (panelAccountInvalidated) return;
+            panelAccountInvalidated = true;
+            authenticatedAccountEpoch++;
+            clearAccountLinks();
+            currentNickname = '';
+            currentRole = 'reader';
+            socket.disconnect();
+            autoSaveTimeouts.forEach(timeout => clearTimeout(timeout));
+            autoSaveTimeouts.clear();
+            snippetsData = { folders: {}, snippets: {}, structure: [] };
+            snippetsBaseData = SnippetsSync.clone(snippetsData);
+            snippetsRevision = null;
+            snippetsPendingSnapshot = null;
+            snippetsSavePromise = null;
+            snippetsConflicts = [];
+            snippetsSaveError = '';
+            openSnippets = [];
+            activeSnippetId = currentSnippetId = null;
+            snippetAction = snippetParentId = null;
+            availableVoices = [];
+            chatSendAttempt++;
+            chatSendPending = false;
+            document.getElementById('snippetContents')?.replaceChildren();
+            document.getElementById('snippetTabs')?.replaceChildren();
+            document.getElementById('snippetTree')?.replaceChildren();
+            document.getElementById('chatMessages')?.replaceChildren();
+            document.getElementById('voicePickerBody')?.replaceChildren();
+            document.getElementById('onlineList')?.replaceChildren();
+            document.querySelectorAll('#snippetModal input, #snippetModal textarea').forEach(input => { input.value = ''; });
+            document.getElementById('snippetModal')?.classList.remove('show');
+            document.getElementById('wheelCodeModal')?.classList.remove('show');
+            document.querySelectorAll('.user-management-modal').forEach(modal => modal.remove());
+            for (const id of ['appRoot', 'snippetsContainer', 'traineeView']) {
+                const element = document.getElementById(id);
+                if (element) element.style.display = 'none';
+            }
+            document.querySelector('.snippets-toggle')?.classList.remove('show');
+        }
+
+        async function loadLinks() {
+            if (panelAccountInvalidated || !currentNickname) return;
+            const request = ++linksRequest;
+            const owner = currentNickname;
+            try {
+                const res = await fetch('/api/sessions', { headers: { 'X-Nickname': owner } });
+                if (!res.ok) throw new Error('sessions_load_failed');
+                const data = await res.json();
+                if (request !== linksRequest || owner !== currentNickname) return;
+                links = (Array.isArray(data.sessions) ? data.sessions : [])
+                    .filter(session => session.creator_nickname === owner && !session.deleted_at)
+                    .map(session => ({
+                        id: session.id,
+                        url: `${window.location.origin}/t2/${encodeURIComponent(session.id)}?share_type=103`,
+                        created: session.created_at,
+                        expiresAt: session.expires_at,
+                        revoked: Boolean(session.revoked)
+                    }));
+                cacheLinks();
+                renderLinks();
+                updateStats();
+                startLinkUpdates();
+            } catch (error) {
+                if (request !== linksRequest || owner !== currentNickname) return;
+                // Never show another user's cached links, even when offline.
+                showToast('Не удалось загрузить ссылки. Нажмите «Обновить ссылки».');
+            }
+        }
+
+        // A login/logout in another tab changes the shared cookie too.
+        window.addEventListener('storage', event => {
+            if (event.key === 'nickname' && event.newValue !== currentNickname) {
+                invalidateAuthenticatedPanel();
+                window.location.reload();
+            }
+        });
 
         // Генерация случайного ID
         function generateId() {
@@ -1684,6 +1809,9 @@
 
         // Генерация новой ссылки
         async function generateLink() {
+            if (!currentNickname || panelAccountInvalidated) return;
+            const epoch = authenticatedAccountEpoch;
+            linksRequest++;
             const id = generateId();
             const url = `${window.location.origin}/t2/${id}?share_type=103`;
             const durationValue = document.getElementById('durationSelect').value;
@@ -1729,8 +1857,9 @@
                 return;
             }
 
+            if (epoch !== authenticatedAccountEpoch) return;
             links.unshift(link);
-            localStorage.setItem('lovenseLinks', JSON.stringify(links));
+            cacheLinks();
 
             renderLinks();
             updateStats();
@@ -1759,7 +1888,7 @@
         function deleteLink(id) {
             if (confirm('Вы уверены, что хотите удалить эту ссылку?')) {
                 links = links.filter(link => link.id !== id);
-                localStorage.setItem('lovenseLinks', JSON.stringify(links));
+                cacheLinks();
                 renderLinks();
                 updateStats();
                 showToast('🗑️ Ссылка удалена!');
@@ -1819,21 +1948,43 @@
                 return;
             }
 
-            linksList.innerHTML = links.map(link => `
-                <div class="link-item" data-link-id="${link.id}">
-                    <div style="flex: 1;">
-                        <a href="${link.url}" target="_blank" class="link-url">${link.url}</a>
-                        <div style="font-size: 11px; color: #999; margin-top: 5px;">
-                            Создана: ${formatDate(link.created)} · Истекает через: <span class="time-remaining">${formatTimeUntilExpiry(link.expiresAt)}</span>
-                        </div>
-                    </div>
-                    <div class="link-actions">
-                        <button class="btn-chat" onclick="openChat('${link.id}')">Чат</button>
-                        <button class="btn-copy" onclick="copyLink('${link.url}')">Копировать</button>
-                        <button class="btn-delete" onclick="deleteLinkAndRevoke('${link.id}')">Удалить</button>
-                    </div>
-                </div>
-            `).join('');
+            linksList.replaceChildren();
+            links.forEach(link => {
+                const row = document.createElement('div');
+                row.className = 'link-item';
+                row.dataset.linkId = link.id;
+                const info = document.createElement('div');
+                info.style.flex = '1';
+                const anchor = document.createElement('a');
+                // Rebuild the URL from the session ID: never trust a cached href.
+                const url = `${window.location.origin}/t2/${encodeURIComponent(link.id)}?share_type=103`;
+                anchor.href = url;
+                anchor.target = '_blank';
+                anchor.rel = 'noopener noreferrer';
+                anchor.className = 'link-url';
+                anchor.textContent = url;
+                info.appendChild(anchor);
+                const dates = document.createElement('div');
+                dates.style.cssText = 'font-size:11px;color:#999;margin-top:5px;';
+                dates.innerHTML = `Создана: ${formatDate(link.created)} · Истекает через: <span class="time-remaining">${formatTimeUntilExpiry(link.expiresAt)}</span>${link.revoked ? ' · Отозвана' : ''}`;
+                info.appendChild(dates);
+                row.appendChild(info);
+                const actions = document.createElement('div');
+                actions.className = 'link-actions';
+                for (const [className, label, action] of [
+                    ['btn-chat', 'Чат', () => openChat(link.id)],
+                    ['btn-copy', 'Копировать', () => copyLink(url)],
+                    ['btn-delete', 'Удалить', () => deleteLinkAndRevoke(link.id)]
+                ]) {
+                    const button = document.createElement('button');
+                    button.className = className;
+                    button.textContent = label;
+                    button.onclick = action;
+                    actions.appendChild(button);
+                }
+                row.appendChild(actions);
+                linksList.appendChild(row);
+            });
         }
 
         // Обновление статистики
@@ -1866,7 +2017,8 @@
                 // Обновляем только элементы времени, не перерисовывая все
                 links.forEach((link, index) => {
                     if (link.expiresAt) {
-                        const timeEl = document.querySelector(`[data-link-id="${link.id}"] .time-remaining`);
+                        const row = Array.from(document.querySelectorAll('[data-link-id]')).find(el => el.dataset.linkId === link.id);
+                        const timeEl = row && row.querySelector('.time-remaining');
                         if (timeEl) {
                             timeEl.innerHTML = formatTimeUntilExpiry(link.expiresAt);
                         }
@@ -1877,12 +2029,17 @@
 
         // Инициализация при загрузке
         window.onload = () => {
+            const refresh = document.createElement('button');
+            refresh.textContent = 'Обновить ссылки';
+            refresh.onclick = loadLinks;
+            document.getElementById('linksList').before(refresh);
             renderLinks();
             updateStats();
             startLinkUpdates();
         };
         // Удаление ссылки + удаление истории на сервере
         async function deleteLinkAndRevoke(id) {
+            const epoch = authenticatedAccountEpoch;
             const link = links.find(l => l.id === id);
             if (!link) return;
 
@@ -1890,6 +2047,7 @@
                 return;
             }
 
+            linksRequest++;
             try {
                 // Удаляем сессию и историю на сервере
                 const res = await fetch('/api/delete', {
@@ -1905,9 +2063,10 @@
                     throw new Error('Server delete failed');
                 }
 
+                if (epoch !== authenticatedAccountEpoch) return;
                 // Удаляем локально
                 links = links.filter(link => link.id !== id);
-                localStorage.setItem('lovenseLinks', JSON.stringify(links));
+                cacheLinks();
                 renderLinks();
                 updateStats();
                 showToast('Ссылка и история удалены');
@@ -1925,13 +2084,27 @@
         let monitorCtx = null;
         let currentIntensity = 0;
         let monitorGraphInterval = null;
+        const chatDrafts = new Map();
+        let chatSendAttempt = 0;
+        let chatSendPending = false;
         let displayedMessageIds = new Set(); // Для отслеживания показанных сообщений
 
         // Используем глобальный socket вместо создания нового для каждого чата
         function initializeChatHandlers() {
+            socket.on('connect', () => {
+                if (currentNickname) socket.emit('identify', currentNickname);
+                if (currentChatSessionId) socket.emit('join-session', currentChatSessionId, 'admin');
+            });
+            socket.on('message-error', () => showToast('Не удалось отправить сообщение. Текст остался в поле ввода.'));
+            socket.on('authorization-error', () => showToast('Сессия входа истекла. Обновите страницу и войдите снова.'));
+            socket.on('session-error', error => showToast('Ошибка чата: ' + (error?.error || error?.message || 'доступ недоступен')));
+            socket.on('session-revoked', () => {
+                if (currentChatSessionId) { closeChat(); showToast('Сессия завершена'); }
+            });
             socket.on('session-data', (data) => {
                 if (currentChatSessionId && data.sessionId === currentChatSessionId) {
                     currentIntensity = data.intensity || 0;
+                    updateIntensityDisplay(currentIntensity);
                     loadMessages(data.messages || []);
                 }
             });
@@ -1959,13 +2132,15 @@
         }
 
         function openChat(sessionId) {
+            if (currentChatSessionId) chatDrafts.set(currentChatSessionId, document.getElementById('chatInput').value);
             // Если уже открыт чат - сначала покинуть предыдущую сессию
-            if (currentChatSessionId && previousChatSessionId !== currentChatSessionId) {
+            if (currentChatSessionId) {
                 socket.emit('leave-session', currentChatSessionId);
             }
 
             previousChatSessionId = currentChatSessionId;
             currentChatSessionId = sessionId;
+            document.getElementById('chatInput').value = chatDrafts.get(sessionId) || '';
             document.getElementById('chatModal').classList.add('show');
 
             // Очищаем предыдущие данные
@@ -1994,6 +2169,7 @@
         }
 
         function closeChat() {
+            if (currentChatSessionId) chatDrafts.set(currentChatSessionId, document.getElementById('chatInput').value);
             document.getElementById('chatModal').classList.remove('show');
 
             // Покидаем комнату сессии
@@ -2110,7 +2286,7 @@
                 // Голосовое сообщение
                 const className = msg.from === 'admin' ? 'admin' : 'controller';
                 const label = msg.from === 'admin' ? 'Вы' : 'Пользователь';
-                const voiceUrl = `/voice/${msg.voiceFile}`;
+                const voiceUrl = `/voice/${encodeURIComponent(String(msg.voiceFile || ''))}`;
 
                 messageHtml = `
                     <div class="message ${className}">
@@ -2119,7 +2295,7 @@
                             <audio controls style="max-width: 250px; height: 32px;">
                                 <source src="${voiceUrl}" type="audio/ogg">
                             </audio>
-                            <span style="font-size: 11px; color: #666;">${msg.duration}</span>
+                            <span style="font-size: 11px; color: #666;">${escapeHtml(msg.duration)}</span>
                         </div>
                         <div class="message-time">${time}</div>
                     </div>
@@ -2137,7 +2313,8 @@
                 `;
             }
 
-            chatContainer.innerHTML += messageHtml;
+            // Append without reparsing existing audio elements (and stopping playback).
+            chatContainer.insertAdjacentHTML('beforeend', messageHtml);
 
             // Автоскролл вниз
             chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -2145,28 +2322,40 @@
 
         function sendChatMessage() {
             if (!currentChatSessionId) return;
-
+            if (!socket.connected) { showToast('Нет соединения. Сообщение осталось в поле ввода.'); return; }
+            if (chatSendPending) { showToast('Дождитесь подтверждения предыдущего сообщения.'); return; }
             const input = document.getElementById('chatInput');
             const message = input.value.trim();
-
-            if (message) {
-                const chatMessage = {
-                    id: Date.now(),
-                    sessionId: currentChatSessionId,
-                    text: message,
-                    from: 'admin',
-                    timestamp: new Date().toISOString()
-                };
-
-                // Отправляем через глобальный Socket.io
-                socket.emit('chat-message', {
-                    sessionId: currentChatSessionId,
-                    message: chatMessage
-                });
-
-                input.value = '';
-                input.style.height = 'auto'; // Reset height after sending
-            }
+            if (!message) return;
+            if (message.length > 1000) { showToast('Сообщение должно быть не длиннее 1000 символов.'); return; }
+            const sessionId = currentChatSessionId;
+            const epoch = authenticatedAccountEpoch;
+            const attempt = ++chatSendAttempt;
+            chatSendPending = true;
+            chatDrafts.set(sessionId, input.value);
+            const timeout = setTimeout(() => {
+                if (epoch !== authenticatedAccountEpoch || chatSendAttempt !== attempt) return;
+                chatSendPending = false;
+                showToast('Подтверждение не пришло. Проверьте историю перед повторной отправкой; текст сохранён.');
+            }, 10000);
+            socket.emit('chat-message', {
+                sessionId,
+                message: { text: message, from: 'admin', timestamp: new Date().toISOString() }
+            }, result => {
+                clearTimeout(timeout);
+                if (epoch !== authenticatedAccountEpoch) return;
+                if (chatSendAttempt === attempt) chatSendPending = false;
+                if (!result?.ok) {
+                    showToast('Не удалось отправить сообщение. Текст остался в поле ввода.');
+                    return;
+                }
+                // Do not erase typing done while the durable save was pending.
+                if ((chatDrafts.get(sessionId) || '').trim() === message) chatDrafts.delete(sessionId);
+                if (currentChatSessionId === sessionId && input.value.trim() === message) {
+                    input.value = '';
+                    input.style.height = 'auto';
+                }
+            });
         }
 
         function handleChatKeyPress(event) {
@@ -2180,15 +2369,16 @@
         const chatInput = document.getElementById('chatInput');
         if (chatInput) {
             chatInput.addEventListener('input', function () {
+                if (currentChatSessionId) chatDrafts.set(currentChatSessionId, this.value);
                 this.style.height = 'auto';
                 this.style.height = Math.min(this.scrollHeight, 120) + 'px';
             });
         }
 
         function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            return String(text ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[char]));
         }
 
         // Закрытие модального окна по клику вне окна
@@ -2203,12 +2393,13 @@
 
         // Загрузка списка голосовых сообщений
         async function loadVoiceMessages() {
+            const epoch = authenticatedAccountEpoch;
             try {
                 const res = await fetch('/api/voice/list', {
                     headers: { 'X-Nickname': currentNickname }
                 });
                 const data = await res.json();
-                if (data.ok) {
+                if (data.ok && epoch === authenticatedAccountEpoch) {
                     availableVoices = data.voices;
                     renderVoicePicker();
                 }
@@ -2223,15 +2414,14 @@
                 return;
             }
 
-            body.innerHTML = availableVoices.map(voice => `
-                <div class="voice-item" onclick="sendVoiceMessage('${voice.id}', '${voice.file}', '${voice.duration}')">
-                    <span class="voice-item-icon">🎤</span>
-                    <div style="flex: 1;">
-                        <div style="font-weight: 600;">${voice.name}</div>
-                        <div style="font-size: 10px; color: #666;">${voice.duration}</div>
-                    </div>
-                </div>
-            `).join('');
+            body.replaceChildren();
+            availableVoices.forEach(voice => {
+                const item = document.createElement('div');
+                item.className = 'voice-item';
+                item.innerHTML = `<span class="voice-item-icon">🎤</span><div style="flex:1;"><div style="font-weight:600;">${escapeHtml(voice.name)}</div><div style="font-size:10px;color:#666;">${escapeHtml(voice.duration)}</div></div>`;
+                item.onclick = () => sendVoiceMessage(voice.id, voice.file, voice.duration);
+                body.appendChild(item);
+            });
         }
 
         // Переключение picker
@@ -2246,25 +2436,31 @@
         }
 
         function sendVoiceMessage(voiceId, voiceFile, duration) {
-            if (!currentChatSessionId) return;
-
-            const voiceMessage = {
-                id: Date.now(),
-                sessionId: currentChatSessionId,
-                type: 'voice',
-                voiceFile: voiceFile,
-                duration: duration,
-                from: 'admin',
-                timestamp: new Date().toISOString()
-            };
-
+            if (!currentChatSessionId || panelAccountInvalidated) return;
+            if (!socket.connected) { showToast('Нет соединения. Попробуйте снова после подключения.'); return; }
+            if (chatSendPending) { showToast('Дождитесь подтверждения предыдущего сообщения.'); return; }
+            const epoch = authenticatedAccountEpoch;
+            const attempt = ++chatSendAttempt;
+            chatSendPending = true;
+            const timeout = setTimeout(() => {
+                if (epoch !== authenticatedAccountEpoch || chatSendAttempt !== attempt) return;
+                chatSendPending = false;
+                showToast('Подтверждение голосового не пришло. Проверьте историю перед повторной отправкой.');
+            }, 10000);
             socket.emit('chat-message', {
                 sessionId: currentChatSessionId,
-                message: voiceMessage
+                message: { type: 'voice', voiceFile, duration, from: 'admin', timestamp: new Date().toISOString() }
+            }, result => {
+                clearTimeout(timeout);
+                if (epoch !== authenticatedAccountEpoch) return;
+                if (chatSendAttempt === attempt) chatSendPending = false;
+                if (!result?.ok) {
+                    showToast('Не удалось отправить голосовое сообщение. Попробуйте снова.');
+                    return;
+                }
+                document.getElementById('voicePicker').classList.remove('show');
+                showToast('Голосовое сообщение отправлено');
             });
-
-            document.getElementById('voicePicker').classList.remove('show');
-            showToast('Голосовое сообщение отправлено');
         }
 
         // Закрытие picker при клике вне его
@@ -2312,26 +2508,125 @@
             }
         }
 
-        // Загрузка snippets при инициализации
-        async function loadSnippets() {
-            try {
-                console.log('Loading snippets for user:', currentNickname);
-                const res = await fetch('/api/snippets/list', {
-                    headers: { 'X-Nickname': currentNickname }
+        let snippetsBaseData = SnippetsSync.clone(snippetsData);
+        let snippetsRevision = null;
+        let snippetsConflicts = [];
+        let snippetsSavePromise = null;
+        let snippetsPendingSnapshot = null;
+        let snippetsSaveError = '';
+
+        function hasUnsavedSnippets() {
+            return !SnippetsSync.equal(snippetsData, snippetsBaseData);
+        }
+
+        function renderSnippetSaveStatus() {
+            let status = document.getElementById('snippetSaveStatus');
+            const tree = document.getElementById('snippetTree');
+            if (!tree) return;
+            if (!status) {
+                status = document.createElement('div');
+                status.id = 'snippetSaveStatus';
+                status.setAttribute('role', 'status');
+                status.style.cssText = 'padding:8px;font-size:12px;border-bottom:1px solid #808080;';
+                tree.before(status);
+            }
+            status.replaceChildren();
+            const message = document.createElement('span');
+            message.textContent = snippetsConflicts.length
+                ? 'Конфликт: черновик сохранён в редакторе. Другой пользователь изменил те же данные.'
+                : snippetsSaveError || (snippetsSavePromise ? 'Сохранение…' : hasUnsavedSnippets() ? 'Есть несохранённые изменения' : 'Все изменения сохранены');
+            status.appendChild(message);
+            function button(label, action) {
+                const el = document.createElement('button');
+                el.textContent = label;
+                el.onclick = action;
+                el.style.margin = '4px';
+                status.appendChild(el);
+            }
+            if (snippetsConflicts.length) {
+                button('Сохранить мой вариант', () => {
+                    if (!confirm('Заменить конфликтующие поля вашим вариантом? Остальные изменения коллег сохранятся.')) return;
+                    snippetsConflicts = [];
+                    saveSnippets();
                 });
-                if (res.ok) {
-                    const data = await res.json();
-                    snippetsData = data.snippets || { folders: {}, snippets: {}, structure: [] };
-                    console.log('Snippets loaded:', Object.keys(snippetsData.snippets || {}).length, 'snippets,', Object.keys(snippetsData.folders || {}).length, 'folders');
-                    loadExpandedState(); // Восстанавливаем состояние открытых папок
-                    renderSnippetsTree();
-                } else {
-                    console.error('Failed to load snippets, status:', res.status);
-                }
-            } catch (e) {
-                console.error('Failed to load snippets:', e);
+                button('Принять серверный вариант', () => {
+                    if (!confirm('Отменить ВСЕ ваши несохранённые изменения и загрузить серверный вариант? Сначала можно экспортировать черновик.')) return;
+                    snippetsData = SnippetsSync.clone(snippetsBaseData);
+                    snippetsConflicts = [];
+                    snippetsSaveError = '';
+                    refreshSnippetEditors();
+                    renderSnippetSaveStatus();
+                });
+            } else if (snippetsRevision === null) {
+                button('Повторить загрузку', () => loadSnippets());
+            } else if (snippetsSaveError || hasUnsavedSnippets()) {
+                button('Повторить сохранение', () => saveSnippets());
+            }
+            if (hasUnsavedSnippets() || snippetsConflicts.length) button('Экспорт черновика', exportSnippets);
+        }
+
+        function refreshSnippetEditors() {
+            openSnippets = openSnippets.filter(id => {
+                if (snippetsData.snippets[id]) return true;
+                document.getElementById(`snippet-content-${id}`)?.remove();
+                if (autoSaveTimeouts.has(id)) clearTimeout(autoSaveTimeouts.get(id));
+                autoSaveTimeouts.delete(id);
+                return false;
+            });
+            if (!openSnippets.includes(activeSnippetId)) activeSnippetId = openSnippets.at(-1) || null;
+            if (currentSnippetId && !snippetsData.snippets[currentSnippetId]) currentSnippetId = null;
+            document.getElementById('snippetsViewer')?.classList.toggle('has-content', openSnippets.length > 0);
+            renderSnippetsTree();
+            renderSnippetTabs();
+            updateContainerMargin();
+        }
+
+        function receiveSnippets(data) {
+            if (panelAccountInvalidated) return false;
+            if (!SnippetsSync.valid(data?.snippets) || !Number.isSafeInteger(Number(data.revision)) || Number(data.revision) < 0 || data.revision == null) return false;
+            if (snippetsRevision !== null && Number(data.revision) <= Number(snippetsRevision)) return false;
+            // Our own broadcast may arrive before the HTTP acknowledgement. Use
+            // its snapshot as the base so typing after submission stays dirty.
+            const ownAcknowledgement = snippetsPendingSnapshot && SnippetsSync.equal(SnippetsSync.canonical(data.snippets), SnippetsSync.canonical(snippetsPendingSnapshot));
+            const merged = SnippetsSync.merge(ownAcknowledgement ? snippetsPendingSnapshot : snippetsBaseData, snippetsData, data.snippets);
+            snippetsData = merged.data;
+            snippetsBaseData = SnippetsSync.clone(data.snippets);
+            snippetsRevision = Number(data.revision);
+            snippetsConflicts = [...new Set([...snippetsConflicts, ...merged.conflicts])];
+            refreshSnippetEditors();
+            renderSnippetSaveStatus();
+            return true;
+        }
+
+        // A failed load must never make an empty local library overwrite the server.
+        async function loadSnippets() {
+            if (panelAccountInvalidated) return false;
+            const epoch = authenticatedAccountEpoch;
+            const owner = currentNickname;
+            try {
+                const res = await fetch('/api/snippets/list', { headers: { 'X-Nickname': currentNickname } });
+                if (!res.ok) throw new Error('load_failed');
+                const data = await res.json();
+                if (epoch !== authenticatedAccountEpoch || owner !== currentNickname) return false;
+                if (!SnippetsSync.valid(data.snippets) || data.revision == null) throw new Error('invalid_snippets');
+                receiveSnippets(data);
+                snippetsSaveError = '';
+                loadExpandedState();
+                renderSnippetSaveStatus();
+                return true;
+            } catch (error) {
+                if (epoch !== authenticatedAccountEpoch || owner !== currentNickname) return false;
+                snippetsSaveError = 'Не удалось загрузить сниппеты. Повторите попытку; черновик не потерян.';
+                renderSnippetSaveStatus();
+                return false;
             }
         }
+
+        window.addEventListener('beforeunload', event => {
+            if (panelAccountInvalidated || !hasUnsavedSnippets()) return;
+            event.preventDefault();
+            event.returnValue = '';
+        });
 
         // Переключение панели snippets
         function toggleSnippetsPanel() {
@@ -2456,7 +2751,9 @@
         }
 
         // Рендеринг папки
-        function renderSnippetFolder(folderId) {
+        function renderSnippetFolder(folderId, ancestors = new Set()) {
+            if (ancestors.has(folderId)) return document.createElement('div');
+            ancestors = new Set([...ancestors, folderId]);
             const folder = snippetsData.folders[folderId];
             if (!folder) return document.createElement('div');
 
@@ -2468,15 +2765,18 @@
             const folderEl = document.createElement('div');
             folderEl.className = 'snippet-folder';
             folderEl.innerHTML = `
-                <span onclick="toggleSnippetFolder('${folderId}')" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                    ${isExpanded ? '▼' : '▶'} 📁 ${escapeHtml(folder.name)}
-                </span>
+                <span class="folder-label" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isExpanded ? '▼' : '▶'} 📁 ${escapeHtml(folder.name)}</span>
                 <span class="snippet-actions">
-                    <button onclick="event.stopPropagation(); createSnippetInFolder('${folderId}')">+📄</button>
-                    <button onclick="event.stopPropagation(); renameSnippetFolder('${folderId}')">✏️</button>
-                    <button onclick="event.stopPropagation(); deleteSnippetFolder('${folderId}')">🗑️</button>
-                </span>
-            `;
+                    <button class="snippet-mutation">+📄</button>
+                    <button class="snippet-mutation">✏️</button>
+                    <button class="snippet-mutation">🗑️</button>
+                </span>`;
+            folderEl.querySelector('.folder-label').onclick = () => toggleSnippetFolder(folderId);
+            [createSnippetInFolder, renameSnippetFolder, deleteSnippetFolder].forEach((action, index) => {
+                const button = folderEl.querySelectorAll('button')[index];
+                button.hidden = !['admin', 'user'].includes(currentRole);
+                button.onclick = event => { event.stopPropagation(); action(folderId); };
+            });
 
             div.appendChild(folderEl);
 
@@ -2486,9 +2786,8 @@
                     const childrenDiv = document.createElement('div');
                     childrenDiv.className = 'snippet-folder-children';
                     children.forEach(childId => {
-                        if (snippetsData.snippets[childId]) {
-                            childrenDiv.appendChild(renderSnippetItem(childId));
-                        }
+                        if (snippetsData.snippets[childId]) childrenDiv.appendChild(renderSnippetItem(childId));
+                        else if (snippetsData.folders[childId]) childrenDiv.appendChild(renderSnippetFolder(childId, ancestors));
                     });
                     div.appendChild(childrenDiv);
                 }
@@ -2505,23 +2804,20 @@
             const div = document.createElement('div');
             div.className = `snippet-item ${currentSnippetId === snippetId ? 'selected' : ''}`;
             div.innerHTML = `
-                <span onclick="openSnippetViewer('${snippetId}')" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                    📄 ${escapeHtml(snippet.name)}
-                </span>
-                <span class="snippet-actions">
-                    <button onclick="event.stopPropagation(); copySnippetToClipboard('${snippetId}')">📋</button>
-                    <button onclick="event.stopPropagation(); deleteSnippetItem('${snippetId}')">🗑️</button>
-                </span>
-            `;
+                <span class="snippet-label" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 ${escapeHtml(snippet.name)}</span>
+                <span class="snippet-actions"><button>📋</button><button class="snippet-mutation">🗑️</button></span>`;
+            div.querySelector('.snippet-label').onclick = () => openSnippetViewer(snippetId);
+            const buttons = div.querySelectorAll('button');
+            buttons[0].onclick = event => { event.stopPropagation(); copySnippetToClipboard(snippetId); };
+            buttons[1].hidden = !['admin', 'user'].includes(currentRole);
+            buttons[1].onclick = event => { event.stopPropagation(); deleteSnippetItem(snippetId); };
             return div;
         }
 
         function getSnippetChildren(parentId) {
             const children = [];
-            Object.values(snippetsData.snippets).forEach(snippet => {
-                if (snippet.parentId === parentId) {
-                    children.push(snippet.id);
-                }
+            [...Object.values(snippetsData.folders), ...Object.values(snippetsData.snippets)].forEach(item => {
+                if (item.parentId === parentId) children.push(item.id);
             });
             return children;
         }
@@ -2585,8 +2881,7 @@
                 snippetsData.structure.push(id);
             }
 
-            await saveSnippets();
-            showToast('Папка создана');
+            if (await saveSnippets()) showToast('Папка создана');
         }
 
         // Создание сниппета (автоматически без модального окна)
@@ -2769,7 +3064,12 @@
         }
 
         function closeSnippetTab(snippetId) {
-            event.stopPropagation();
+            saveCurrentSnippetState(snippetId);
+            if (autoSaveTimeouts.has(snippetId)) {
+                clearTimeout(autoSaveTimeouts.get(snippetId));
+                autoSaveTimeouts.delete(snippetId);
+                saveSnippets();
+            }
 
             const index = openSnippets.indexOf(snippetId);
             if (index > -1) {
@@ -2785,6 +3085,7 @@
                 }
             }
 
+            document.getElementById(`snippet-content-${snippetId}`)?.remove();
             renderSnippetTabs();
 
             // Если больше нет открытых сниппетов, скрываем viewer
@@ -2833,10 +3134,13 @@
                 const tab = document.createElement('div');
                 tab.className = `snippet-tab ${snippetId === activeSnippetId ? 'active' : ''}`;
                 tab.onclick = () => switchToSnippetTab(snippetId);
-                tab.innerHTML = `
-                    <span>📄 ${escapeHtml(snippet.name)}</span>
-                    <span class="snippet-tab-close" onclick="closeSnippetTab('${snippetId}')">×</span>
-                `;
+                const title = document.createElement('span');
+                title.textContent = '📄 ' + snippet.name;
+                const close = document.createElement('span');
+                close.className = 'snippet-tab-close';
+                close.textContent = '×';
+                close.onclick = event => { event.stopPropagation(); closeSnippetTab(snippetId); };
+                tab.append(title, close);
                 tabsContainer.appendChild(tab);
             });
 
@@ -2866,16 +3170,21 @@
                 contentArea.className = 'snippet-content-area';
 
                 contentArea.innerHTML = `
-                    <input type="text" class="snippet-editor-title" value="${escapeHtml(snippet.name)}" placeholder="Название сниппета" onchange="autoSaveSnippet('${snippetId}')">
-                    <textarea class="snippet-editor-textarea" placeholder="Содержимое сниппета..." oninput="autoSaveSnippet('${snippetId}')">${escapeHtml(snippet.content)}</textarea>
-                    <div class="snippet-editor-actions">
-                        <button onclick="copySnippetToClipboard('${snippetId}')">📋 Копировать</button>
-                    </div>
-                `;
-
+                    <input type="text" class="snippet-editor-title" placeholder="Название сниппета">
+                    <textarea class="snippet-editor-textarea" placeholder="Содержимое сниппета..."></textarea>
+                    <div class="snippet-editor-actions"><button>📋 Копировать</button></div>`;
+                contentArea.querySelector('.snippet-editor-title').oninput = () => autoSaveSnippet(snippetId);
+                contentArea.querySelector('.snippet-editor-textarea').oninput = () => autoSaveSnippet(snippetId);
+                contentArea.querySelector('button').onclick = () => copySnippetToClipboard(snippetId);
                 contentContainer.appendChild(contentArea);
             }
-            // НЕ обновляем существующий контент - оставляем как есть, чтобы сохранить несохраненные изменения
+            const titleInput = contentArea.querySelector('.snippet-editor-title');
+            const textArea = contentArea.querySelector('.snippet-editor-textarea');
+            // The model includes input events immediately. Updating only changed
+            // values refreshes inactive tabs without moving the active cursor.
+            if (titleInput.value !== snippet.name) titleInput.value = snippet.name;
+            if (textArea.value !== snippet.content) textArea.value = snippet.content;
+            titleInput.readOnly = textArea.readOnly = !['admin', 'user'].includes(currentRole);
 
             // Показываем только активный контент (НЕ убираем active здесь, это сделано в renderSnippetTabs)
             if (snippetId === activeSnippetId) {
@@ -2886,6 +3195,9 @@
         // Автосохранение с debounce (отдельный таймер для каждого сниппета)
         const autoSaveTimeouts = new Map();
         function autoSaveSnippet(snippetId) {
+            if (!['admin', 'user'].includes(currentRole)) return;
+            saveCurrentSnippetState(snippetId);
+            renderSnippetSaveStatus();
             // Очищаем предыдущий таймер для ЭТОГО сниппета
             if (autoSaveTimeouts.has(snippetId)) {
                 clearTimeout(autoSaveTimeouts.get(snippetId));
@@ -2922,6 +3234,7 @@
             const snippet = snippetsData.snippets[snippetId];
             if (!snippet) return;
 
+            saveCurrentSnippetState(snippetId);
             navigator.clipboard.writeText(snippet.content).then(() => {
                 showToast('Сниппет скопирован в буфер обмена!');
             }).catch(() => {
@@ -2974,39 +3287,77 @@
         function deleteSnippetFolder(folderId) {
             if (!confirm('Удалить папку со всем содержимым?')) return;
 
-            // Удаляем все сниппеты в папке
-            Object.keys(snippetsData.snippets).forEach(id => {
-                if (snippetsData.snippets[id].parentId === folderId) {
-                    delete snippetsData.snippets[id];
-                }
+            const deletedFolders = new Set([folderId]);
+            let changed = true;
+            while (changed) {
+                changed = false;
+                Object.entries(snippetsData.folders).forEach(([id, folder]) => {
+                    if (deletedFolders.has(folder.parentId) && !deletedFolders.has(id)) {
+                        deletedFolders.add(id);
+                        changed = true;
+                    }
+                });
+            }
+            Object.entries(snippetsData.snippets).forEach(([id, snippet]) => {
+                if (deletedFolders.has(snippet.parentId)) delete snippetsData.snippets[id];
             });
-
-            delete snippetsData.folders[folderId];
-            snippetsData.structure = snippetsData.structure.filter(id => id !== folderId);
-
+            deletedFolders.forEach(id => delete snippetsData.folders[id]);
+            snippetsData.structure = snippetsData.structure.filter(id => snippetsData.folders[id] || snippetsData.snippets[id]);
+            refreshSnippetEditors();
             saveSnippets();
         }
 
-        // Сохранение на сервере
+        // Serialize saves; optimistic revisions prevent stale clients replacing
+        // the complete shared library. Failures remain visible and retryable.
         async function saveSnippets() {
-            try {
-                const res = await fetch('/api/snippets/save', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Nickname': currentNickname
-                    },
-                    body: JSON.stringify({ snippets: snippetsData })
-                });
-
-                if (res.ok) {
-                    renderSnippetsTree();
-                    showToast('Сниппеты сохранены');
-                } else {
-                    showToast('Ошибка сохранения');
+            if (panelAccountInvalidated || !['admin', 'user'].includes(currentRole)) return false;
+            const epoch = authenticatedAccountEpoch;
+            if (snippetsSavePromise) return snippetsSavePromise;
+            snippetsSavePromise = (async () => {
+                if (snippetsRevision === null && !(await loadSnippets())) return false;
+                if (epoch !== authenticatedAccountEpoch || snippetsConflicts.length) return false;
+                snippetsSaveError = '';
+                let conflictRetries = 0;
+                while (epoch === authenticatedAccountEpoch && hasUnsavedSnippets() && !snippetsConflicts.length) {
+                    const snapshot = SnippetsSync.clone(snippetsData);
+                    snippetsPendingSnapshot = snapshot;
+                    renderSnippetSaveStatus();
+                    try {
+                        const res = await fetch('/api/snippets/save', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-Nickname': currentNickname },
+                            body: JSON.stringify({ snippets: snapshot, baseRevision: snippetsRevision })
+                        });
+                        const data = await res.json();
+                        if (epoch !== authenticatedAccountEpoch) return false;
+                        if (res.status === 409) {
+                            if (!SnippetsSync.valid(data.snippets) || data.revision == null || ++conflictRetries > 3) throw new Error('invalid_conflict');
+                            receiveSnippets(data);
+                            // A disjoint update can be merged and retried safely.
+                            if (snippetsConflicts.length) return false;
+                            continue;
+                        }
+                        if (!res.ok || !SnippetsSync.valid(data.snippets) || data.revision == null) throw new Error('save_failed');
+                        conflictRetries = 0;
+                        receiveSnippets(data);
+                    } catch (error) {
+                        if (epoch !== authenticatedAccountEpoch) return false;
+                        snippetsSaveError = 'Не удалось сохранить. Черновик остался в редакторе — повторите сохранение.';
+                        return false;
+                    } finally {
+                        if (epoch === authenticatedAccountEpoch) snippetsPendingSnapshot = null;
+                    }
                 }
-            } catch (e) {
-                showToast('Ошибка сохранения');
+                if (epoch !== authenticatedAccountEpoch) return false;
+                refreshSnippetEditors();
+                return !snippetsConflicts.length;
+            })();
+            try { return await snippetsSavePromise; }
+            finally {
+                if (epoch === authenticatedAccountEpoch) {
+                    snippetsSavePromise = null;
+                    renderSnippetSaveStatus();
+                }
             }
         }
 
@@ -3028,18 +3379,22 @@
 
         // Импорт snippets
         function importSnippets(input) {
+            if (panelAccountInvalidated || !['admin', 'user'].includes(currentRole)) { input.value = ''; return; }
+            const epoch = authenticatedAccountEpoch;
             const file = input.files[0];
             if (!file) return;
 
             const reader = new FileReader();
             reader.onload = async function (e) {
+                if (epoch !== authenticatedAccountEpoch) return;
                 try {
                     const importedData = JSON.parse(e.target.result);
+                    if (!SnippetsSync.valid(importedData)) throw new Error('invalid_snippets');
 
                     if (confirm('Импортировать сниппеты? Текущие данные будут заменены!')) {
                         snippetsData = importedData;
-                        await saveSnippets();
-                        showToast('Сниппеты импортированы');
+                        refreshSnippetEditors();
+                        if (await saveSnippets()) showToast('Сниппеты импортированы');
                     }
                 } catch (error) {
                     showToast('Ошибка импорта: неверный формат файла');
@@ -3050,89 +3405,10 @@
             input.value = '';
         }
 
-        // Socket.IO обновления для snippets
-        socket.on('snippets-updated', (data) => {
-            console.log('Snippets updated via socket.io');
-
-            // Обновляем только DATA сниппетов, НЕ затрагивая UI
-            const oldSnippetsData = JSON.parse(JSON.stringify(snippetsData));
-            snippetsData = data.snippets;
-
-            // Восстанавливаем локальное состояние открытых папок (НЕ синхронизируем UI)
-            loadExpandedState();
-
-            // Проверяем, не удалены ли какие-то из открытых сниппетов
-            const deletedSnippets = [];
-            openSnippets.forEach(snippetId => {
-                if (!snippetsData.snippets[snippetId]) {
-                    deletedSnippets.push(snippetId);
-                }
-            });
-
-            // Закрываем удаленные сниппеты
-            deletedSnippets.forEach(snippetId => {
-                console.log(`Snippet ${snippetId} was deleted by another user, closing tab`);
-                const index = openSnippets.indexOf(snippetId);
-                if (index > -1) {
-                    openSnippets.splice(index, 1);
-                }
-
-                // Удаляем контент
-                const contentArea = document.getElementById(`snippet-content-${snippetId}`);
-                if (contentArea) {
-                    contentArea.remove();
-                }
-
-                // Если это был активный сниппет, переключаемся на другой
-                if (activeSnippetId === snippetId) {
-                    if (openSnippets.length > 0) {
-                        activeSnippetId = openSnippets[openSnippets.length - 1];
-                    } else {
-                        activeSnippetId = null;
-                    }
-                }
-            });
-
-            // Если были удалены сниппеты и больше нет открытых, скрываем viewer
-            if (deletedSnippets.length > 0 && openSnippets.length === 0) {
-                const viewer = document.getElementById('snippetsViewer');
-                viewer.classList.remove('has-content');
-                updateContainerMargin();
-                showToast('Некоторые открытые сниппеты были удалены другим пользователем');
-            }
-
-            // Перерисовываем только дерево (список), НЕ затрагивая открытые вкладки
-            renderSnippetsTree();
-
-            // Обновляем содержимое ТОЛЬКО для активной открытой вкладки, если она изменилась
-            if (activeSnippetId && openSnippets.includes(activeSnippetId)) {
-                const newSnippet = snippetsData.snippets[activeSnippetId];
-                const oldSnippet = oldSnippetsData.snippets[activeSnippetId];
-
-                // Обновляем только если контент действительно изменился
-                if (newSnippet && oldSnippet && newSnippet.content !== oldSnippet.content) {
-                    const contentArea = document.getElementById(`snippet-content-${activeSnippetId}`);
-                    if (contentArea) {
-                        const textArea = contentArea.querySelector('.snippet-editor-textarea');
-                        const titleInput = contentArea.querySelector('.snippet-editor-title');
-
-                        // Проверяем, не редактирует ли пользователь прямо сейчас
-                        const isEditing = document.activeElement === textArea || document.activeElement === titleInput;
-
-                        if (!isEditing) {
-                            // Обновляем только если пользователь НЕ редактирует
-                            if (titleInput) titleInput.value = newSnippet.name;
-                            if (textArea) textArea.value = newSnippet.content;
-                            console.log('Snippet content auto-updated from sync');
-                        } else {
-                            console.log('Skipping auto-update: user is currently editing');
-                        }
-                    }
-                }
-            }
-
-            // Обновляем заголовки вкладок (названия могли измениться)
-            renderSnippetTabs();
+        // Merge remote updates into every open tab, never over a local draft.
+        socket.on('snippets-updated', receiveSnippets);
+        socket.on('connect', () => {
+            if (currentNickname && currentRole !== 'new') loadSnippets();
         });
 
         // Периодическая проверка авторизации (каждые 30 секунд)
@@ -3144,7 +3420,14 @@
                     headers: { 'X-Nickname': currentNickname }
                 });
 
-                if (!res.ok) {
+                if (res.ok) {
+                    const auth = await res.json();
+                    if (auth.nickname !== currentNickname || auth.role !== currentRole) {
+                        invalidateAuthenticatedPanel();
+                        window.location.reload();
+                    }
+                } else if (res.status === 401 || res.status === 403) {
+                    invalidateAuthenticatedPanel();
                     // Пользователь больше не авторизован - выкидываем
                     console.log('User no longer authorized, logging out...');
                     localStorage.removeItem('nickname');
@@ -3176,7 +3459,7 @@
 
             <div class="snippet-export-section">
                 <button onclick="exportSnippets()">📦 Экспорт</button>
-                <button onclick="document.getElementById('snippetImportFile').click()">📥 Импорт</button>
+                <button class="snippet-mutation" onclick="document.getElementById('snippetImportFile').click()">📥 Импорт</button>
                 <input type="file" id="snippetImportFile" accept=".json" onchange="importSnippets(this)"
                     style="display: none;">
             </div>

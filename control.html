@@ -37883,6 +37883,7 @@
         isLoaded = true;
         const list = document.querySelector('.chat-list ul') || document.querySelector('.chat-list');
         if (list) list.innerHTML = '';
+        displayedControllerMessageIds.clear();
 
         // Add initial session info messages (like original Lovense)
         addTimeMessage(); // Add timestamp first
@@ -37900,14 +37901,16 @@
         // Load chat history
         data.messages.forEach(m => {
           if (m.from === 'admin') { addAdminMessage(m.text, m.type === 'voice', m); }
-          else if (m.from === 'controller' && m.text) { addUserMessage(m.text); }
+          else if (m.from === 'controller' && m.text) { displayControllerMessage(m); }
         });
       }
       if (data && data.expiresAt) { startCountdown(data.expiresAt); }
       else { const t = document.querySelector('.time'); if (t) t.textContent = '♾️'; }
     });
     socket.on('new-message', (m) => {
+      if (m.sessionId && m.sessionId !== sessionId) return;
       if (m.from === 'admin') { addAdminMessage(m.text, m.type === 'voice', m); }
+      else if (m.from === 'controller' && m.text) { displayControllerMessage(m); }
     });
     socket.on('session-revoked', () => { document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center"><h1>Session ended</h1></div>'; });
 
@@ -37997,14 +38000,60 @@
     }
     setInterval(() => { pts.push(intensity); if (pts.length > 50) pts.shift(); drawG(); }, 80);
 
+    const displayedControllerMessageIds = new Set();
+    let controllerSendPending = false;
+    let controllerSendAttempt = 0;
+
+    function displayControllerMessage(message) {
+      if (message.id && displayedControllerMessageIds.has(message.id)) return;
+      if (message.id) displayedControllerMessageIds.add(message.id);
+      addUserMessage(message.text);
+    }
+
+    function showControllerSendStatus(text, isError = false) {
+      const inp = document.querySelector('.inp') || document.querySelector('[contenteditable]');
+      if (!inp) return;
+      let status = document.getElementById('controllerSendStatus');
+      if (!status) {
+        status = document.createElement('div');
+        status.id = 'controllerSendStatus';
+        status.setAttribute('role', 'status');
+        status.style.cssText = 'font-size:12px;line-height:1.4;padding:4px 8px;';
+        inp.parentElement.appendChild(status);
+      }
+      status.style.color = isError ? '#b42318' : '#666';
+      status.textContent = text;
+    }
+
     function sendMessage() {
       const inp = document.querySelector('.inp') || document.querySelector('[contenteditable]');
+      if (!inp) return;
       const txt = (inp.innerText || inp.textContent || '').trim();
-      if (txt) {
-        socket.emit('chat-message', { sessionId, message: { text: txt, from: 'controller' } });
-        addUserMessage(txt);
-        inp.innerText = '';
-      }
+      if (!txt) return;
+      if (!socket.connected) { showControllerSendStatus('Disconnected. Your message is still here; retry after reconnecting.', true); return; }
+      if (controllerSendPending) { showControllerSendStatus('Waiting for confirmation of your previous message.'); return; }
+      if (txt.length > 1000) { showControllerSendStatus('Please use 1,000 characters or fewer.', true); return; }
+      const attempt = ++controllerSendAttempt;
+      controllerSendPending = true;
+      showControllerSendStatus('Sending…');
+      const timeout = setTimeout(() => {
+        if (controllerSendAttempt !== attempt) return;
+        controllerSendPending = false;
+        showControllerSendStatus('No confirmation received. Check the chat before retrying; your text has not been cleared.', true);
+      }, 10000);
+      socket.emit('chat-message', { sessionId, message: { text: txt, from: 'controller' } }, result => {
+        clearTimeout(timeout);
+        if (controllerSendAttempt === attempt) controllerSendPending = false;
+        if (!result?.ok) {
+          if (controllerSendAttempt === attempt) showControllerSendStatus('Message was not sent. Your text is still here; please retry.', true);
+          return;
+        }
+        // Durable broadcast, reconnect history and ACK may arrive in either
+        // order; the server ID ensures only one copy is displayed.
+        displayControllerMessage({ id: result.messageId, text: txt });
+        if ((inp.innerText || inp.textContent || '').trim() === txt) inp.textContent = '';
+        if (controllerSendAttempt === attempt) showControllerSendStatus('');
+      });
     }
     function addUserMessage(t) {
       const ul = document.querySelector('.chat-list ul') || document.querySelector('.chat-list');
@@ -38027,18 +38076,20 @@
         li.innerHTML = '<div class="chat-area" style="display:flex;align-items:flex-start;padding:8px 0;">' +
           '<img class="avatar" src="' + PINK_AVATAR + '" style="width:40px;height:40px;border-radius:50%;margin-right:8px;">' +
           '<div class="content">' +
-          '<div class="info voice-msg" onclick="playVoice(this, \'' + d.voiceFile + '\')" style="background:linear-gradient(135deg,#FFE4EC,#FFF0F5);padding:10px 14px;border-radius:20px;cursor:pointer;display:inline-flex;align-items:center;gap:10px;min-width:180px;">' +
+          '<div class="info voice-msg" style="background:linear-gradient(135deg,#FFE4EC,#FFF0F5);padding:10px 14px;border-radius:20px;cursor:pointer;display:inline-flex;align-items:center;gap:10px;min-width:180px;">' +
           '<div class="play-btn" style="width:32px;height:32px;background:#FF2D76;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
           '<div class="play-icon" style="width:0;height:0;border-left:10px solid #fff;border-top:6px solid transparent;border-bottom:6px solid transparent;margin-left:3px;"></div>' +
           '</div>' +
           '<div class="waveform" style="display:flex;align-items:center;gap:2px;height:24px;">' + waveformBars.join('') + '</div>' +
-          '<span style="color:#666;font-size:12px;white-space:nowrap;">' + (d.duration || '0:00') + '</span>' +
+          '<span style="color:#666;font-size:12px;white-space:nowrap;">' + esc(d.duration || '0:00') + '</span>' +
           '</div>' +
           '</div>' +
           '</div>';
       } else {
         li.innerHTML = '<div class="chat-area"><img class="avatar" src="' + PINK_AVATAR + '"><span class="arrow"></span><div class="content"><div class="info"><div class="chat-text">' + esc(t) + '</div></div></div></div>';
       }
+      const voiceMessage = li.querySelector('.voice-msg');
+      if (voiceMessage) voiceMessage.onclick = () => playVoice(voiceMessage, d.voiceFile);
       ul.appendChild(li); scroll();
     }
     function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -38073,7 +38124,7 @@
       }
 
       // Play new audio
-      const audio = new Audio('/voice/' + voiceFile);
+      const audio = new Audio('/voice/' + encodeURIComponent(String(voiceFile || '')));
       currentAudio = audio;
       currentPlayBtn = playBtn;
       audio.play();

@@ -1,3 +1,7 @@
+// Legacy TIMESTAMP columns contain UTC values. Use one timezone consistently
+// for pg's Date serialization/parsing and expiry comparisons on every host.
+process.env.TZ = 'UTC';
+
 const express = require('express');
 const http = require('http');
 const https = require('https');
@@ -5,14 +9,29 @@ const socketIo = require('socket.io');
 const path = require('path');
 const bcrypt = require('bcrypt');
 const { Pool } = require('pg');
-const fs = require('fs');
 const crypto = require('crypto');
+const backendState = require('./lib/backend-state');
+const STAFF_SOCKET_ROOM = 'authenticated-staff';
 
 const app = express();
+let shuttingDown = false;
+const backgroundTimers = new Set();
+function backgroundInterval(callback, milliseconds) {
+    const timer = setInterval(callback, milliseconds);
+    timer.unref();
+    backgroundTimers.add(timer);
+    return timer;
+}
 // Railway terminates TLS at its proxy. Trust the first proxy so req.secure and
 // secure cookies reflect the public HTTPS request instead of the internal hop.
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    if (req.path.toLowerCase().startsWith('/api/')) res.setHeader('Cache-Control', 'private, no-store');
+    next();
+});
 const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
@@ -33,7 +52,27 @@ const DAY1_GROK_QUEUE_LIMIT = Math.max(DAY1_GROK_CONCURRENCY, Math.min(100,
 // Инициализация базы данных PostgreSQL
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    ssl: process.env.DATABASE_SSL === 'disable' ? false
+        : process.env.DATABASE_SSL === 'verify-full' ? { rejectUnauthorized: true }
+        : (process.env.NODE_ENV === 'production' || process.env.DATABASE_SSL === 'require')
+            ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 10000,
+    idleTimeoutMillis: 30000,
+    options: '-c timezone=UTC'
+});
+pool.on('error', error => console.error('Idle database client error:', error.message));
+
+app.get('/healthz', (_req, res) => {
+    res.status(shuttingDown ? 503 : 200).json({ status: shuttingDown ? 'stopping' : 'ok' });
+});
+app.get('/readyz', async (_req, res) => {
+    if (shuttingDown) return res.status(503).json({ status: 'stopping' });
+    try {
+        await pool.query({ text: 'SELECT 1', query_timeout: 2000 });
+        return res.json({ status: 'ready' });
+    } catch (_) {
+        return res.status(503).json({ status: 'unavailable' });
+    }
 });
 
 // Проверка подключения
@@ -53,15 +92,9 @@ const gradingV2 = require('./learn/grading-v2.js');
 const DAY1_ENABLED = process.env.TRAINING_DAY1_ENABLED !== '0';
 const day1GradingInFlight = new Map();
 
-// XAI ключ: из env (прод), с фолбэком на .env (локалка). В браузер не уходит.
-let XAI_API_KEY = process.env.XAI_API_KEY || '';
-if (!XAI_API_KEY) {
-    try {
-        fs.readFileSync(path.join(__dirname, '.env'), 'utf8').split('\n').forEach(l => {
-            const m = l.match(/^\s*XAI_API_KEY\s*=\s*(.+?)\s*$/); if (m) XAI_API_KEY = m[1];
-        });
-    } catch (e) {}
-}
+// npm start loads .env with Node's parser; direct process env wins. Never read
+// a secret file implicitly when importing application code in tools or tests.
+const XAI_API_KEY = String(process.env.XAI_API_KEY || '').trim();
 if (!MASTER_INVITE_CODE) {
     console.warn('MASTER_INVITE_CODE is not configured; master-code registration is disabled');
 }
@@ -396,6 +429,16 @@ const databaseReady = (async () => {
             )
         `);
 
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS wheel_codes (
+                code TEXT PRIMARY KEY,
+                prize TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                used_at TIMESTAMP
+            )
+        `);
+
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_logs_session ON session_logs(session_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_sessions_creator ON sessions(creator_nickname)`);
@@ -457,6 +500,8 @@ const databaseReady = (async () => {
             )
         `);
 
+        await pool.query(`ALTER TABLE case_openings ADD COLUMN IF NOT EXISTS result_json JSONB`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_openings_grant ON case_openings(grant_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_grants_worker ON case_grants(worker_nickname)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_openings_worker ON case_openings(worker_nickname)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_tier_prizes_tier ON case_tier_prizes(tier)`);
@@ -488,7 +533,7 @@ async function cleanupAuthSessions() {
     }
 }
 
-const authSessionCleanupTimer = setInterval(cleanupAuthSessions, 60 * 60 * 1000);
+const authSessionCleanupTimer = backgroundInterval(cleanupAuthSessions, 60 * 60 * 1000);
 if (typeof authSessionCleanupTimer.unref === 'function') authSessionCleanupTimer.unref();
 
 // Загрузка данных из БД при старте сервера
@@ -506,22 +551,29 @@ async function loadDataFromDatabase() {
         console.log(`Loaded ${users.size} registered users from database`);
 
         // 2. Загружаем сниппеты
-        const snippetsResult = await pool.query('SELECT data FROM snippets_data ORDER BY id DESC LIMIT 1');
+        const snippetsResult = await pool.query('SELECT id, data FROM snippets_data ORDER BY id DESC LIMIT 1');
         if (snippetsResult.rows.length > 0) {
             globalSnippets = snippetsResult.rows[0].data;
+            snippetsRevision = Number(snippetsResult.rows[0].id);
             console.log('Loaded snippets from database');
         } else {
             console.log('No snippets found in database, using empty state');
         }
+        // Expiration remains effective after a restart, even without a page visit.
+        const expiring = await pool.query(`SELECT id, expires_at FROM sessions
+            WHERE deleted_at IS NULL AND revoked=false AND is_active=true AND expires_at IS NOT NULL`);
+        for (const row of expiring.rows) setupExpiry(row.id, row.expires_at);
     } catch (err) {
         console.error('Error loading data from database:', err);
+        throw err;
     }
 }
 
 // Засев призов кейсов при первом запуске (если пул ещё пуст)
 async function seedCasePrizes() {
-    try {
-        const existing = await pool.query('SELECT COUNT(*) AS c FROM case_prizes');
+    return backendState.transaction(pool, async client => {
+        await client.query('SELECT pg_advisory_xact_lock($1)', [1936289394]);
+        const existing = await client.query('SELECT COUNT(*) AS c FROM case_prizes');
         if (parseInt(existing.rows[0].c) > 0) return;
 
         // kind: reward (выдаёт админ) | task (задание воркеру) | case (выпадает кейс)
@@ -543,7 +595,7 @@ async function seedCasePrizes() {
 
         const idByKey = {};
         for (const p of prizeDefs) {
-            const r = await pool.query(
+            const r = await client.query(
                 'INSERT INTO case_prizes (name, kind, case_tier, icon, rarity, is_active, created_at) VALUES ($1,$2,$3,$4,$5,true,NOW()) RETURNING id',
                 [p.name, p.kind, p.caseTier, p.icon, p.rarity]
             );
@@ -574,21 +626,19 @@ async function seedCasePrizes() {
             { tier: 3, key: 'paste', weight: 50 }
         ];
         for (const t of tierMap) {
-            await pool.query(
+            await client.query(
                 'INSERT INTO case_tier_prizes (tier, prize_id, weight) VALUES ($1,$2,$3)',
                 [t.tier, idByKey[t.key], t.weight]
             );
         }
         console.log('Case prizes seeded');
-    } catch (err) {
-        console.error('Seed case prizes error:', err);
-    }
+    });
 }
 
 // Периодическая синхронизация пользователей с БД (каждые 5 минут)
-setInterval(async () => {
+backgroundInterval(async () => {
     try {
-        const usersResult = await pool.query('SELECT nickname FROM user_registrations');
+        const usersResult = await pool.query('SELECT nickname, role FROM user_registrations');
 
         // Удаляем пользователей, которых нет в БД
         const dbNicknames = new Set(usersResult.rows.map(row => row.nickname));
@@ -601,10 +651,7 @@ setInterval(async () => {
 
         // Добавляем новых пользователей из БД (note: role will be fetched on next full sync)
         usersResult.rows.forEach(row => {
-            if (!users.has(row.nickname)) {
-                users.set(row.nickname, { role: 'reader' });
-                console.log(`Added new user to memory: ${row.nickname}`);
-            }
+            users.set(row.nickname, { role: row.nickname === SUPER_ADMIN ? 'admin' : (row.role || 'reader') });
         });
 
         console.log(`User sync: ${users.size} users in memory`);
@@ -691,53 +738,26 @@ app.get('/learn/results.json', (req, res) => res.status(404).send('not found'));
 app.get('/learn/programs/day1-v1.js', (req, res) => res.status(404).send('not found'));
 app.get('/learn/programs/day1-v1-rubrics.js', (req, res) => res.status(404).send('not found'));
 
-const PRIVATE_STATIC_PATHS = new Set([
-    '/.env',
-    '/package.json',
-    '/package-lock.json',
-    '/server.js',
-    '/clear-db.js',
-    '/learn/lessons.js',
-    '/learn/app.js',
-    '/learn/styles.css',
-    '/learn/dashboard.html',
-    '/learn/grading.js',
-    '/learn/grading-v2.js',
-    '/learn/grading-v2.test.js',
-    '/learn/day1-theory.test.js',
-    '/learn/day1-preview-server.js',
-    '/learn/server.js',
-    '/learn/results.json',
-    '/learn/programs/day1-v1.js',
-    '/learn/programs/day1-v1-rubrics.js'
+// Explicit public surface: new source files, backups and fixtures are private by default.
+const PUBLIC_FILES = new Map([
+    ['/index.html', 'index.html'], ['/favicon.ico', 'favicon.ico'],
+    ['/cases.css', 'cases.css'], ['/pic.png', 'pic.png'], ['/avatars.json', 'avatars.json'],
+    ['/spin.mp3', 'spin.mp3'], ['/win.mp3', 'win.mp3'], ['/music.mp3', 'music.mp3'],
+    ['/snippets-sync.js', 'public/snippets-sync.js'],
+    ['/public/snippets-sync.js', 'public/snippets-sync.js'],
+    ['/public/lovense-home.html', 'public/lovense-home.html']
 ]);
 app.use((req, res, next) => {
-    const normalizedPath = normalizedRequestPath(req);
-    if (!normalizedPath) return res.status(404).send('not found');
-    if (
-        PRIVATE_STATIC_PATHS.has(normalizedPath) ||
-        normalizedPath === '/learn/evals' ||
-        normalizedPath.startsWith('/learn/evals/') ||
-        normalizedPath === '/learn/programs' ||
-        normalizedPath.startsWith('/learn/programs/') ||
-        (normalizedPath.startsWith('/learn/') && normalizedPath.endsWith('.test.js')) ||
-        normalizedPath.startsWith('/.env.') ||
-        normalizedPath === '/node_modules' ||
-        normalizedPath.startsWith('/node_modules/') ||
-        normalizedPath === '/.git' ||
-        normalizedPath.startsWith('/.git/')
-    ) {
-        return res.status(404).send('not found');
-    }
-    next();
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    if (!['GET', 'HEAD'].includes(req.method)) return next();
+    const file = PUBLIC_FILES.get(normalizedRequestPath(req));
+    if (!file) return next();
+    return res.sendFile(path.join(__dirname, file));
 });
-
-// Serve static files
-app.use(express.static(__dirname));
-app.use('/public', express.static(path.join(__dirname, 'public')));
-app.use(express.json({ limit: '10mb' })); // Увеличенный лимит для больших объемов снипетов
-
-app.use('/voice', express.static(path.join(__dirname, 'voice_messages')));
+app.use('/assets', express.static(path.join(__dirname, 'assets'), { index: false, dotfiles: 'deny' }));
+app.use(express.json({ limit: '10mb' }));
+app.use('/voice', express.static(path.join(__dirname, 'voice_messages'), { index: false, dotfiles: 'deny' }));
 
 app.get('/control.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'control.html'));
@@ -773,6 +793,7 @@ app.get('/logs.html', (req, res) => {
 });
 
 const sessions = new Map();
+const pendingSessionLoads = new Set();
 const expiryTimers = new Map();
 const SUPER_ADMIN = '02ashes'; // Permanent admin, cannot be changed
 const users = new Map();
@@ -787,7 +808,7 @@ const voiceMessages = [
 ];
 const invites = new Map();
 const onlineUserSockets = new Map();
-const wheelCodes = new Map();
+let snippetsRevision = 0;
 
 // Text Snippets хранилище (общее для всех админов)
 let globalSnippets = {
@@ -796,12 +817,20 @@ let globalSnippets = {
     structure: []
 };
 
+function invalidatePendingSessionLoads(sessionId) {
+    for (const pending of pendingSessionLoads) {
+        if (pending.sessionId === sessionId) pending.invalidated = true;
+    }
+}
+
 // Helper to get or create session in memory (for real-time sync)
 async function getOrCreateSessionInMemory(sessionId, callback) {
     if (sessions.has(sessionId)) {
         return callback(null, sessions.get(sessionId));
     }
 
+    const pending = { sessionId, invalidated: false };
+    pendingSessionLoads.add(pending);
     try {
         const sessionResult = await pool.query('SELECT * FROM sessions WHERE id = $1 AND deleted_at IS NULL', [sessionId]);
         const dbSession = sessionResult.rows[0];
@@ -809,6 +838,8 @@ async function getOrCreateSessionInMemory(sessionId, callback) {
         if (dbSession) {
             const msgsResult = await pool.query('SELECT * FROM messages WHERE session_id = $1 ORDER BY id ASC', [sessionId]);
             const msgs = msgsResult.rows;
+            if (pending.invalidated) return getOrCreateSessionInMemory(sessionId, callback);
+            if (sessions.has(sessionId)) return callback(null, sessions.get(sessionId));
 
             const messages = (msgs || []).map(m => ({
                 id: m.message_id,
@@ -832,8 +863,10 @@ async function getOrCreateSessionInMemory(sessionId, callback) {
             };
 
             sessions.set(sessionId, session);
+            if (session.isActive && !session.revoked) setupExpiry(sessionId, session.expiresAt);
             callback(null, session);
         } else {
+            if (pending.invalidated) return getOrCreateSessionInMemory(sessionId, callback);
             const session = {
                 messages: [],
                 intensity: 0,
@@ -847,11 +880,13 @@ async function getOrCreateSessionInMemory(sessionId, callback) {
         }
     } catch (err) {
         return callback(err);
+    } finally {
+        pendingSessionLoads.delete(pending);
     }
 }
 
 function canManageControlSession(user, session) {
-    if (!user || !session || !session.wasCreated) return false;
+    if (!backendState.isStaff(user) || !session || !session.wasCreated) return false;
     return user.role === 'admin' || session.creatorNickname === user.nickname;
 }
 
@@ -889,6 +924,7 @@ app.post('/api/revoke', requireRegistration, async (req, res) => {
                 sessions.delete(sessionId);
                 return res.status(404).json({ error: 'session_not_found' });
             }
+            invalidatePendingSessionLoads(sessionId);
             session.revoked = true;
             session.isActive = false;
             sessions.set(sessionId, session);
@@ -928,7 +964,10 @@ app.post('/api/delete', requireRegistration, async (req, res) => {
 
         try {
             // Помечаем сессию как удаленную
-            const updateResult = await pool.query('UPDATE sessions SET deleted_at = $1 WHERE id = $2', [new Date(), sessionId]);
+            const updateResult = await pool.query('UPDATE sessions SET deleted_at = $1,revoked=true,is_active=false WHERE id = $2', [new Date(), sessionId]);
+            invalidatePendingSessionLoads(sessionId);
+            session.revoked = true;
+            session.isActive = false;
 
             // Логируем только если сессия была найдена и обновлена
             if (updateResult.rowCount > 0) {
@@ -961,101 +1000,96 @@ app.post('/api/create', requireRegistration, async (req, res) => {
     const parsedExpiry = parseControlSessionExpiry(req.body?.expiresAt);
     if (!parsedExpiry.ok) return res.status(400).json({ error: 'invalid_expiry' });
     const expiresAt = parsedExpiry.value;
-
     const nickname = req.user.nickname;
-    const now = new Date();
-
     try {
-        const result = await pool.query('SELECT * FROM sessions WHERE id = $1 AND deleted_at IS NULL', [sessionId]);
-        const existingSession = result.rows[0];
-
-        if (existingSession) {
-            const canManageExisting = req.user.role === 'admin' ||
-                existingSession.creator_nickname === nickname;
-            if (!canManageExisting) {
-                return res.status(403).json({ error: 'permission_denied' });
+        const saved = await backendState.transaction(pool, async client => {
+            // Coordinate with account deletion so old requests cannot recreate a removed identity's sessions.
+            const user = await client.query('SELECT nickname,role FROM user_registrations WHERE nickname=$1 FOR UPDATE', [nickname]);
+            if (!user.rows.length) throw new backendState.ApiError(401, 'login_required');
+            if (!backendState.isStaff(user.rows[0])) throw new backendState.ApiError(403, 'trainee_restricted');
+            const existing = await client.query('SELECT * FROM sessions WHERE id=$1 FOR UPDATE', [sessionId]);
+            const row = existing.rows[0];
+            if (row && row.deleted_at) throw new backendState.ApiError(409, 'session_id_unavailable');
+            if (row && user.rows[0].role !== 'admin' && row.creator_nickname !== nickname) {
+                throw new backendState.ApiError(403, 'permission_denied');
             }
-            getOrCreateSessionInMemory(sessionId, async (err, session) => {
-                if (err) return res.status(500).json({ error: 'database_error' });
-
-                try {
-                    const updateResult = await pool.query(
-                        `UPDATE sessions
-                         SET revoked=false, is_active=true, expires_at=$1
-                         WHERE id=$2 AND deleted_at IS NULL`,
-                        [expiresAt || null, sessionId]
-                    );
-                    if (updateResult.rowCount !== 1) {
-                        sessions.delete(sessionId);
-                        return res.status(404).json({ error: 'session_not_found' });
-                    }
-                    session.revoked = false;
-                    session.isActive = true;
-                    session.wasCreated = true;
-                    session.expiresAt = expiresAt || null;
-                    session.creatorNickname = existingSession.creator_nickname;
-                    sessions.set(sessionId, session);
-
-                    setupExpiry(sessionId, expiresAt);
-                    await logAction(sessionId, nickname, 'create', expiresAt ? `Expires at: ${expiresAt}` : 'No expiration (infinite)');
-
-                    return res.json({ ok: true });
-                } catch (updateError) {
-                    console.error('Reactivate session error:', updateError);
-                    return res.status(500).json({ error: 'database_error' });
-                }
-            });
-        } else {
-            await pool.query('INSERT INTO sessions (id, creator_nickname, is_active, revoked, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
-                [sessionId, nickname, true, false, expiresAt || null, now]);
-
-            const session = {
-                messages: [],
-                intensity: 0,
-                isActive: true,
-                revoked: false,
-                expiresAt: expiresAt || null,
-                wasCreated: true,
-                creatorNickname: nickname
-            };
-            sessions.set(sessionId, session);
-
-            setupExpiry(sessionId, expiresAt);
-            await logAction(sessionId, nickname, 'create', expiresAt ? `Expires at: ${expiresAt}` : 'No expiration (infinite)');
-
-            return res.json({ ok: true });
-        }
+            if (row) {
+                await client.query('UPDATE sessions SET revoked=false,is_active=true,expires_at=$1 WHERE id=$2', [expiresAt,sessionId]);
+            } else {
+                await client.query(`INSERT INTO sessions (id,creator_nickname,is_active,revoked,expires_at,created_at)
+                    VALUES ($1,$2,true,false,$3,$4)`, [sessionId,nickname,expiresAt,new Date()]);
+            }
+            await client.query(`INSERT INTO session_logs (session_id,creator_nickname,action,details,timestamp)
+                VALUES ($1,$2,'create',$3,$4)`, [sessionId,nickname,
+                expiresAt ? `Expires at: ${expiresAt}` : 'No expiration (infinite)',new Date()]);
+            const history = row
+                ? await client.query('SELECT * FROM messages WHERE session_id=$1 ORDER BY id ASC', [sessionId])
+                : { rows: [] };
+            return { creatorNickname: row ? row.creator_nickname : nickname, messages: history.rows.map(m => ({
+                id: m.message_id,sessionId:m.session_id,from:m.from_user,type:m.message_type,
+                text:m.text,voiceFile:m.voice_file,duration:m.voice_duration,timestamp:m.timestamp
+            })) };
+        });
+        invalidatePendingSessionLoads(sessionId);
+        const previous = sessions.get(sessionId);
+        const session = previous || { messages: saved.messages, intensity: 0 };
+        Object.assign(session, { isActive: true, revoked: false, wasCreated: true, expiresAt,
+            creatorNickname: saved.creatorNickname });
+        sessions.set(sessionId, session);
+        setupExpiry(sessionId, expiresAt);
+        return res.json({ ok: true });
     } catch (err) {
+        if (err instanceof backendState.ApiError) return res.status(err.statusCode).json({ error: err.code });
+        if (err.code === '23505') return res.status(409).json({ error: 'session_id_unavailable' });
         console.error('Create session error:', err);
         return res.status(500).json({ error: 'database_error' });
     }
 });
 
 function setupExpiry(sessionId, expiresAt) {
-    if (expiryTimers.has(sessionId)) {
-        clearTimeout(expiryTimers.get(sessionId));
-        expiryTimers.delete(sessionId);
-    }
+    if (expiryTimers.has(sessionId)) clearTimeout(expiryTimers.get(sessionId));
+    expiryTimers.delete(sessionId);
+    if (!expiresAt || !Number.isFinite(new Date(expiresAt).getTime())) return;
+    const expectedExpiry = new Date(expiresAt).getTime();
+    const arm = () => {
+        const timer = setTimeout(async () => {
+            if (expiryTimers.get(sessionId) !== timer) return;
+            expiryTimers.delete(sessionId);
+            if (Date.now() < expectedExpiry) return arm();
+            try {
+                // Conditional write prevents an old timer from revoking a renewed session.
+                const result = await pool.query(`UPDATE sessions SET revoked=true, is_active=false
+                    WHERE id=$1 AND date_trunc('milliseconds',expires_at)=$2 AND expires_at<=NOW()
+                      AND deleted_at IS NULL AND revoked=false RETURNING id`,
+                    [sessionId, new Date(expectedExpiry).toISOString()]);
+                if (result.rowCount !== 1) return;
+                invalidatePendingSessionLoads(sessionId);
+                const session = sessions.get(sessionId);
+                if (session) { session.revoked = true; session.isActive = false; }
+                await logAction(sessionId, 'system', 'expire', 'Session expired automatically');
+                io.to(sessionId).emit('session-revoked');
+            } catch (error) {
+                console.error('Expiry error:', error.message);
+                // A temporary database failure must not permanently lose the expiry job.
+                const retry = setTimeout(() => setupExpiry(sessionId, expiresAt), 30000);
+                if (typeof retry.unref === 'function') retry.unref();
+                expiryTimers.set(sessionId, retry);
+            }
+        }, backendState.expiryDelay(expectedExpiry));
+        if (typeof timer.unref === 'function') timer.unref();
+        expiryTimers.set(sessionId, timer);
+    };
+    arm();
+}
 
-    if (expiresAt) {
-        const delay = Math.max(0, new Date(expiresAt).getTime() - Date.now());
-        const t = setTimeout(() => {
-            getOrCreateSessionInMemory(sessionId, async (err, s) => {
-                if (err) return;
-                s.revoked = true;
-                s.isActive = false;
-                sessions.set(sessionId, s);
-                try {
-                    await pool.query('UPDATE sessions SET revoked = true, is_active = false WHERE id = $1', [sessionId]);
-                    await logAction(sessionId, 'system', 'expire', 'Session expired automatically');
-                    io.to(sessionId).emit('session-revoked');
-                    expiryTimers.delete(sessionId);
-                } catch (err) {
-                    console.error('Expiry error:', err);
-                }
-            });
-        }, delay);
-        expiryTimers.set(sessionId, t);
+function removeSessionsFromMemory(ids) {
+    for (const id of ids) {
+        invalidatePendingSessionLoads(id);
+        sessions.delete(id);
+        if (expiryTimers.has(id)) clearTimeout(expiryTimers.get(id));
+        expiryTimers.delete(id);
+        io.to(id).emit('session-revoked');
+        io.in(id).socketsLeave(id);
     }
 }
 
@@ -1296,70 +1330,25 @@ app.get('/api/logs/snippets', requireRegistration, requireLogAccess, async (req,
 // Clean up all deleted sessions
 app.post('/api/logs/cleanup-all', requireRegistration, requireLogAccess, async (req, res) => {
     try {
-        const deleteResult = await pool.query('DELETE FROM sessions WHERE deleted_at IS NOT NULL');
-        const deletedCount = deleteResult.rowCount;
-
-        // Удаляем связанные сообщения
-        await pool.query('DELETE FROM messages WHERE session_id NOT IN (SELECT id FROM sessions)');
-
-        // Логируем в консоль (не в БД, так как это системное действие не привязанное к конкретной сессии)
-        console.log(`Cleanup performed by ${req.user.nickname}: Cleaned ${deletedCount} deleted sessions`);
-
-        return res.json({ ok: true, deleted: deletedCount });
+        const result = await backendState.cleanupSessions(pool);
+        removeSessionsFromMemory(result.ids);
+        return res.json({ ok: true, deleted: result.deleted.session });
     } catch (err) {
         console.error('Cleanup error:', err);
         return res.status(500).json({ error: 'database_error' });
     }
 });
 
-// Delete single session from logs
 app.post('/api/logs/delete-session', requireRegistration, requireLogAccess, async (req, res) => {
-    const { sessionId } = req.body || {};
-    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
-
+    const sessionId = normalizeSocketSessionId(req.body?.sessionId);
+    if (!sessionId) return res.status(400).json({ error: 'invalid_session_id' });
     try {
-        // Проверяем, существует ли сессия
-        const sessionCheck = await pool.query('SELECT id FROM sessions WHERE id = $1', [sessionId]);
-
-        // Если сессия существует - логируем её удаление
-        if (sessionCheck.rows.length > 0) {
-            await pool.query('INSERT INTO session_logs (session_id, creator_nickname, action, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
-                [sessionId, req.user.nickname, 'delete_from_logs', `Deleting session ${sessionId} from logs`, new Date()]);
-        } else {
-            console.log(`Session ${sessionId} not found in database, skipping log creation`);
-        }
-
-        // Удаляем логи этой сессии (независимо от того, есть сессия или нет)
-        const logsDeleted = await pool.query('DELETE FROM session_logs WHERE session_id = $1', [sessionId]);
-        console.log(`Deleted ${logsDeleted.rowCount} log entries for session ${sessionId}`);
-
-        // Удаляем связанные сообщения
-        const messagesDeleted = await pool.query('DELETE FROM messages WHERE session_id = $1', [sessionId]);
-        console.log(`Deleted ${messagesDeleted.rowCount} messages for session ${sessionId}`);
-
-        // Удаляем саму сессию (если она есть)
-        const sessionDeleted = await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
-        console.log(`Deleted ${sessionDeleted.rowCount} session(s) with id ${sessionId}`);
-
-        // Clean up memory and timers
-        sessions.delete(sessionId);
-        if (expiryTimers.has(sessionId)) {
-            clearTimeout(expiryTimers.get(sessionId));
-            expiryTimers.delete(sessionId);
-        }
-
-        return res.json({
-            ok: true,
-            deleted: {
-                session: sessionDeleted.rowCount,
-                messages: messagesDeleted.rowCount,
-                logs: logsDeleted.rowCount
-            }
-        });
+        const result = await backendState.cleanupSessions(pool, { sessionId });
+        removeSessionsFromMemory(result.ids);
+        return res.json({ ok: true, deleted: result.deleted });
     } catch (err) {
         console.error('Delete session error:', err);
-        console.error('Error details:', err.message);
-        return res.status(500).json({ error: 'database_error', message: err.message });
+        return res.status(500).json({ error: 'database_error' });
     }
 });
 
@@ -1406,7 +1395,7 @@ const loginRateLimit = memoryRateLimit({
     name: 'login',
     windowMs: 15 * 60 * 1000,
     max: 12,
-    key: req => `${req.ip}:${String(req.body?.nickname || '').trim().toLowerCase()}`,
+    key: req => `${req.ip}:${String(req.body?.nickname || '').trim().toLowerCase().slice(0, 128)}`,
     message: 'Слишком много попыток входа. Подождите несколько минут.'
 });
 const loginIpRateLimit = memoryRateLimit({
@@ -1423,7 +1412,7 @@ const DAY1_GRADE_RATE_LIMIT = Object.freeze({
     message: 'Слишком много проверок подряд. Подождите несколько минут и повторите.'
 });
 
-const memoryRateLimitCleanupTimer = setInterval(() => {
+const memoryRateLimitCleanupTimer = backgroundInterval(() => {
     const now = Date.now();
     for (const [key, bucket] of memoryRateLimitBuckets) {
         if (bucket.resetAt <= now) memoryRateLimitBuckets.delete(key);
@@ -1433,89 +1422,42 @@ if (typeof memoryRateLimitCleanupTimer.unref === 'function') memoryRateLimitClea
 
 app.post('/api/register', registerRateLimit, async (req, res) => {
     const { nickname, password, code } = req.body || {};
-    if (!nickname || !password || !code) return res.status(400).json({ error: 'nickname, password and code required' });
-
-    // Validate password length
-    if (password.length < 4) {
-        return res.status(400).json({ error: 'password_too_short' });
+    if (!backendState.validNickname(nickname)) return res.status(400).json({ error: 'invalid_nickname' });
+    if (typeof password !== 'string' || password.length < 4) return res.status(400).json({ error: 'password_too_short' });
+    if (Buffer.byteLength(password, 'utf8') > 72) return res.status(400).json({ error: 'password_too_long' });
+    if (typeof code !== 'string' || !code || code.length > 128) return res.status(400).json({ error: 'invalid_or_used_code' });
+    // The reserved administrator can only be bootstrapped by the server-side master secret.
+    if (nickname === SUPER_ADMIN && (!MASTER_INVITE_CODE || code !== MASTER_INVITE_CODE)) {
+        return res.status(403).json({ error: 'reserved_nickname' });
     }
-
     try {
-        // Проверяем в БД - есть ли уже такой никнейм
-        const existingUser = await pool.query('SELECT nickname FROM user_registrations WHERE nickname = $1', [nickname]);
-        if (existingUser.rows.length > 0) {
-            return res.status(409).json({ error: 'nickname_taken' });
-        }
-
+        const passwordHash = await bcrypt.hash(password, 10);
+        const role = nickname === SUPER_ADMIN ? 'admin' : 'reader';
+        const token = crypto.randomBytes(32).toString('hex');
         const now = new Date();
-        let invitedBy = null;
-
-        // Hash password
-        const saltRounds = 10;
-        const passwordHash = await bcrypt.hash(password, saltRounds);
-
-        if (MASTER_INVITE_CODE && code === MASTER_INVITE_CODE) {
-            invitedBy = 'MASTER_CODE';
-            // 02ashes (SUPER_ADMIN) gets admin role, others get reader
-            const role = (nickname === SUPER_ADMIN) ? 'admin' : 'reader';
-
-            // Сохраняем в БД с паролем и ролью
-            await pool.query('INSERT INTO user_registrations (nickname, password_hash, role, invited_by, invite_code, registered_at) VALUES ($1, $2, $3, $4, $5, $6)',
-                [nickname, passwordHash, role, invitedBy, code, now]);
-
-            // Добавляем в память
-            users.set(nickname, { role });
-
-            console.log(`New user registered: ${nickname} (via master code, role: ${role})`);
-            await issueAuthSession(req, res, nickname);
-            return res.json({ ok: true, role });
-        }
-
-        // Проверяем инвайт-код в БД
-        const inviteResult = await pool.query(
-            'SELECT * FROM invite_codes WHERE code = $1',
-            [code]
-        );
-
-        if (inviteResult.rows.length === 0) {
-            return res.status(400).json({ error: 'invalid_or_used_code' });
-        }
-
-        const invite = inviteResult.rows[0];
-
-        if (invite.used) {
-            return res.status(400).json({ error: 'invalid_or_used_code' });
-        }
-
-        invitedBy = invite.creator_nickname;
-
-        // Помечаем инвайт как использованный в БД
-        await pool.query(
-            'UPDATE invite_codes SET used = true, used_by = $1, used_at = $2 WHERE code = $3',
-            [nickname, now, code]
-        );
-
-        // Обновляем в памяти (кэш)
-        if (invites.has(code)) {
-            const inv = invites.get(code);
-            inv.used = true;
-            invites.set(code, inv);
-        }
-
-        // Новые пользователи всегда reader, кроме SUPER_ADMIN
-        const role = (nickname === SUPER_ADMIN) ? 'admin' : 'reader';
-
-        // Сохраняем в БД с паролем и ролью
-        await pool.query('INSERT INTO user_registrations (nickname, password_hash, role, invited_by, invite_code, registered_at) VALUES ($1, $2, $3, $4, $5, $6)',
-            [nickname, passwordHash, role, invitedBy, code, now]);
-
-        // Добавляем в память
+        await backendState.transaction(pool, async client => {
+            let invitedBy = 'MASTER_CODE';
+            if (!MASTER_INVITE_CODE || code !== MASTER_INVITE_CODE) {
+                const invite = await client.query(`UPDATE invite_codes
+                    SET used=true, used_by=$1, used_at=$2
+                    WHERE code=$3 AND used=false RETURNING creator_nickname`, [nickname, now, code]);
+                if (invite.rowCount !== 1) throw new backendState.ApiError(400, 'invalid_or_used_code');
+                invitedBy = invite.rows[0].creator_nickname;
+            }
+            await client.query(`INSERT INTO user_registrations
+                (nickname, password_hash, role, invited_by, invite_code, registered_at)
+                VALUES ($1,$2,$3,$4,$5,$6)`, [nickname, passwordHash, role, invitedBy, code, now]);
+            await client.query(`INSERT INTO auth_sessions (token_hash,nickname,expires_at,created_at)
+                VALUES ($1,$2,$3,$4)`, [authTokenHash(token), nickname,
+                new Date(now.getTime() + AUTH_SESSION_DAYS * 86400000), now]);
+        });
         users.set(nickname, { role });
-
-        console.log(`New user registered: ${nickname} (invited by ${invitedBy}, role: ${role})`);
-        await issueAuthSession(req, res, nickname);
+        if (invites.has(code)) invites.set(code, { ...invites.get(code), used: true });
+        setAuthCookie(req, res, token, AUTH_SESSION_DAYS * 86400);
         return res.json({ ok: true, role });
     } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ error: 'nickname_taken' });
+        if (err instanceof backendState.ApiError) return res.status(err.statusCode).json({ error: err.code });
         console.error('Registration error:', err);
         return res.status(500).json({ error: 'database_error' });
     }
@@ -1633,15 +1575,6 @@ async function requireAuthenticatedSession(req, res, next) {
 
         req.user = user;
 
-        // Trainee permissions are based only on the authenticated cookie. A
-        // nickname supplied by the browser is never an identity credential.
-        if (req.user.role === 'new' && req.path.startsWith('/api/')) {
-            const allowed =
-                req.path.startsWith('/api/training/v2/') ||
-                req.path === '/api/auth/check' ||
-                req.path === '/api/user/role';
-            if (!allowed) return res.status(403).json({ error: 'trainee_restricted' });
-        }
         next();
     } catch (err) {
         console.error('Authenticated session check error:', err);
@@ -1652,7 +1585,9 @@ async function requireAuthenticatedSession(req, res, next) {
 // Login endpoint
 app.post('/api/login', loginIpRateLimit, loginRateLimit, async (req, res) => {
     const { nickname, password } = req.body || {};
-    if (!nickname || !password) return res.status(400).json({ error: 'nickname and password required' });
+    // New registrations enforce stricter nickname/bcrypt limits. Existing
+    // accounts may predate them; do not lock out their historical credentials.
+    if (typeof nickname !== 'string' || !nickname || nickname.length > 1024 || typeof password !== 'string' || !password || Buffer.byteLength(password, 'utf8') > 4096) return res.status(400).json({ error: 'invalid_credentials' });
 
     try {
         // Find user in database with role
@@ -1712,7 +1647,7 @@ app.post('/api/logout', async (req, res) => {
 });
 
 // Get current user role
-app.get('/api/user/role', requireRegistration, async (req, res) => {
+app.get('/api/user/role', requireAuthenticatedSession, async (req, res) => {
     const nickname = req.user.nickname;
     try {
         const result = await pool.query('SELECT role FROM user_registrations WHERE nickname = $1', [nickname]);
@@ -1818,7 +1753,7 @@ app.post('/api/invite/generate', requireRegistration, async (req, res) => {
         let attempts = 0;
 
         while (codeExists && attempts < 10) {
-            code = Math.random().toString(36).slice(2, 8);
+            code = crypto.randomBytes(12).toString('hex');
             const existing = await pool.query('SELECT code FROM invite_codes WHERE code = $1', [code]);
             codeExists = existing.rows.length > 0;
             attempts++;
@@ -1837,7 +1772,7 @@ app.post('/api/invite/generate', requireRegistration, async (req, res) => {
         // Также сохраняем в память для быстрого доступа (кэш)
         invites.set(code, { creator: nickname, used: false });
 
-        console.log(`Invite code ${code} created by ${nickname}`);
+        console.log(`Invite created by ${nickname}`);
         return res.json({ ok: true, code });
     } catch (err) {
         console.error('Generate invite error:', err);
@@ -1848,29 +1783,51 @@ app.post('/api/invite/generate', requireRegistration, async (req, res) => {
 // API для удаления пользователя (только для админов)
 app.post('/api/users/delete', requireRegistration, requireLogAccess, async (req, res) => {
     const { nickname } = req.body || {};
-    if (!nickname) return res.status(400).json({ error: 'nickname required' });
-
+    if (typeof nickname !== 'string' || !nickname) return res.status(400).json({ error: 'nickname required' });
+    if (nickname === SUPER_ADMIN) return res.status(403).json({ error: 'cannot_delete_super_admin' });
+    if (nickname === req.user.nickname) return res.status(403).json({ error: 'cannot_delete_self' });
     try {
-        // Удаляем из БД
-        const result = await pool.query('DELETE FROM user_registrations WHERE nickname = $1', [nickname]);
-
-        if (result.rowCount > 0) {
-            // Удаляем из памяти
-            users.delete(nickname);
-            disconnectAuthenticatedUserSockets(nickname);
-            console.log(`User ${nickname} deleted by ${req.user.nickname}`);
-            return res.json({ ok: true, message: `User ${nickname} deleted` });
-        } else {
-            return res.status(404).json({ error: 'user_not_found' });
-        }
+        const result = await backendState.transaction(pool, async client => {
+            // Same lock as grading: no attempt can complete while its identity is removed.
+            const user = await client.query('SELECT id FROM user_registrations WHERE nickname=$1 FOR UPDATE', [nickname]);
+            if (!user.rows.length) throw new backendState.ApiError(404, 'user_not_found');
+            const owned = await client.query('SELECT id FROM sessions WHERE creator_nickname=$1 FOR UPDATE', [nickname]);
+            const ids = owned.rows.map(row => row.id);
+            await backendState.deleteSessions(client, ids);
+            for (const table of ['training_progress', 'training_events', 'training_v2_attempt_slots',
+                'training_v2_submissions', 'training_v2_progress', 'training_v2_theory_progress']) {
+                await client.query(`DELETE FROM ${table} WHERE nickname=$1`, [nickname]);
+            }
+            // Tombstone generations invalidate delayed requests and local drafts after nickname reuse.
+            await client.query(`UPDATE training_v2_reset_state SET reset_generation=reset_generation+1,
+                updated_at=NOW() WHERE nickname=$1`, [nickname]);
+            await client.query(`INSERT INTO training_v2_reset_state
+                (nickname,program_id,program_version,reset_generation,updated_at)
+                VALUES ($1,$2,$3,1,NOW()) ON CONFLICT (nickname,program_id,program_version) DO NOTHING`,
+                [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version]);
+            await client.query('DELETE FROM case_openings WHERE worker_nickname=$1', [nickname]);
+            await client.query('DELETE FROM case_grants WHERE worker_nickname=$1', [nickname]);
+            await client.query('UPDATE wheel_codes SET used_at=COALESCE(used_at,NOW()) WHERE created_by=$1', [nickname]);
+            await client.query('UPDATE invite_codes SET used=true,used_at=COALESCE(used_at,NOW()) WHERE creator_nickname=$1', [nickname]);
+            await client.query('DELETE FROM user_registrations WHERE nickname=$1', [nickname]);
+            return { ids };
+        });
+        users.delete(nickname);
+        disconnectAuthenticatedUserSockets(nickname);
+        removeSessionsFromMemory(result.ids);
+        return res.json({ ok: true, message: `User ${nickname} deleted` });
     } catch (err) {
+        if (err instanceof backendState.ApiError) return res.status(err.statusCode).json({ error: err.code });
         console.error('Delete user error:', err);
         return res.status(500).json({ error: 'database_error' });
     }
 });
 
 async function requireRegistration(req, res, next) {
-    return requireAuthenticatedSession(req, res, next);
+    return requireAuthenticatedSession(req, res, () => {
+        if (!backendState.isStaff(req.user)) return res.status(403).json({ error: 'trainee_restricted' });
+        next();
+    });
 }
 
 async function requireLogAccess(req, res, next) {
@@ -1983,15 +1940,41 @@ function serializeDay1Submission(row) {
 }
 
 async function computeDay1State(nickname, persist = true) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        // Resets, grading commits and account deletion all hold FOR UPDATE on this row.
+        // Keep submissions, theory, generation and the persisted aggregate in one snapshot.
+        const user = await client.query(
+            'SELECT nickname FROM user_registrations WHERE nickname=$1 FOR SHARE',
+            [nickname]
+        );
+        if (!user.rows.length) {
+            const error = new Error('login_required');
+            error.code = 'login_required';
+            throw error;
+        }
+        const state = await computeDay1StateSnapshot(nickname, persist, client);
+        await client.query('COMMIT');
+        return state;
+    } catch (error) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
+async function computeDay1StateSnapshot(nickname, persist, queryable) {
     const [result, theoryState] = await Promise.all([
-        pool.query(
+        queryable.query(
             `SELECT id, task_id, answer_text, answer_hash, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at
              FROM training_v2_submissions
              WHERE nickname=$1 AND program_id=$2 AND program_version=$3 AND rubric_version=$4
              ORDER BY created_at ASC, id ASC`,
             [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, DAY1_PROGRAM.rubricVersion]
         ),
-        getDay1TheoryState(nickname)
+        getDay1TheoryState(nickname, queryable)
     ]);
 
     const tasks = {};
@@ -2041,7 +2024,7 @@ async function computeDay1State(nickname, persist = true) {
 
     if (persist) {
         const now = new Date();
-        await pool.query(
+        await queryable.query(
             `INSERT INTO training_v2_progress
              (nickname, program_id, program_version, rubric_version, completed_tasks, total_tasks, average_score, passed, passed_at, updated_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -2113,7 +2096,20 @@ function getDay1Hashes(taskId, answer) {
     };
 }
 
-async function reserveDay1Attempt(nickname, taskId, answerHash, cacheKey) {
+function assertDay1ResetGeneration(expectedGeneration, theoryState) {
+    // Omitted generations remain compatible with older clients; current clients fence every write.
+    if (expectedGeneration === undefined) return;
+    const generation = Number(expectedGeneration);
+    if (!Number.isInteger(generation) || generation !== theoryState.resetGeneration) {
+        const error = new Error('training_reset');
+        error.code = 'training_reset';
+        error.statusCode = 409;
+        error.resetGeneration = theoryState.resetGeneration;
+        throw error;
+    }
+}
+
+async function reserveDay1Attempt(nickname, taskId, answerHash, cacheKey, expectedGeneration) {
     const key = [
         nickname,
         DAY1_PROGRAM.id,
@@ -2138,6 +2134,7 @@ async function reserveDay1Attempt(nickname, taskId, answerHash, cacheKey) {
             throw error;
         }
         const theoryState = await getDay1TheoryState(nickname, client);
+        assertDay1ResetGeneration(expectedGeneration, theoryState);
         if (!theoryState.theory.complete) {
             const error = new Error('theory_required');
             error.code = 'theory_required';
@@ -2159,9 +2156,11 @@ async function reserveDay1Attempt(nickname, taskId, answerHash, cacheKey) {
                     grader_model, cache_hit, created_at
              FROM training_v2_submissions
              WHERE nickname=$1 AND program_id=$2 AND program_version=$3
-               AND task_id=$4 AND cache_key=$5
+               AND rubric_version=$4 AND task_id=$5 AND answer_hash=$6
+             ORDER BY created_at DESC, id DESC
              LIMIT 1`,
-            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, taskId, cacheKey]
+            [nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version,
+                DAY1_PROGRAM.rubricVersion, taskId, answerHash]
         );
         if (existingSubmission.rows.length) {
             await client.query('COMMIT');
@@ -2175,7 +2174,7 @@ async function reserveDay1Attempt(nickname, taskId, answerHash, cacheKey) {
              LIMIT 1`,
             [...key, answerHash]
         );
-        if (sameAnswer.rows.length) {
+        if (sameAnswer.rows.some(row => row.status === 'reserved')) {
             const error = new Error('grading_in_progress');
             error.code = 'grading_in_progress';
             error.statusCode = 409;
@@ -2370,6 +2369,7 @@ app.post('/api/training/v2/programs/day1-v1/theory', requireAuthenticatedSession
         }
 
         const before = await getDay1TheoryState(req.user.nickname, client);
+        assertDay1ResetGeneration(req.body?.resetGeneration, before);
         const modules = DAY1_THEORY.modules || [];
         const moduleIndex = modules.findIndex(item => item.id === moduleId);
         const completedSet = new Set(before.theory.completed);
@@ -2410,6 +2410,9 @@ app.post('/api/training/v2/programs/day1-v1/theory', requireAuthenticatedSession
             try { await client.query('ROLLBACK'); } catch (_) {}
         }
         console.error('Day 1 theory progress error:', err);
+        if (err.code === 'training_reset') {
+            return res.status(409).json({ error: err.code, resetGeneration: err.resetGeneration });
+        }
         return res.status(500).json({ error: 'database_error' });
     } finally {
         if (client) client.release();
@@ -2464,28 +2467,14 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
     let reservedAttemptNumber = null;
     let reservedAttemptToken = null;
     try {
-        const existing = await pool.query(
-            `SELECT id, task_id, answer_text, answer_hash, score, pass, criteria, feedback, verdict, grader_model, cache_hit, created_at
-             FROM training_v2_submissions
-             WHERE nickname=$1 AND program_id=$2 AND program_version=$3
-               AND task_id=$4 AND cache_key=$5
-             LIMIT 1`,
-            [req.user.nickname, DAY1_PROGRAM.id, DAY1_PROGRAM.version, taskId, cacheKey]
-        );
-        if (existing.rows.length) {
-            const state = await safeComputeDay1State(req.user.nickname, 'submission reuse');
-            return res.json({
-                ok: true,
-                result: { ...serializeDay1Submission(existing.rows[0]), reused: true },
-                state
-            });
-        }
-
+        // Reuse is resolved while holding the same user lock as resets/deletion.
+        // A completed answer belongs to its cohort, not to a transient model/cache signature.
         const reservation = await reserveDay1Attempt(
             req.user.nickname,
             taskId,
             answerHash,
-            cacheKey
+            cacheKey,
+            req.body?.resetGeneration
         );
         if (reservation.existing) {
             const state = await safeComputeDay1State(req.user.nickname, 'reserved submission reuse');
@@ -2642,6 +2631,7 @@ app.post('/api/training/v2/programs/day1-v1/tasks/:taskId/grade', requireAuthent
         }
         res.status(status).json({
             error: publicError,
+            resetGeneration: err.resetGeneration,
             message: status === 503
                 ? 'Grok сейчас занят или временно недоступен. Попытка не потрачена — повторите позже.'
                 : (status === 429 ? DAY1_GRADE_RATE_LIMIT.message : undefined),
@@ -2780,8 +2770,9 @@ app.get('/api/voice/list', requireRegistration, (req, res) => {
 });
 
 // Snippets API
-app.get('/api/snippets/list', requireRegistration, (req, res) => {
-    return res.json({ ok: true, snippets: globalSnippets });
+app.get('/api/snippets/list', requireRegistration, async (req, res) => {
+    try { return res.json({ ok: true, ...await backendState.readSnippets(pool) }); }
+    catch (error) { console.error('Read snippets error:', error); return res.status(500).json({ error: 'database_error' }); }
 });
 
 // Функция логирования действий со сниппетами
@@ -2807,61 +2798,27 @@ async function logSnippetAction(userNickname, action, itemType, itemId, itemName
     }
 }
 
-app.post('/api/snippets/save', requireRegistration, async (req, res) => {
-    const { snippets, action, itemType, itemId, itemName, oldContent, newContent } = req.body || {};
-    if (!snippets) return res.status(400).json({ error: 'snippets required' });
-
-    // Check role - only admin and user can edit snippets, readers cannot
-    const nickname = req.user.nickname;
+async function handleSnippetSave(req, res, itemOnly) {
+    if (!backendState.canEditSnippets(req.user)) return res.status(403).json({ error: 'readers_cannot_edit' });
     try {
-        const roleResult = await pool.query('SELECT role FROM user_registrations WHERE nickname = $1', [nickname]);
-        const role = (nickname === SUPER_ADMIN) ? 'admin' : (roleResult.rows[0]?.role || 'reader');
-
-        if (role === 'reader') {
-            return res.status(403).json({ error: 'readers_cannot_edit' });
+        const saved = await backendState.saveSnippets(pool, req.user.nickname, req.body || {}, itemOnly);
+        // The durable commit is authoritative; never publish a failed write.
+        globalSnippets = saved.snippets;
+        snippetsRevision = saved.revision;
+        const payload = { snippets: saved.snippets, revision: saved.revision };
+        io.to(STAFF_SOCKET_ROOM).emit('snippets-updated', payload);
+        await detectAndLogChanges(saved.previous, saved.snippets, req.user.nickname);
+        return res.json({ ok: true, ...payload });
+    } catch (error) {
+        if (error instanceof backendState.ApiError) {
+            return res.status(error.statusCode).json({ error: error.code, ...error.extra });
         }
-    } catch (err) {
-        console.error('Role check error:', err);
+        console.error('Save snippets error:', error);
         return res.status(500).json({ error: 'database_error' });
     }
-
-    try {
-        const oldSnippets = JSON.parse(JSON.stringify(globalSnippets));
-        globalSnippets = snippets;
-
-        // Сохраняем в БД
-        await pool.query(
-            'INSERT INTO snippets_data (data, updated_at, updated_by) VALUES ($1, $2, $3)',
-            [JSON.stringify(snippets), new Date(), req.user.nickname]
-        );
-
-        // Логируем изменения
-        if (action) {
-            await logSnippetAction(
-                req.user.nickname,
-                action,
-                itemType,
-                itemId,
-                itemName,
-                null,
-                oldContent || null,
-                newContent || null
-            );
-        } else {
-            // Автоматическое определение изменений для обратной совместимости
-            await detectAndLogChanges(oldSnippets, snippets, req.user.nickname);
-        }
-
-        // Синхронизируем с другими пользователями
-        io.emit('snippets-updated', { snippets: globalSnippets });
-
-        console.log(`Snippets saved by ${req.user.nickname}`);
-        return res.json({ ok: true, snippets: globalSnippets });
-    } catch (err) {
-        console.error('Save snippets error:', err);
-        return res.status(500).json({ error: 'database_error' });
-    }
-});
+}
+app.post('/api/snippets/save', requireRegistration, (req, res) => handleSnippetSave(req, res, false));
+app.post('/api/snippets/item', requireRegistration, (req, res) => handleSnippetSave(req, res, true));
 
 // Автоматическое определение изменений сниппетов
 async function detectAndLogChanges(oldSnippets, newSnippets, userNickname) {
@@ -2909,50 +2866,46 @@ async function detectAndLogChanges(oldSnippets, newSnippets, userNickname) {
     }
 }
 
-app.post('/api/wheel/create', requireRegistration, (req, res) => {
-    const { code, prize } = req.body || {};
-    if (!code || !prize) return res.status(400).json({ error: 'code and prize required' });
-
+app.post('/api/wheel/create', requireRegistration, async (req, res) => {
+    const code = backendState.normalizeWheelCode(req.body?.code);
+    const prize = req.body?.prize;
+    if (!code) return res.status(400).json({ error: 'invalid_code' });
     const validPrizes = ['Lovense', 'Threesome', 'Fucklist', 'Sexting', 'Custom', 'Videocall', 'Anal', 'Pussy', 'Nudes', 'Squirt'];
     if (!validPrizes.includes(prize)) return res.status(400).json({ error: 'invalid prize' });
-
-    const existingCode = wheelCodes.get(code);
-    if (existingCode && !existingCode.used) {
-        return res.status(409).json({ error: 'code_already_exists' });
-    }
-
-    wheelCodes.set(code, {
-        prize: prize,
-        used: false,
-        createdAt: Date.now()
-    });
-
-    return res.json({ ok: true, code, prize });
+    try {
+        const result = await pool.query(`INSERT INTO wheel_codes (code,prize,created_by) VALUES ($1,$2,$3)
+            ON CONFLICT (code) DO NOTHING RETURNING code`, [code, prize, req.user.nickname]);
+        if (!result.rowCount) return res.status(409).json({ error: 'code_already_exists' });
+        return res.json({ ok: true, code, prize });
+    } catch (error) { console.error('Wheel create error:', error); return res.status(500).json({ error: 'database_error' }); }
 });
-
-app.post('/api/wheel/check', (req, res) => {
-    const { code } = req.body || {};
-    if (!code) return res.status(400).json({ error: 'code required' });
-
-    const wheelCode = wheelCodes.get(code);
-    if (!wheelCode) return res.status(404).json({ error: 'invalid_code' });
-
-    if (wheelCode.used) return res.status(410).json({ error: 'code_already_used' });
-
-    return res.json({ ok: true, targetPrize: wheelCode.prize });
+const wheelRateLimit = memoryRateLimit({ name: 'wheel', windowMs: 60000, max: 60, key: req => req.ip, message: 'Too many requests' });
+app.post('/api/wheel/check', wheelRateLimit, async (req, res) => {
+    const code = backendState.normalizeWheelCode(req.body?.code);
+    if (!code) return res.status(400).json({ error: 'invalid_code' });
+    try {
+        const result = await pool.query('SELECT prize,used_at FROM wheel_codes WHERE code=$1', [code]);
+        if (!result.rows.length) return res.status(404).json({ error: 'invalid_code' });
+        if (result.rows[0].used_at) return res.status(410).json({ error: 'code_already_used' });
+        return res.json({ ok: true, targetPrize: result.rows[0].prize });
+    } catch (error) { console.error('Wheel check error:', error); return res.status(500).json({ error: 'database_error' }); }
 });
-
-app.post('/api/wheel/result', (req, res) => {
-    const { code, prize } = req.body || {};
-    if (!code || !prize) return res.status(400).json({ error: 'code and prize required' });
-
-    const wheelCode = wheelCodes.get(code);
-    if (!wheelCode) return res.status(404).json({ error: 'invalid_code' });
-
-    wheelCode.used = true;
-    wheelCodes.set(code, wheelCode);
-
-    return res.json({ ok: true });
+app.post('/api/wheel/result', wheelRateLimit, async (req, res) => {
+    const code = backendState.normalizeWheelCode(req.body?.code);
+    const prize = req.body?.prize;
+    if (!code || typeof prize !== 'string') return res.status(400).json({ error: 'invalid_code' });
+    try {
+        const result = await pool.query(`UPDATE wheel_codes SET used_at=NOW()
+            WHERE code=$1 AND prize=$2 AND used_at IS NULL RETURNING prize`, [code, prize]);
+        if (!result.rowCount) {
+            const previous = await pool.query('SELECT prize,used_at FROM wheel_codes WHERE code=$1', [code]);
+            if (previous.rows[0]?.used_at && previous.rows[0].prize === prize) {
+                return res.json({ ok: true, prize, reused: true });
+            }
+            return res.status(409).json({ error: 'code_unavailable_or_prize_mismatch' });
+        }
+        return res.json({ ok: true, prize: result.rows[0].prize });
+    } catch (error) { console.error('Wheel result error:', error); return res.status(500).json({ error: 'database_error' }); }
 });
 
 // ==================== СИСТЕМА КЕЙСОВ ====================
@@ -3012,68 +2965,12 @@ app.get('/api/cases/pool/:tier', requireRegistration, async (req, res) => {
 
 // Открыть кейс (розыгрыш делает сервер)
 app.post('/api/cases/open', requireRegistration, async (req, res) => {
-    const nickname = req.user.nickname;
-    const { grantId } = req.body || {};
-    if (!grantId) return res.status(400).json({ error: 'grantId required' });
     try {
-        // Атомарно забираем кейс — защита от двойного открытия / накрутки
-        const claim = await pool.query(
-            `UPDATE case_grants SET opened = true, opened_at = NOW()
-             WHERE id = $1 AND worker_nickname = $2 AND opened = false
-             RETURNING id, tier`,
-            [grantId, nickname]
-        );
-        if (claim.rowCount === 0) {
-            return res.status(409).json({ error: 'case_unavailable' });
-        }
-        const tier = claim.rows[0].tier;
-
-        const poolRes = await pool.query(
-            `SELECT p.id, p.name, p.kind, p.case_tier, p.icon, p.rarity, ctp.weight
-             FROM case_tier_prizes ctp JOIN case_prizes p ON p.id = ctp.prize_id
-             WHERE ctp.tier = $1 AND p.is_active = true`,
-            [tier]
-        );
-        if (poolRes.rows.length === 0) {
-            // Пул пуст — возвращаем кейс воркеру
-            await pool.query('UPDATE case_grants SET opened = false, opened_at = NULL WHERE id = $1', [grantId]);
-            return res.status(500).json({ error: 'empty_pool' });
-        }
-
-        const prize = weightedPick(poolRes.rows);
-        const isCase = prize.kind === 'case';
-
-        await pool.query(
-            `INSERT INTO case_openings
-             (grant_id, worker_nickname, tier, prize_id, prize_name, prize_kind, prize_icon, prize_rarity, opened_at, delivered, delivered_by, delivered_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9,$10,$11)`,
-            [grantId, nickname, tier, prize.id, prize.name, prize.kind, prize.icon, prize.rarity,
-             isCase, isCase ? 'system' : null, isCase ? new Date() : null]
-        );
-
-        // Кейс-приз сразу падает в инвентарь, остальное идёт в очередь к админу
-        let newCase = null;
-        if (isCase && [1, 2, 3].includes(prize.case_tier)) {
-            const ng = await pool.query(
-                `INSERT INTO case_grants (worker_nickname, tier, granted_by, source, granted_at)
-                 VALUES ($1,$2,'system','case',NOW()) RETURNING id, tier`,
-                [nickname, prize.case_tier]
-            );
-            newCase = ng.rows[0];
-        }
-
-        io.to('cases-admin').emit('cases-changed', { reason: 'opened' });
-
-        return res.json({
-            ok: true,
-            prize: {
-                id: prize.id, name: prize.name, kind: prize.kind,
-                icon: prize.icon, rarity: prize.rarity, caseTier: prize.case_tier
-            },
-            pool: poolRes.rows.map(p => ({ id: p.id, name: p.name, kind: p.kind, icon: p.icon, rarity: p.rarity })),
-            newCase
-        });
+        const result = await backendState.openCase(pool, req.user.nickname, req.body?.grantId);
+        if (!result.reused) io.to('cases-admin').emit('cases-changed', { reason: 'opened' });
+        return res.json(result);
     } catch (err) {
+        if (err instanceof backendState.ApiError) return res.status(err.statusCode).json({ error: err.code });
         console.error('Case open error:', err);
         return res.status(500).json({ error: 'database_error' });
     }
@@ -3088,20 +2985,19 @@ app.post('/api/cases/grant', requireRegistration, requireLogAccess, async (req, 
         return res.status(400).json({ error: 'workerNickname and valid tier required' });
     }
     try {
-        const userCheck = await pool.query('SELECT nickname FROM user_registrations WHERE nickname = $1', [workerNickname]);
-        if (userCheck.rows.length === 0) return res.status(404).json({ error: 'worker_not_found' });
-
-        for (let i = 0; i < n; i++) {
-            await pool.query(
-                `INSERT INTO case_grants (worker_nickname, tier, granted_by, source, granted_at)
-                 VALUES ($1,$2,$3,'admin',NOW())`,
-                [workerNickname, t, req.user.nickname]
-            );
-        }
+        await backendState.transaction(pool, async client => {
+            const userCheck = await client.query('SELECT nickname FROM user_registrations WHERE nickname=$1 FOR UPDATE', [workerNickname]);
+            if (!userCheck.rows.length) throw new backendState.ApiError(404, 'worker_not_found');
+            for (let i = 0; i < n; i++) {
+                await client.query(`INSERT INTO case_grants (worker_nickname,tier,granted_by,source,granted_at)
+                    VALUES ($1,$2,$3,'admin',NOW())`, [workerNickname, t, req.user.nickname]);
+            }
+        });
         console.log(`Cases granted: ${n}x tier ${t} to ${workerNickname} by ${req.user.nickname}`);
         io.to('user:' + workerNickname).emit('cases-changed', { reason: 'granted' });
         return res.json({ ok: true, granted: n });
     } catch (err) {
+        if (err instanceof backendState.ApiError) return res.status(err.statusCode).json({ error: err.code });
         console.error('Case grant error:', err);
         return res.status(500).json({ error: 'database_error' });
     }
@@ -3160,12 +3056,14 @@ app.get('/api/cases/admin/config', requireRegistration, requireLogAccess, async 
 // Создать / изменить приз (админ)
 app.post('/api/cases/admin/prize', requireRegistration, requireLogAccess, async (req, res) => {
     let { id, name, kind, caseTier, icon, rarity, isActive } = req.body || {};
-    name = (name || '').trim();
-    if (!name) return res.status(400).json({ error: 'name required' });
+    name = typeof name === 'string' ? name.trim() : '';
+    if (!name || name.length > 500) return res.status(400).json({ error: 'invalid_name' });
+    if (id && (!Number.isSafeInteger(Number(id)) || Number(id) < 1)) return res.status(400).json({ error: 'invalid_id' });
     if (!['reward', 'task', 'case'].includes(kind)) kind = 'reward';
     if (!['common', 'rare', 'legendary'].includes(rarity)) rarity = 'common';
     icon = (icon || '🎁').toString().slice(0, 8);
     const ct = (kind === 'case' && [1, 2, 3].includes(parseInt(caseTier))) ? parseInt(caseTier) : null;
+    if (kind === 'case' && ct === null) return res.status(400).json({ error: 'invalid_case_tier' });
     const active = isActive !== false;
     try {
         if (id) {
@@ -3196,7 +3094,7 @@ app.post('/api/cases/admin/prize/delete', requireRegistration, requireLogAccess,
     const { id } = req.body || {};
     if (!id) return res.status(400).json({ error: 'id required' });
     try {
-        await pool.query('DELETE FROM case_tier_prizes WHERE prize_id = $1', [id]);
+        // FK ON DELETE CASCADE makes deletion of pool entries atomic.
         await pool.query('DELETE FROM case_prizes WHERE id = $1', [id]);
         return res.json({ ok: true });
     } catch (err) {
@@ -3207,21 +3105,26 @@ app.post('/api/cases/admin/prize/delete', requireRegistration, requireLogAccess,
 
 // Задать вес приза в тире (вес 0 = убрать из тира) (админ)
 app.post('/api/cases/admin/tier-prize', requireRegistration, requireLogAccess, async (req, res) => {
-    const t = parseInt(req.body?.tier);
-    const pid = parseInt(req.body?.prizeId);
-    const w = parseInt(req.body?.weight);
-    if (![1, 2, 3].includes(t) || !pid || isNaN(w)) return res.status(400).json({ error: 'invalid_input' });
+    const t = Number(req.body?.tier);
+    const pid = Number(req.body?.prizeId);
+    const w = Number(req.body?.weight);
+    if (![1,2,3].includes(t) || !Number.isSafeInteger(pid) || pid < 1 || !Number.isSafeInteger(w) || w < 0 || w > 1000000) {
+        return res.status(400).json({ error: 'invalid_input' });
+    }
     try {
-        if (w <= 0) {
-            await pool.query('DELETE FROM case_tier_prizes WHERE tier=$1 AND prize_id=$2', [t, pid]);
-            return res.json({ ok: true, removed: true });
-        }
-        const upd = await pool.query('UPDATE case_tier_prizes SET weight=$1 WHERE tier=$2 AND prize_id=$3 RETURNING id', [w, t, pid]);
-        if (upd.rowCount === 0) {
-            await pool.query('INSERT INTO case_tier_prizes (tier, prize_id, weight) VALUES ($1,$2,$3)', [t, pid, w]);
-        }
-        return res.json({ ok: true });
+        await backendState.transaction(pool, async client => {
+            await client.query('SELECT pg_advisory_xact_lock($1)', [1936289393]);
+            if (w > 0) {
+                const prize = await client.query('SELECT id FROM case_prizes WHERE id=$1 FOR KEY SHARE', [pid]);
+                if (!prize.rows.length) throw new backendState.ApiError(404, 'prize_not_found');
+            }
+            // Replacing the pair also repairs duplicates left by older concurrent saves.
+            await client.query('DELETE FROM case_tier_prizes WHERE tier=$1 AND prize_id=$2', [t, pid]);
+            if (w > 0) await client.query('INSERT INTO case_tier_prizes (tier,prize_id,weight) VALUES ($1,$2,$3)', [t,pid,w]);
+        });
+        return res.json({ ok: true, ...(w === 0 ? { removed: true } : {}) });
     } catch (err) {
+        if (err instanceof backendState.ApiError) return res.status(err.statusCode).json({ error: err.code });
         console.error('Tier-prize save error:', err);
         return res.status(500).json({ error: 'database_error' });
     }
@@ -3273,7 +3176,7 @@ function checkRateLimit(socketId, eventType, maxEvents) {
 }
 
 // Очистка rate limits каждые 5 минут
-setInterval(() => {
+backgroundInterval(() => {
     const now = Date.now();
     for (const [key, limit] of socketRateLimits.entries()) {
         if (now > limit.resetAt + 60000) {
@@ -3283,7 +3186,7 @@ setInterval(() => {
 }, 300000);
 
 // Автоматическая очистка неактивных сессий из памяти каждые 10 минут
-setInterval(() => {
+backgroundInterval(() => {
     const now = Date.now();
     const oneHourAgo = now - 60 * 60 * 1000;
 
@@ -3303,41 +3206,17 @@ setInterval(() => {
     console.log(`Memory: Sessions in cache: ${sessions.size}, Timers: ${expiryTimers.size}`);
 }, 600000); // 10 минут
 
-// Автоматическая очистка старых удаленных сессий из БД каждые 24 часа
-setInterval(async () => {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
+// Transactional retention cleanup, with children removed before their parent rows.
+backgroundInterval(async () => {
     try {
-        const result = await pool.query('DELETE FROM sessions WHERE deleted_at IS NOT NULL AND deleted_at < $1', [thirtyDaysAgo]);
+        const before = new Date(Date.now() - 30 * 86400000);
+        const result = await backendState.cleanupSessions(pool, { before });
+        removeSessionsFromMemory(result.ids);
+    } catch (err) { console.error('Auto-cleanup error:', err); }
+}, 86400000);
 
-        if (result.rowCount > 0) {
-            console.log(`Auto-cleanup: Deleted ${result.rowCount} old sessions from database`);
+// Keep consumed codes as tombstones so an old link cannot become valid again.
 
-            // Очистка осиротевших сообщений
-            const msgResult = await pool.query('DELETE FROM messages WHERE session_id NOT IN (SELECT id FROM sessions)');
-            console.log(`Auto-cleanup: Deleted ${msgResult.rowCount} orphan messages`);
-        }
-    } catch (err) {
-        console.error('Auto-cleanup error:', err);
-    }
-}, 86400000); // 24 часа
-
-// Очистка старых использованных wheelCodes каждый час (предотвращает memory leak)
-setInterval(() => {
-    const oneHourAgo = Date.now() - 60 * 60 * 1000;
-    let cleaned = 0;
-
-    for (const [code, data] of wheelCodes.entries()) {
-        if (data.used && data.createdAt < oneHourAgo) {
-            wheelCodes.delete(code);
-            cleaned++;
-        }
-    }
-
-    if (cleaned > 0) {
-        console.log(`WheelCodes cleanup: Removed ${cleaned} old used codes. Remaining: ${wheelCodes.size}`);
-    }
-}, 3600000); // 1 час
 
 io.use(async (socket, next) => {
     socket.data.authenticatedUser = null;
@@ -3570,6 +3449,7 @@ function recordControllerConnection(socket, sessionId, sessionData) {
 io.on('connection', (socket) => {
     const connectedUser = currentSocketAuthenticatedUser(socket);
     if (connectedUser) {
+        if (backendState.isStaff(connectedUser)) socket.join(STAFF_SOCKET_ROOM);
         socket.join(authUserSocketRoom(connectedUser.nickname));
         socket.join(authSessionSocketRoom(socket.data.authTokenHash));
         scheduleSocketAuthenticationExpiry(socket);
@@ -3577,7 +3457,7 @@ io.on('connection', (socket) => {
 
     socket.on('identify', (_claimedNickname, acknowledgement) => {
         const user = currentSocketAuthenticatedUser(socket);
-        if (!user) {
+        if (!backendState.isStaff(user)) {
             if (typeof acknowledgement === 'function') acknowledgement({ ok: false, error: 'login_required' });
             socket.emit('authorization-error', { error: 'login_required' });
             return;
@@ -3587,7 +3467,7 @@ io.on('connection', (socket) => {
         }
         identifyOnlineSocket(socket, user.nickname);
         socket.join('user:' + user.nickname);
-        io.emit('online-update', onlineNicknames());
+        io.to(STAFF_SOCKET_ROOM).emit('online-update', onlineNicknames());
         if (typeof acknowledgement === 'function') acknowledgement({ ok: true, nickname: user.nickname });
     });
 
@@ -3637,17 +3517,12 @@ io.on('connection', (socket) => {
             }
 
             if (sessionData.expiresAt && Date.now() >= new Date(sessionData.expiresAt).getTime()) {
-                sessionData.revoked = true;
-                sessionData.isActive = false;
-                sessions.set(sessionId, sessionData);
-                try {
-                    await pool.query(
-                        'UPDATE sessions SET revoked=true, is_active=false WHERE id=$1',
-                        [sessionId]
-                    );
-                } catch (updateError) {
-                    console.error('Expire session on join error:', updateError.message);
-                }
+                // The expiry job uses a conditional database write; an old join request
+                // must never revoke a session that another request just renewed.
+                setupExpiry(sessionId, sessionData.expiresAt);
+                clearPendingJoin();
+                rejectSocketSessionJoin(socket, channelRole, 'session_inactive');
+                return;
             }
             if (
                 !socket.connected ||
@@ -3701,15 +3576,16 @@ io.on('connection', (socket) => {
         socket.data.channelRole = null;
     });
 
-    socket.on('chat-message', async (data) => {
-        if (!checkRateLimit(socket.id, 'chat-message', MAX_MESSAGES_PER_WINDOW)) return;
+    socket.on('chat-message', async (data, acknowledgement) => {
+        const reply = payload => { if (typeof acknowledgement === 'function') acknowledgement(payload); };
+        if (!checkRateLimit(socket.id, 'chat-message', MAX_MESSAGES_PER_WINDOW)) return reply({ ok: false, error: 'rate_limited' });
         if (
             socket.data.channelRole === 'operator' &&
             !currentSocketAuthenticatedUser(socket)
-        ) return;
+        ) return reply({ ok: false, error: 'login_required' });
         const current = socketCurrentSession(socket, data?.sessionId);
         const input = data?.message;
-        if (!current || !input || typeof input !== 'object' || Array.isArray(input)) return;
+        if (!current || !input || typeof input !== 'object' || Array.isArray(input)) return reply({ ok: false, error: 'invalid_session_or_message' });
 
         const from = socket.data.channelRole === 'operator' ? 'admin' : 'controller';
         const message = {
@@ -3724,19 +3600,18 @@ io.on('connection', (socket) => {
         };
 
         if (input.type === 'voice') {
-            if (socket.data.channelRole !== 'operator') return;
+            if (socket.data.channelRole !== 'operator') return reply({ ok: false, error: 'permission_denied' });
             const voice = voiceMessages.find(item => item.file === String(input.voiceFile || ''));
-            if (!voice) return;
+            if (!voice) return reply({ ok: false, error: 'invalid_voice' });
             message.type = 'voice';
             message.voiceFile = voice.file;
             message.duration = voice.duration;
         } else {
             const text = typeof input.text === 'string' ? input.text.trim() : '';
-            if (!text || text.length > 1000) return;
+            if (!text || text.length > 1000) return reply({ ok: false, error: 'invalid_message' });
             message.text = text;
         }
 
-        current.session.messages.push(message);
         try {
             await pool.query(
                 `INSERT INTO messages
@@ -3747,7 +3622,12 @@ io.on('connection', (socket) => {
             );
         } catch (err) {
             console.error('Insert message error:', err);
+            socket.emit('message-error', { error: 'database_error' });
+            return reply({ ok: false, error: 'database_error' });
         }
+        reply({ ok: true, messageId: message.id });
+        if (sessions.get(current.sessionId) !== current.session) return;
+        current.session.messages.push(message);
         io.to(current.sessionId).emit('new-message', message);
     });
 
@@ -3773,7 +3653,6 @@ io.on('connection', (socket) => {
             type: 'text',
             timestamp: new Date()
         };
-        current.session.messages.push(message);
         try {
             await pool.query(
                 `INSERT INTO messages
@@ -3784,7 +3663,11 @@ io.on('connection', (socket) => {
             );
         } catch (err) {
             console.error('Insert control action error:', err);
+            socket.emit('message-error', { error: 'database_error' });
+            return;
         }
+        if (sessions.get(current.sessionId) !== current.session) return;
+        current.session.messages.push(message);
         io.to(current.sessionId).emit('new-message', message);
     });
 
@@ -3795,10 +3678,45 @@ io.on('connection', (socket) => {
         }
         if (socket.data.nickname) {
             removeOnlineSocket(socket);
-            io.emit('online-update', onlineNicknames());
+            io.to(STAFF_SOCKET_ROOM).emit('online-update', onlineNicknames());
         }
     });
 });
+
+// Return a stable API error shape without reflecting request content or stacks.
+app.use((error, req, res, next) => {
+    if (res.headersSent) return next(error);
+    const status = error.type === 'entity.parse.failed' ? 400
+        : error.type === 'entity.too.large' ? 413
+        : (Number.isInteger(error.status) && error.status >= 400 && error.status < 500 ? error.status : 500);
+    if (status >= 500) console.error('Unhandled request error:', error.message);
+    res.status(status).json({ error: status === 400 ? 'invalid_request'
+        : status === 413 ? 'request_too_large' : status === 500 ? 'internal_error' : 'request_rejected' });
+});
+
+async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`Graceful shutdown: ${signal}`);
+    for (const timer of backgroundTimers) clearInterval(timer);
+    for (const timer of expiryTimers.values()) clearTimeout(timer);
+    const deadline = setTimeout(() => {
+        console.error('Shutdown grace period exceeded');
+        server.closeAllConnections();
+        process.exit(1);
+    }, 30000);
+    deadline.unref();
+    try {
+        await new Promise(resolve => io.close(resolve));
+        await pool.end();
+        clearTimeout(deadline);
+    } catch (error) {
+        console.error('Shutdown error:', error.message);
+        process.exit(1);
+    }
+}
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
+process.once('SIGINT', () => void shutdown('SIGINT'));
 
 databaseReady.then(() => {
     server.listen(PORT, () => {

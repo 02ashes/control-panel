@@ -476,7 +476,7 @@
 
         // Функция для вычисления конкретных изменений между двумя текстами
         function getTextDiff(oldText, newText) {
-            if (!oldText || !newText) return null;
+            if (typeof oldText !== 'string' || typeof newText !== 'string') return null;
 
             const oldLines = oldText.split('\n');
             const newLines = newText.split('\n');
@@ -537,7 +537,7 @@
 
         function showError(message) {
             const container = document.getElementById('errorContainer');
-            container.innerHTML = `<div class="error-message">${message}</div>`;
+            container.innerHTML = `<div class="error-message">${escapeHtml(message)}</div>`;
         }
 
         async function loadSessions() {
@@ -673,16 +673,16 @@
                 return `
                     <div class="session-item">
                         <div class="session-header">
-                            <span class="session-id" onclick="viewChat('${session.id}')" style="cursor:pointer;">${session.id}</span>
+                            <span class="session-id" data-view-session="${escapeHtml(session.id)}" style="cursor:pointer;">${escapeHtml(session.id)}</span>
                             <div>
                                 <span class="session-status ${status}">${statusText}</span>
-                                <button class="btn-delete-log" onclick="event.stopPropagation(); deleteSessionFromLogs('${session.id}')">Удалить</button>
+                                <button class="btn-delete-log" data-delete-session="${escapeHtml(session.id)}">Удалить</button>
                             </div>
                         </div>
                         <div class="session-info">
                             <div class="info-item">
                                 <span class="info-label">Создатель:</span>
-                                <span>${session.creator_nickname}</span>
+                                <span>${escapeHtml(session.creator_nickname)}</span>
                             </div>
                             <div class="info-item">
                                 <span class="info-label">Создана:</span>
@@ -694,7 +694,7 @@
                             </div>
                             <div class="info-item">
                                 <span class="info-label">Сообщений:</span>
-                                <span>${session.message_count || 0}</span>
+                                <span>${escapeHtml(session.message_count || 0)}</span>
                             </div>
                             ${deletedDate ? `
                             <div class="info-item">
@@ -730,20 +730,20 @@
                 return `
                     <div class="session-item" style="cursor: default;">
                         <div class="session-header">
-                            <span class="session-id">${reg.nickname}</span>
+                            <span class="session-id">${escapeHtml(reg.nickname)}</span>
                             <div>
                                 <span class="session-status ${isMasterCode ? 'active' : 'inactive'}">${isMasterCode ? 'Мастер-код' : 'Инвайт'}</span>
-                                <button class="btn-delete-log" onclick="event.stopPropagation(); deleteUser('${reg.nickname}')">Удалить юзера</button>
+                                <button class="btn-delete-log" data-delete-user="${escapeHtml(reg.nickname)}">Удалить юзера</button>
                             </div>
                         </div>
                         <div class="session-info">
                             <div class="info-item">
                                 <span class="info-label">Пригласил:</span>
-                                <span>${reg.invited_by || 'Неизвестно'}</span>
+                                <span>${escapeHtml(reg.invited_by || 'Неизвестно')}</span>
                             </div>
                             <div class="info-item">
                                 <span class="info-label">Код:</span>
-                                <span style="font-family:monospace;">${reg.invite_code}</span>
+                                <span style="font-family:monospace;">${escapeHtml(reg.invite_code)}</span>
                             </div>
                             <div class="info-item">
                                 <span class="info-label">Дата регистрации:</span>
@@ -802,7 +802,7 @@
                             <span class="session-id">
                                 ${itemTypeIcon} ${escapeHtml(log.item_name || 'Без названия')}
                             </span>
-                            <span class="session-status" style="background:#e0e0e0;color:${actionColor};">${actionText}</span>
+                            <span class="session-status" style="background:#e0e0e0;color:${actionColor};">${escapeHtml(actionText)}</span>
                         </div>
                         <div class="session-info">
                             <div class="info-item">
@@ -823,7 +823,7 @@
                                 <span>${escapeHtml(log.details)}</span>
                             </div>
                             ` : ''}
-                            ${log.old_content && log.new_content ? `
+                            ${typeof log.old_content === 'string' && typeof log.new_content === 'string' ? `
                             <div class="info-item" style="grid-column: 1 / -1;">
                                 <span class="info-label">Изменения:</span>
                                 <div style="background:#f5f5f5;padding:8px;margin-top:4px;border:1px solid #ccc;max-height:200px;overflow-y:auto;">
@@ -841,7 +841,7 @@
             currentSessionId = sessionId;
 
             try {
-                const res = await fetch(`/api/sessions/${sessionId}/messages`, {
+                const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
                     headers: { 'X-Nickname': currentNickname }
                 });
 
@@ -850,6 +850,7 @@
                 }
 
                 const data = await res.json();
+                if (currentSessionId !== sessionId) return;
                 const creatorNickname = data.session?.creator_nickname;
                 renderMessages(data.messages || [], creatorNickname);
 
@@ -861,6 +862,8 @@
         }
 
         function renderMessages(messages, creatorNickname) {
+            audioPlayers.forEach(audio => audio.pause());
+            audioPlayers.clear();
             const container = document.getElementById('chatMessages');
 
             if (messages.length === 0) {
@@ -888,17 +891,17 @@
                 } else if (msg.type === 'voice') {
                     const className = msg.from === 'admin' ? 'admin' : 'controller';
                     const label = msg.from === 'admin' ? creatorNickname || 'Админ' : 'Пользователь';
-                    const voiceUrl = `/voice/${msg.voiceFile}`;
-                    const audioId = 'audio_' + msg.id + '_' + msg.sessionId;
+                    const voiceUrl = `/voice/${encodeURIComponent(String(msg.voiceFile || ''))}`;
+                    const audioId = 'audio_' + encodeURIComponent(String(msg.id)) + '_' + encodeURIComponent(String(msg.sessionId));
 
                     return `
                         <div class="message ${className}">
-                            <div><strong>${label}:</strong></div>
+                            <div><strong>${escapeHtml(label)}:</strong></div>
                             <div class="voice-message">
-                                <button class="voice-play-btn" data-audio-id="${audioId}" onclick="playAudio('${voiceUrl}', '${audioId}')">
+                                <button class="voice-play-btn" data-audio-id="${escapeHtml(audioId)}" data-voice-url="${escapeHtml(voiceUrl)}">
                                     ▶
                                 </button>
-                                <span>Голосовое сообщение (${msg.duration})</span>
+                                <span>Голосовое сообщение (${escapeHtml(msg.duration)})</span>
                             </div>
                             <div class="message-time">${time}</div>
                         </div>
@@ -909,7 +912,7 @@
 
                     return `
                         <div class="message ${className}">
-                            <div><strong>${label}:</strong> ${escapeHtml(msg.text)}</div>
+                            <div><strong>${escapeHtml(label)}:</strong> ${escapeHtml(msg.text)}</div>
                             <div class="message-time">${time}</div>
                         </div>
                     `;
@@ -923,6 +926,7 @@
         }
 
         function closeChatViewer() {
+            audioPlayers.forEach(audio => audio.pause());
             document.getElementById('chatViewer').classList.remove('show');
             currentSessionId = null;
         }
@@ -979,10 +983,23 @@
         }
 
         function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            return String(text ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[char]));
         }
+
+        document.getElementById('sessionsList').addEventListener('click', event => {
+            const action = event.target.closest('[data-view-session], [data-delete-session], [data-delete-user]');
+            if (!action) return;
+            event.stopPropagation();
+            if (action.hasAttribute('data-view-session')) viewChat(action.dataset.viewSession);
+            else if (action.hasAttribute('data-delete-session')) deleteSessionFromLogs(action.dataset.deleteSession);
+            else deleteUser(action.dataset.deleteUser);
+        });
+        document.getElementById('chatMessages').addEventListener('click', event => {
+            const button = event.target.closest('[data-voice-url]');
+            if (button) playAudio(button.dataset.voiceUrl, button.dataset.audioId);
+        });
 
         // Хранилище аудио плееров для каждого голосового сообщения
         const audioPlayers = new Map();
@@ -1002,7 +1019,7 @@
 
                 // Обработчик окончания воспроизведения
                 audio.addEventListener('ended', () => {
-                    const btn = document.querySelector(`button[data-audio-id="${buttonId}"]`);
+                    const btn = Array.from(document.querySelectorAll('[data-audio-id]')).find(button => button.dataset.audioId === buttonId);
                     if (btn) {
                         btn.innerHTML = '▶';
                         btn.classList.remove('playing');
@@ -1011,11 +1028,14 @@
             }
 
             // Получаем кнопку
-            const btn = document.querySelector(`button[data-audio-id="${buttonId}"]`);
+            const btn = Array.from(document.querySelectorAll('[data-audio-id]')).find(button => button.dataset.audioId === buttonId);
 
             // Переключаем воспроизведение/паузу
             if (audio.paused) {
-                audio.play();
+                audio.play().catch(() => {
+                    if (btn) { btn.textContent = '▶'; btn.classList.remove('playing'); }
+                    showError('Не удалось воспроизвести голосовое сообщение.');
+                });
                 if (btn) {
                     btn.innerHTML = '⏸';
                     btn.classList.add('playing');
@@ -1039,10 +1059,11 @@
                 };
 
                 for (const session of allSessions) {
-                    const res = await fetch(`/api/sessions/${session.id}/messages`, {
+                    const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/messages`, {
                         headers: { 'X-Nickname': currentNickname }
                     });
 
+                    if (!res.ok) throw new Error('Не удалось загрузить сессию ' + session.id + '. Экспорт отменён, чтобы не выдавать неполный файл.');
                     if (res.ok) {
                         const data = await res.json();
                         exportData.sessions.push({
@@ -1066,6 +1087,7 @@
                 console.log('Логи экспортированы');
             } catch (e) {
                 console.error('Ошибка экспорта:', e);
+                showError('Ошибка экспорта: ' + e.message);
             }
         }
 
@@ -1074,6 +1096,8 @@
             const viewMode = document.getElementById('viewMode').value;
             if (viewMode === 'sessions') {
                 renderSessions();
+            } else if (viewMode === 'snippets') {
+                renderSnippetLogs();
             } else {
                 renderRegistrations();
             }
@@ -1121,7 +1145,7 @@
                 await loadData();
             } catch (e) {
                 console.error('Ошибка очистки:', e);
-                console.error('Cleanup error:', e);
+                showError('Не удалось очистить историю: ' + e.message);
             }
         }
 

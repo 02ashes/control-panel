@@ -5,7 +5,7 @@
   const API_ROOT = '/api/training/v2/programs/' + PROGRAM_SLUG;
   const EXPECTED_TASKS = 8;
   const REQUIRED_AVERAGE = 85;
-  const MAX_ATTEMPTS = 2;
+  const DEFAULT_MAX_ATTEMPTS = 2;
   const PREVIEW_MODE = (
     window.location.hostname === '127.0.0.1' ||
     window.location.hostname === 'localhost'
@@ -63,6 +63,8 @@
   const resultOverrides = new Map();
   const touchedTasks = new Set();
   const submissionErrors = new Map();
+  // Requests outlive the currently rendered card. Never keep their identity in DOM state.
+  const pendingSubmissions = new Map();
 
   function emptyState() {
     return {
@@ -161,25 +163,52 @@
 
   function applyServerState(value) {
     const raw = value && typeof value === 'object' ? value : {};
+    const previousGeneration = resetGeneration;
     const nextGeneration = finiteNumber(
       raw.resetGeneration !== undefined ? raw.resetGeneration : raw.reset_generation
     );
     if (nextGeneration !== null) {
       const normalizedGeneration = Math.max(0, Math.floor(nextGeneration));
+      // A response started before an admin reset must not resurrect old results/drafts.
+      if (normalizedGeneration < resetGeneration) return false;
       if (normalizedGeneration !== resetGeneration) {
         cleanupStaleLocalGenerations(normalizedGeneration);
+        resultOverrides.clear();
+        submissionErrors.clear();
+        touchedTasks.clear();
+        pendingSubmissions.clear();
+        views.forEach(function (view) {
+          view.textarea.value = '';
+          view.draftState.textContent = '';
+          view.touched = false;
+        });
       }
       resetGeneration = normalizedGeneration;
     }
-    state = normalizeState(raw);
+    const incoming = normalizeState(raw);
+    // Successful submissions are immutable within a generation. Network responses may arrive out of order.
+    if (previousGeneration === resetGeneration) {
+      incoming.tasks = Object.assign({}, incoming.tasks);
+      Object.keys(state.tasks).forEach(function (taskId) {
+        const previous = taskState(taskId);
+        const next = incoming.tasks[taskId];
+        if (!next || attemptCount(previous) > attemptCount(next)) incoming.tasks[taskId] = previous;
+      });
+    }
+    state = incoming;
     state.resetGeneration = resetGeneration;
 
     if (stateHasTheory(raw)) {
-      theoryState = normalizeTheoryProgress(raw.theory);
+      const incomingTheory = normalizeTheoryProgress(raw.theory);
+      theoryState = previousGeneration === resetGeneration
+        ? normalizeTheoryProgress({ completed: incomingTheory.completed.concat(theoryState.completed) })
+        : incomingTheory;
       writeTheoryState();
     } else {
       theoryState = readTheoryState();
     }
+    refreshStateSummary();
+    return true;
   }
 
   function completedTheoryCount() {
@@ -277,6 +306,13 @@
     if (Array.isArray(value && value.attempts)) return value.attempts.length;
     const count = finiteNumber(value && value.attempts);
     return count === null ? 0 : Math.max(0, Math.floor(count));
+  }
+
+  function maxAttempts() {
+    const configured = finiteNumber(program && program.maxAttemptsPerTask);
+    return configured !== null && configured >= 1
+      ? Math.floor(configured)
+      : DEFAULT_MAX_ATTEMPTS;
   }
 
   function recordAnswer(record) {
@@ -414,7 +450,8 @@
         if (parsed && typeof parsed === 'object' && parsed.answer !== undefined) {
           return {
             answer: String(parsed.answer || ''),
-            updatedAt: finiteNumber(parsed.updatedAt) || 0
+            updatedAt: finiteNumber(parsed.updatedAt) || 0,
+            baseSubmissionId: parsed.baseSubmissionId == null ? null : String(parsed.baseSubmissionId)
           };
         }
       } catch (_) {}
@@ -428,7 +465,10 @@
     try {
       localStorage.setItem(draftKey(taskId), JSON.stringify({
         answer: String(answer || ''),
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        baseSubmissionId: taskState(taskId).latest && taskState(taskId).latest.id != null
+          ? String(taskState(taskId).latest.id)
+          : null
       }));
       return true;
     } catch (_) {
@@ -444,6 +484,7 @@
     const draft = readDraft(taskId);
 
     if (!draft) return serverAnswer;
+    if (latest && latest.id != null && draft.baseSubmissionId === String(latest.id)) return draft.answer;
     if (normalizeAnswer(draft.answer) === normalizeAnswer(serverAnswer)) return draft.answer;
     if (!serverAnswer || !serverTime || draft.updatedAt >= serverTime) return draft.answer;
 
@@ -496,7 +537,8 @@
           moduleId: moduleId,
           selectedIndex: selectedIndex,
           theoryId: String(THEORY.id || 'day1-theory'),
-          theoryVersion: finiteNumber(THEORY.version) || 1
+          theoryVersion: finiteNumber(THEORY.version) || 1,
+          resetGeneration: resetGeneration
         })
       });
 
@@ -522,7 +564,7 @@
       return true;
     } catch (error) {
       const code = error && error.data && error.data.error;
-      if (code === 'theory_module_locked' || code === 'theory_version_mismatch') {
+      if (code === 'theory_module_locked' || code === 'theory_version_mismatch' || code === 'training_reset') {
         try { await refreshServerState(); } catch (_) {}
       }
       throw error;
@@ -1112,11 +1154,7 @@
           button.dataset.state = 'correct';
           feedback.dataset.state = 'correct';
           feedback.textContent = check.explanation || 'Верно.';
-          const moduleId = String(module.id || '');
-          if (!theoryState.completed.includes(moduleId)) {
-            theoryState.completed.push(moduleId);
-            writeTheoryState();
-          }
+          // The server owns completion; optimistic completion can survive a failed/reset request.
           button.disabled = true;
           feedback.textContent = 'Сохраняю прогресс…';
           try {
@@ -1125,10 +1163,6 @@
             renderNavigation();
             renderSummary();
           } catch (error) {
-            theoryState.completed = theoryState.completed.filter(function (id) {
-              return id !== moduleId;
-            });
-            writeTheoryState();
             activeTheoryIndex = firstIncompleteTheoryIndex();
             renderTheory();
             renderNavigation();
@@ -1361,7 +1395,6 @@
       gradeButton: gradeButton,
       buttonNote: buttonNote,
       reviewPanel: reviewPanel,
-      busy: false,
       touched: touchedTasks.has(task.id)
     };
     views.set(task.id, view);
@@ -1403,6 +1436,8 @@
 
     const saved = taskState(taskId);
     const attempts = attemptCount(saved);
+    const limit = maxAttempts();
+    const busy = pendingSubmissions.has(taskId);
     const maxWords = finiteNumber(view.task.maxWords);
     const minMessages = finiteNumber(view.task.minMessages) || 1;
     const maxMessages = finiteNumber(view.task.maxMessages) || minMessages;
@@ -1410,9 +1445,9 @@
     const messages = messageCount(view.textarea.value);
     const errors = validationErrors(view.task, view.textarea.value);
     const known = sameAsKnownResult(taskId, view.textarea.value);
-    const exhausted = attempts >= MAX_ATTEMPTS && !known;
+    const exhausted = attempts >= limit && !known;
 
-    view.attempts.textContent = 'Попытки: ' + Math.min(attempts, MAX_ATTEMPTS) + ' / ' + MAX_ATTEMPTS;
+    view.attempts.textContent = 'Попытки: ' + Math.min(attempts, limit) + ' / ' + limit;
     view.attempts.dataset.exhausted = exhausted ? 'true' : 'false';
     view.wordCounter.textContent = maxWords === null
       ? words + ' слов'
@@ -1447,10 +1482,10 @@
       }
     }
 
-    view.gradeButton.disabled = view.busy || exhausted || known;
+    view.gradeButton.disabled = busy || exhausted || known;
     view.gradeButton.replaceChildren();
 
-    if (view.busy) {
+    if (busy) {
       view.gradeButton.append(
         createElement('span', 'button-spinner'),
         document.createTextNode('Проверяю…')
@@ -1461,9 +1496,9 @@
       if (known) {
         view.buttonNote.textContent = 'Показываем сохранённый вердикт — повторный запрос не нужен.';
       } else if (exhausted) {
-        view.buttonNote.textContent = 'Две попытки использованы. Обратитесь к наставнику.';
+        view.buttonNote.textContent = 'Все попытки использованы. Обратитесь к наставнику.';
       } else {
-        const left = MAX_ATTEMPTS - attempts;
+        const left = limit - attempts;
         view.buttonNote.textContent = 'Осталось попыток: ' + left + '.';
       }
     }
@@ -1666,17 +1701,33 @@
     state.tasks[taskId] = {
       latest: enriched,
       best: best,
-      attempts: result && (
-        result.cached === true ||
-        result.cacheHit === true ||
-        result.reused === true
-      ) ? attempts : Math.min(MAX_ATTEMPTS, attempts + 1)
+      // A shared grader-cache hit is still a new submission for this candidate.
+      attempts: result && result.reused === true
+        ? attempts
+        : Math.min(maxAttempts(), attempts + 1)
     };
+    refreshStateSummary();
+  }
+
+  function refreshStateSummary() {
+    if (!program || !tasks.length) return;
+    const completed = tasks.map(function (task) { return taskState(task.id).best; }).filter(isGraded);
+    state.completedTasks = completed.length;
+    state.totalTasks = tasks.length;
+    state.averageScore = completed.length
+      ? Math.round(completed.reduce(function (sum, record) { return sum + recordScore(record); }, 0) / completed.length * 100) / 100
+      : 0;
+    state.passed = isTheoryComplete() && completed.length === tasks.length &&
+      state.averageScore >= (finiteNumber(program && program.passingScore) || REQUIRED_AVERAGE) &&
+      completed.every(function (record) {
+        return recordPass(record) === true &&
+          recordScore(record) >= (finiteNumber(program && program.minimumTaskScore) || 60);
+      });
   }
 
   async function submitTask(taskId) {
     const view = views.get(taskId);
-    if (!view || view.busy) return;
+    if (!view || pendingSubmissions.has(taskId)) return;
 
     const answer = normalizeAnswer(view.textarea.value);
     const errors = validationErrors(view.task, answer);
@@ -1691,12 +1742,15 @@
       view.textarea.focus();
       return;
     }
-    if (attempts >= MAX_ATTEMPTS || sameAsKnownResult(taskId, answer)) {
+    if (attempts >= maxAttempts() || sameAsKnownResult(taskId, answer)) {
       refreshTaskView(taskId);
       return;
     }
 
-    view.busy = true;
+    const request = { generation: resetGeneration };
+    pendingSubmissions.set(taskId, request);
+    // Save before awaiting, never overwrite edits made while the grader is running.
+    writeDraft(taskId, view.textarea.value);
     refreshTaskView(taskId);
 
     try {
@@ -1704,12 +1758,17 @@
         API_ROOT + '/tasks/' + encodeURIComponent(taskId) + '/grade',
         {
           method: 'POST',
-          body: JSON.stringify({ answer: answer })
+          body: JSON.stringify({ answer: answer, resetGeneration: request.generation })
         }
       );
 
+      if (pendingSubmissions.get(taskId) !== request || request.generation !== resetGeneration) return;
       if (response.state) {
-        applyServerState(response.state);
+        if (!applyServerState(response.state)) return;
+        if (request.generation !== resetGeneration) {
+          switchStage(isTheoryComplete() ? 'practice' : 'theory', false);
+          return;
+        }
       } else {
         mergeFallbackResult(taskId, response.result, answer);
       }
@@ -1719,7 +1778,8 @@
       });
       resultOverrides.set(taskId, result);
       submissionErrors.delete(taskId);
-      writeDraft(taskId, answer);
+      const currentDraft = readDraft(taskId);
+      if (currentDraft) writeDraft(taskId, currentDraft.answer);
       refreshAllViews();
 
       const score = recordScore(result);
@@ -1730,9 +1790,10 @@
         'info'
       );
     } catch (error) {
+      if (pendingSubmissions.get(taskId) !== request || request.generation !== resetGeneration) return;
       const message = friendlyError(error);
       const code = error && error.data && error.data.error;
-      if (code === 'theory_required') {
+      if (code === 'theory_required' || code === 'training_reset') {
         try { await refreshServerState(); } catch (_) {}
         submissionErrors.delete(taskId);
         activeStage = 'theory';
@@ -1745,7 +1806,7 @@
       }
       showToast(message, 'error');
     } finally {
-      view.busy = false;
+      if (pendingSubmissions.get(taskId) === request) pendingSubmissions.delete(taskId);
       refreshTaskView(taskId);
     }
   }
@@ -1765,12 +1826,12 @@
     if (code === 'message_count_mismatch') return 'Проверьте количество сообщений и разделите их переносами строк.';
     if (code === 'empty_answer' || code === 'answer_too_short') return 'Ответ слишком короткий для проверки.';
     if (code === 'answer_too_long') return 'Ответ слишком длинный для проверки.';
-    if (code === 'max_attempts_reached') return 'Две попытки использованы. Обратитесь к наставнику.';
+    if (code === 'max_attempts_reached') return 'Все попытки использованы. Обратитесь к наставнику.';
     if (code === 'grading_in_progress') return 'Этот ответ уже проверяется в другой вкладке. Подождите результат.';
     if (code === 'grading_error') return 'Grok не смог корректно разобрать ответ. Попытка не потрачена — отправьте ещё раз.';
     if (code === 'internal_error') return 'Внутренняя ошибка сайта. Черновик сохранён, попытка не потрачена; попробуйте чуть позже.';
     if (code === 'attempt_reservation_lost') return 'Состояние теста изменилось во время проверки. Попытка не потрачена — обновите страницу.';
-    if (code === 'theory_required') return 'Прогресс Day 1 был сброшен. Сначала снова закончите короткую базу.';
+    if (code === 'theory_required' || code === 'training_reset') return 'Прогресс Day 1 был сброшен. Сначала снова закончите короткую базу.';
     if (code === 'theory_module_locked') return 'Прогресс теории изменился. Открыта первая непройденная тема.';
     if (code === 'theory_version_mismatch') return 'Теория обновилась. Обновите страницу и пройдите актуальную версию.';
     if (code === 'incorrect_theory_answer') return 'Этот вариант не принят. Посмотрите правило и попробуйте ещё раз.';

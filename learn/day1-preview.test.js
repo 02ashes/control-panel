@@ -161,6 +161,27 @@ test('local preview mirrors Day 1 theory, reset, and private-file contracts', as
   result = await request(base, `${root}/state`);
   assert.equal(result.data.state.theory.completedCount, 0);
   assert.equal(result.data.state.resetGeneration, 1);
+
+  result = await request(base, `${root}/theory`, {
+    method: 'POST',
+    body: {
+      moduleId: first.id,
+      theoryId: THEORY.id,
+      theoryVersion: THEORY.version,
+      selectedIndex: first.check.correctIndex,
+      resetGeneration: 0
+    }
+  });
+  assert.equal(result.response.status, 409);
+  assert.equal(result.data.error, 'training_reset');
+  result = await request(base, `${root}/tasks/personalized_opener/grade`, {
+    method: 'POST',
+    body: { answer: 'Hey Ethan, night shifts sound intense. Do you still train after work?', resetGeneration: 0 }
+  });
+  assert.equal(result.response.status, 409);
+  assert.equal(result.data.error, 'training_reset');
+  result = await request(base, `${root}/state`);
+  assert.equal(result.data.state.theory.completedCount, 0);
 });
 
 test('Day 1 migrates the old production draft only before an admin reset', () => {
