@@ -7,6 +7,11 @@ const { JSDOM } = require('jsdom');
 
 const root = path.join(__dirname, '..');
 const response = data => ({ ok: true, json: async () => data });
+function deferred() {
+    let resolve;
+    const promise = new Promise(done => { resolve = done; });
+    return { promise, resolve };
+}
 
 function screen(file, reducedMotion = false) {
     const source = fs.readFileSync(path.join(root, file), 'utf8');
@@ -15,6 +20,20 @@ function screen(file, reducedMotion = false) {
     const run = code => vm.runInContext(code, dom.getInternalVMContext());
     const soundCalls = [];
     const frames = [];
+    const socketHandlers = new Map();
+    const emitSocket = async (event, data) => {
+        await Promise.all((socketHandlers.get(event) || []).map(handler => handler(data)));
+    };
+    if (file === 'logs.html') {
+        const socket = {
+            on(event, handler) {
+                if (!socketHandlers.has(event)) socketHandlers.set(event, []);
+                socketHandlers.get(event).push(handler);
+                return socket;
+            }
+        };
+        w.io = () => socket;
+    }
     w.console = { log() {}, error() {} };
     w.HTMLMediaElement.prototype.play = async function () { soundCalls.push(this.id); };
     w.HTMLMediaElement.prototype.pause = function () {};
@@ -33,7 +52,7 @@ function screen(file, reducedMotion = false) {
         if (file === 'cases.html') code = code.replace(/\n  init\(\);\s*$/, '');
         run(code);
     }
-    return { dom, w, run, soundCalls, frames, source };
+    return { dom, w, run, soundCalls, frames, source, emitSocket };
 }
 
 test('secondary work screens share the theme without remote fonts or decorative emoji controls', t => {
@@ -192,4 +211,123 @@ test('journal history gives keyboard focus to its close button and returns it to
     assert.equal(p.w.document.activeElement, p.w.document.querySelector('.close-chat'));
     p.w.closeChatViewer();
     assert.equal(p.w.document.activeElement, search);
+});
+
+
+function authorizedSnippetJournal(t) {
+    const p = screen('logs.html'); t.after(() => p.dom.window.close());
+    p.run("currentNickname = 'alice'; accessGranted = true; applySnippetAccess(true); connectPermissions();");
+    p.w.document.getElementById('viewMode').value = 'snippets';
+    return p;
+}
+
+const privateSnippetLog = () => ({
+    user_nickname: 'alice', item_name: 'Private snippet title', action: 'edit',
+    item_type: 'snippet', timestamp: '2026-09-08', old_content: 'Old confidential copy',
+    new_content: 'New confidential copy'
+});
+
+test('journal hides snippets by default and admin or local flags alone cannot enable their fetch', async t => {
+    const p = screen('logs.html'); t.after(() => p.dom.window.close());
+    const doc = p.w.document;
+    assert.equal(doc.querySelector('option[value="snippets"]'), null);
+    p.w.localStorage.setItem('snippetsAccess', 'true');
+    p.run("currentNickname = 'alice';");
+    const requests = [];
+    p.w.fetch = async url => {
+        requests.push(url);
+        return response({ ok: true, nickname: 'alice', role: 'admin', snippetsAccess: false });
+    };
+    assert.equal(await p.w.checkAccess(), true, 'An admin retains the ordinary journal');
+    await p.w.loadSnippetLogs();
+    p.w.renderSnippetLogs();
+    assert.deepEqual(requests, ['/api/auth/check']);
+    assert.equal(p.run('snippetsAccess'), false);
+    assert.equal(doc.querySelector('option[value="snippets"]'), null);
+    assert.equal(p.run('allSnippetLogs.length'), 0);
+});
+
+test('journal live revocation removes its snippets section, cached history and visible content', async t => {
+    const p = authorizedSnippetJournal(t);
+    p.w.fetch = async () => response({ logs: [privateSnippetLog()] });
+    await p.w.loadData();
+    const doc = p.w.document;
+    assert.match(doc.getElementById('sessionsList').textContent, /Private snippet title/);
+    assert.match(doc.getElementById('sessionsList').textContent, /New confidential copy/);
+    assert.equal(doc.getElementById('statusFilter').disabled, true);
+    await p.emitSocket('permissions-changed', { nickname: 'different-user', role: 'admin', snippetsAccess: false });
+    assert.equal(p.run('snippetsAccess'), true, 'Only this authenticated account is affected');
+    await p.emitSocket('permissions-changed', { nickname: 'alice', role: 'admin', snippetsAccess: false });
+    assert.equal(p.run('allSnippetLogs.length'), 0);
+    assert.equal(doc.querySelector('option[value="snippets"]'), null);
+    assert.equal(doc.getElementById('viewMode').value, 'sessions');
+    assert.doesNotMatch(doc.getElementById('sessionsList').textContent, /confidential|Private snippet/);
+    assert.equal(doc.getElementById('statusFilter').disabled, false);
+    assert.equal(doc.querySelector('.cleanup-btn').disabled, false);
+    assert.equal(p.run('accessGranted'), true, 'The base admin role and other journal modes are unchanged');
+});
+
+test('a pending snippet-history GET cannot restore old content after revoke and regrant', async t => {
+    const p = authorizedSnippetJournal(t);
+    const pending = deferred();
+    p.w.fetch = async () => pending.promise;
+    const loading = p.w.loadSnippetLogs();
+    await p.emitSocket('permissions-changed', { nickname: 'alice', role: 'admin', snippetsAccess: false });
+    await p.emitSocket('permissions-changed', { nickname: 'alice', role: 'admin', snippetsAccess: true });
+    p.w.document.getElementById('viewMode').value = 'snippets';
+    pending.resolve(response({ logs: [privateSnippetLog()] }));
+    await loading;
+    assert.equal(p.run('snippetsAccess'), true);
+    assert.equal(p.run('allSnippetLogs.length'), 0);
+    assert.doesNotMatch(p.w.document.getElementById('sessionsList').textContent, /confidential|Private snippet/);
+    p.w.fetch = async () => response({ logs: [privateSnippetLog()] });
+    await p.w.loadSnippetLogs();
+    assert.equal(p.run('allSnippetLogs.length'), 1, 'A fresh request after regrant is still allowed');
+});
+
+test('a stale auth response cannot undo a live snippets revocation', async t => {
+    const p = authorizedSnippetJournal(t);
+    const pending = deferred();
+    p.w.fetch = async () => pending.promise;
+    const checking = p.w.checkAccess();
+    await p.emitSocket('permissions-changed', { nickname: 'alice', role: 'admin', snippetsAccess: false });
+    pending.resolve(response({ nickname: 'alice', role: 'admin', snippetsAccess: true }));
+    await checking;
+    assert.equal(p.run('snippetsAccess'), false);
+    assert.equal(p.w.document.querySelector('option[value="snippets"]'), null);
+    assert.equal(p.run('accessGranted'), true);
+});
+
+test('journal clears snippet history while disconnected and revalidates permissions before reconnect loads', async t => {
+    const p = authorizedSnippetJournal(t);
+    p.w.fetch = async () => response({ logs: [privateSnippetLog()] });
+    await p.w.loadSnippetLogs();
+    await p.emitSocket('disconnect');
+    assert.equal(p.run('allSnippetLogs.length'), 0);
+    assert.equal(p.run('snippetsAccess'), false);
+    const requests = [];
+    p.w.fetch = async url => {
+        requests.push(url);
+        return response(url === '/api/auth/check'
+            ? { nickname: 'alice', role: 'admin', snippetsAccess: false }
+            : { sessions: [] });
+    };
+    await p.emitSocket('connect');
+    assert.deepEqual(requests, ['/api/auth/check', '/api/logs/sessions']);
+    assert.equal(p.w.document.querySelector('option[value="snippets"]'), null);
+});
+
+test('journal base-role loss and forced logout remove snippet content and deny the full journal', async t => {
+    for (const event of ['permissions-changed', 'force-logout']) {
+        const p = authorizedSnippetJournal(t);
+        p.w.fetch = async () => response({ logs: [privateSnippetLog()] });
+        await p.w.loadSnippetLogs();
+        await p.emitSocket(event, { nickname: 'alice', role: 'new', snippetsAccess: false });
+        assert.equal(p.run('accessGranted'), false);
+        assert.equal(p.run('snippetsAccess'), false);
+        assert.equal(p.run('allSnippetLogs.length'), 0);
+        assert.equal(p.w.document.querySelector('option[value="snippets"]'), null);
+        assert.equal(p.w.document.getElementById('sessionsList').textContent, '');
+        assert.ok(p.w.document.getElementById('appRoot').classList.contains('access-denied'));
+    }
 });

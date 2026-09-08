@@ -171,3 +171,19 @@ body.snippets-open .snippets-toggle { display: none !important; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 @media (pointer: coarse) { body.work-ui button { min-height: 40px; } body.work-ui textarea, body.work-ui input, body.work-ui select { font-size: 16px; } }
+
+/* Permission-gated controls must stay hidden even under layout display rules. */
+body.work-ui [hidden] { display: none !important; }
+.users-access-help, .snippet-access-note { color: var(--work-muted); font-size: 12px; line-height: 1.5; }
+#usersAccessStatus { margin-bottom: 10px; min-height: 18px; font-size: 12px; }
+.snippet-access-control { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; }
+.snippet-access-control input { accent-color: var(--work-accent); width: 16px; height: 16px; margin: 0; }
+.snippet-access-note { display: block; margin-top: 4px; }
+
+.snippet-rich-editor { flex: 1; min-height: 160px; display: flex; flex-direction: column; min-width: 0; }
+.snippet-editor-fallback { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; overflow: auto; }
+.snippet-editor-error { color: var(--work-warning); font-size: 12px; }
+@media (max-width: 799px) {
+  .snippet-rich-editor { min-height: 100px; }
+  body.chat-open .snippet-content-area.active { overflow-y: auto; }
+}

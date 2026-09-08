@@ -25,6 +25,10 @@ before(async () => {
   reader = await app.register('test-reader');
   await app.pool.query("UPDATE user_registrations SET role='user' WHERE nickname='test-editor'");
   await app.pool.query("UPDATE user_registrations SET role='new' WHERE nickname='test-learner'");
+  for (const targetNickname of ['test-editor', 'test-reader']) {
+    const granted = await post('/api/user/snippets-access', { targetNickname, enabled: true });
+    assert.equal(granted.status, 200, JSON.stringify(granted.data));
+  }
 });
 after(async () => { if (app) await app.close(); });
 

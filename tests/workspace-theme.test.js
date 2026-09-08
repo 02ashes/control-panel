@@ -102,8 +102,8 @@ test('theme follows other tabs and resets to graphite when the preference is cle
 
 test('preview aliases point to exact files without widening static access', () => {
   const source = fs.readFileSync(path.join(root, 'learn/day1-preview-server.js'), 'utf8');
-  const start = source.indexOf('const WORKSPACE_THEME_ASSETS = new Map(');
-  const end = source.indexOf('app.use(express.static(ROOT_DIR', start);
+  const start = source.indexOf('const WORKSPACE_ASSETS = new Map(');
+  const end = source.indexOf("app.use('/vendor'", start);
   assert.ok(start >= 0 && end > start);
   let middleware;
   new Function('app', 'path', 'ROOT_DIR', source.slice(start, end))({ use(fn) { middleware = fn; } }, path, root);

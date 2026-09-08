@@ -26,8 +26,10 @@ const library = () => ({ folders: {}, snippets: {
 }, structure: ['a', 'b'] });
 
 const schema = `
-CREATE TABLE user_registrations (nickname TEXT PRIMARY KEY);
-INSERT INTO user_registrations VALUES ('worker'),('outsider');
+CREATE TABLE user_registrations (nickname TEXT PRIMARY KEY, role TEXT NOT NULL DEFAULT 'reader',
+ snippets_access BOOLEAN NOT NULL DEFAULT FALSE);
+INSERT INTO user_registrations(nickname) VALUES ('worker'),('outsider');
+INSERT INTO user_registrations VALUES ('editor','user',true),('colleague','user',true);
 CREATE TABLE snippets_data (id SERIAL PRIMARY KEY, data JSONB NOT NULL, updated_at TIMESTAMP, updated_by TEXT);
 CREATE TABLE sessions (id TEXT PRIMARY KEY, deleted_at TIMESTAMP);
 CREATE TABLE messages (id SERIAL PRIMARY KEY, session_id TEXT REFERENCES sessions(id));
@@ -72,6 +74,64 @@ test('backend PostgreSQL transactions and optimistic concurrency', async t => {
         const broken = makePool(db, sql => sql.startsWith('INSERT INTO snippets_data'));
         await assert.rejects(state.saveSnippets(broken, 'editor', { snippets: library(), baseRevision: before.revision }),
             /injected_write_failure/);
+        assert.deepEqual(await state.readSnippets(pool), before);
+    });
+    await t.test('snippets: stored permission is required for reads, writes and conflict details', async () => {
+        await assert.rejects(state.readSnippetsForUser(pool, 'outsider'), { code: 'snippets_access_required' });
+        await assert.rejects(state.saveSnippets(pool, 'outsider', { snippets: library(), baseRevision: 0 }),
+            { code: 'snippets_access_required' });
+        await db.query("UPDATE user_registrations SET snippets_access=false WHERE nickname='editor'");
+        await assert.rejects(state.saveSnippets(pool, 'editor', { id: 'b', baseContent: 'wrong', content: 'private' }, true),
+            { code: 'snippets_access_required' });
+        await db.query("UPDATE user_registrations SET snippets_access=true WHERE nickname='editor'");
+    });
+    await t.test('snippets: formatting is persisted and legacy item writes cannot erase it', async () => {
+        const before = await state.readSnippets(pool);
+        const next = structuredClone(before.snippets);
+        next.snippets.b.richText = { ops: [{ insert: 'new B\n', attributes: { bold: true, color: '#ABCDEF' } }] };
+        const saved = await state.saveSnippets(pool, 'editor', { snippets: next, baseRevision: before.revision });
+        assert.deepEqual(saved.snippets.snippets.b.richText, { ops: [
+            { insert: 'new B', attributes: { bold: true, color: '#abcdef' } }, { insert: '\n' }
+        ] });
+        await assert.rejects(state.saveSnippets(pool, 'editor', { id: 'b', baseContent: 'new B', content: 'legacy overwrite' }, true),
+            { statusCode: 409, code: 'snippets_conflict' });
+        assert.deepEqual(await state.readSnippets(pool), { snippets: saved.snippets, revision: saved.revision });
+    });
+    await t.test('snippets: formatting-only concurrent changes conflict even when the text matches', async () => {
+        const initial = await state.readSnippets(pool);
+        const baseRichText = initial.snippets.snippets.b.richText;
+        const italic = { ops: [{ insert: 'new B', attributes: { italic: true } }, { insert: '\n' }] };
+        const saved = await state.saveSnippets(pool, 'editor', {
+            id: 'b', baseContent: 'new B', baseRichText, content: 'new B', richText: italic
+        }, true);
+        assert.deepEqual(saved.snippets.snippets.b.richText, italic);
+        await assert.rejects(state.saveSnippets(pool, 'colleague', {
+            id: 'b', baseContent: 'new B', baseRichText, content: 'new B', richText: baseRichText
+        }, true), { code: 'snippets_conflict' });
+        assert.equal(saved.snippets.snippets.a.content, 'updated A');
+    });
+    await t.test('snippets: canonical base formats match and explicit unformatted updates clear richText', async () => {
+        const saved = await state.saveSnippets(pool, 'editor', {
+            id: 'b', baseContent: 'new B',
+            baseRichText: { ops: [{ insert: 'new ', attributes: { italic: true } }, { insert: 'B\n', attributes: { italic: true } }] },
+            content: 'plain again'
+        }, true);
+        assert.equal(saved.snippets.snippets.b.content, 'plain again');
+        assert.equal(Object.hasOwn(saved.snippets.snippets.b, 'richText'), false);
+        const legacy = await state.saveSnippets(pool, 'editor', { id: 'b', baseContent: 'plain again', content: 'legacy still works' }, true);
+        assert.equal(legacy.snippets.snippets.b.content, 'legacy still works');
+    });
+    await t.test('snippets: malformed rich item or base cannot persist a revision', async () => {
+        const before = await state.readSnippets(pool);
+        const body = { id: 'b', baseContent: 'legacy still works', content: 'unsafe' };
+        for (const extra of [
+            { richText: { ops: [{ insert: 'different\n', attributes: { bold: true } }] } },
+            { richText: { ops: [{ insert: 'unsafe\n', attributes: { link: 'javascript:alert(1)' } }] } },
+            { baseRichText: null }
+        ]) {
+            await assert.rejects(state.saveSnippets(pool, 'editor', { ...body, ...extra }, true),
+                { statusCode: 400, code: 'invalid_snippet' });
+        }
         assert.deepEqual(await state.readSnippets(pool), before);
     });
     await t.test('cleanup: parent and foreign-key children are removed together; active sessions retained', async () => {
@@ -124,6 +184,24 @@ test('snippets reject malformed objects, unsafe ids, cycles, missing roots and a
     await assert.rejects(state.saveSnippets({}, 'editor', { snippets: library() }), { statusCode: 428 });
     assert.deepEqual(state.validateSnippets(library()), library());
 });
+test('snippets snapshots retain only canonical safe rich text matching their copyable plain content', () => {
+    const input = library();
+    input.snippets.a.richText = { ops: [{ insert: 'first\n', attributes: { bold: true } }] };
+    input.snippets.b.richText = { ops: [{ insert: 'second\n', attributes: {} }] };
+    const saved = state.validateSnippets(input);
+    assert.deepEqual(saved.snippets.a.richText, { ops: [{ insert: 'first', attributes: { bold: true } }, { insert: '\n' }] });
+    assert.equal(Object.hasOwn(saved.snippets.b, 'richText'), false);
+    for (const richText of [
+        null,
+        { ops: [{ insert: 'first' }] },
+        { ops: [{ insert: 'second\n', attributes: { bold: true } }] },
+        { ops: [{ insert: 'first\n', attributes: { color: 'url(https://tracking.invalid)' } }] },
+        { ops: [{ insert: { image: 'https://tracking.invalid' } }, { insert: '\n' }] }
+    ]) {
+        input.snippets.a.richText = richText;
+        assert.throws(() => state.validateSnippets(input), { statusCode: 400, code: 'invalid_snippets' });
+    }
+});
 test('role policy is explicit allowlist and unknown roles fail closed', () => {
     for (const role of ['new', '', 'administrator', 'ADMIN']) {
         assert.equal(state.isStaff({ role }), false);
@@ -131,7 +209,25 @@ test('role policy is explicit allowlist and unknown roles fail closed', () => {
     }
     assert.equal(state.isStaff({ role: 'reader' }), true);
     assert.equal(state.canEditSnippets({ role: 'reader' }), false);
-    assert.equal(state.canEditSnippets({ role: 'user' }), true);
+    assert.equal(state.canEditSnippets({ role: 'user' }), false);
+    assert.equal(state.canEditSnippets({ role: 'user', snippetsAccess: true }), true);
+    assert.equal(state.canAccessSnippets({ role: 'reader', snippetsAccess: true }), true);
+    assert.equal(state.canEditSnippets({ role: 'reader', snippetsAccess: true }), false);
+    assert.equal(state.canAccessSnippets({ role: 'new', snippetsAccess: true }), false);
+});
+test('snippets owner permission is exact, additive and closed by default', () => {
+    for (const nickname of ['administrator', '02Ashes', '02ashes ']) {
+        const user = state.userAccess({ nickname, role: 'admin' });
+        assert.equal(user.snippetsAccess, false);
+        assert.equal(user.canManageSnippetsAccess, false);
+    }
+    const owner = state.userAccess({ nickname: '02ashes', role: 'new', snippets_access: false });
+    assert.equal(owner.role, 'admin');
+    assert.equal(owner.snippetsAccess, true);
+    assert.equal(owner.canManageSnippetsAccess, true);
+    const trainee = state.userAccess({ nickname: 'trainee', role: 'new', snippets_access: true });
+    assert.equal(trainee.snippetsAccess, false);
+    assert.equal(trainee.snippetsAccessGranted, true);
 });
 test('nickname validation rejects HTML/control chars while preserving Unicode names', () => {
     assert.equal(state.validNickname('Имя_123'), true);

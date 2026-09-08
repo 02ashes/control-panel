@@ -455,19 +455,27 @@ app.use((req, res, next) => {
   next();
 });
 
-const WORKSPACE_THEME_ASSETS = new Map([
+const WORKSPACE_ASSETS = new Map([
   ['/workspace-theme.css', 'public/workspace-theme.css'],
   ['/workspace-theme.js', 'public/workspace-theme.js'],
-  ['/panel.css', 'public/panel.css']
+  ['/panel.css', 'public/panel.css'],
+  ['/snippet-editor.js', 'public/snippet-editor.js'],
+  ['/snippet-editor.css', 'public/snippet-editor.css'],
+  ['/snippets-richtext.js', 'public/snippets-richtext.js'],
+  ['/vendor/quill.js', 'node_modules/quill/dist/quill.js'],
+  ['/vendor/quill.core.css', 'node_modules/quill/dist/quill.core.css']
 ]);
 app.use((req, res, next) => {
   if (!['GET', 'HEAD'].includes(req.method)) return next();
-  const file = WORKSPACE_THEME_ASSETS.get(req.path);
+  const file = WORKSPACE_ASSETS.get(req.path);
   if (!file) return next();
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   return res.sendFile(path.join(ROOT_DIR, file));
 });
+// A vendor alias is not a directory mount: adjacent source maps, sources and
+// package metadata must remain private even if another file is added later.
+app.use('/vendor', (req, res) => res.status(404).send('not found'));
 
 app.use(express.static(ROOT_DIR, {
   dotfiles: 'deny',

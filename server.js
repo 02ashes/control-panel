@@ -11,7 +11,9 @@ const bcrypt = require('bcrypt');
 const { Pool } = require('pg');
 const crypto = require('crypto');
 const backendState = require('./lib/backend-state');
+const snippetsRichText = require('./public/snippets-richtext');
 const STAFF_SOCKET_ROOM = 'authenticated-staff';
+const SNIPPETS_SOCKET_ROOM = 'authorized-snippets';
 
 const app = express();
 let shuttingDown = false;
@@ -120,6 +122,7 @@ const databaseReady = (async () => {
                 nickname TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL DEFAULT '',
                 role TEXT NOT NULL DEFAULT 'reader',
+                snippets_access BOOLEAN NOT NULL DEFAULT FALSE,
                 invited_by TEXT,
                 invite_code TEXT,
                 registered_at TIMESTAMP NOT NULL
@@ -157,6 +160,10 @@ const databaseReady = (async () => {
                 END IF;
             END $$;
         `);
+
+        // Access is opt-in; existing installations do not grandfather any base role.
+        await pool.query(`ALTER TABLE user_registrations
+            ADD COLUMN IF NOT EXISTS snippets_access BOOLEAN NOT NULL DEFAULT FALSE`);
 
         // Ensure 02ashes is always admin
         await pool.query(`
@@ -540,13 +547,12 @@ if (typeof authSessionCleanupTimer.unref === 'function') authSessionCleanupTimer
 async function loadDataFromDatabase() {
     try {
         // 1. Загружаем зарегистрированных пользователей с ролями
-        const usersResult = await pool.query('SELECT nickname, role FROM user_registrations');
+        const usersResult = await pool.query('SELECT nickname, role, snippets_access FROM user_registrations');
 
         // Очищаем users Map и загружаем заново из БД
         users.clear();
         usersResult.rows.forEach(row => {
-            const role = (row.nickname === SUPER_ADMIN) ? 'admin' : (row.role || 'reader');
-            users.set(row.nickname, { role });
+            users.set(row.nickname, backendState.userAccess(row));
         });
         console.log(`Loaded ${users.size} registered users from database`);
 
@@ -638,7 +644,7 @@ async function seedCasePrizes() {
 // Периодическая синхронизация пользователей с БД (каждые 5 минут)
 backgroundInterval(async () => {
     try {
-        const usersResult = await pool.query('SELECT nickname, role FROM user_registrations');
+        const usersResult = await pool.query('SELECT nickname, role, snippets_access FROM user_registrations');
 
         // Удаляем пользователей, которых нет в БД
         const dbNicknames = new Set(usersResult.rows.map(row => row.nickname));
@@ -649,9 +655,9 @@ backgroundInterval(async () => {
             }
         }
 
-        // Добавляем новых пользователей из БД (note: role will be fetched on next full sync)
+        // Refresh both the base role and the independently assigned snippets role.
         usersResult.rows.forEach(row => {
-            users.set(row.nickname, { role: row.nickname === SUPER_ADMIN ? 'admin' : (row.role || 'reader') });
+            users.set(row.nickname, backendState.userAccess(row));
         });
 
         console.log(`User sync: ${users.size} users in memory`);
@@ -748,6 +754,12 @@ const PUBLIC_FILES = new Map([
     ['/workspace-theme.css', 'public/workspace-theme.css'],
     ['/workspace-theme.js', 'public/workspace-theme.js'],
     ['/panel.css', 'public/panel.css'],
+    ['/snippet-editor.js', 'public/snippet-editor.js'],
+    ['/snippet-editor.css', 'public/snippet-editor.css'],
+    ['/snippets-richtext.js', 'public/snippets-richtext.js'],
+    // Only these browser distributions are public, not the package directory.
+    ['/vendor/quill.js', 'node_modules/quill/dist/quill.js'],
+    ['/vendor/quill.core.css', 'node_modules/quill/dist/quill.core.css'],
     ['/public/lovense-home.html', 'public/lovense-home.html']
 ]);
 app.use((req, res, next) => {
@@ -800,6 +812,10 @@ const pendingSessionLoads = new Set();
 const expiryTimers = new Map();
 const SUPER_ADMIN = '02ashes'; // Permanent admin, cannot be changed
 const users = new Map();
+// Fence pending socket lookups and broadcasts while account permissions change.
+let authenticationRevision = 0;
+const pendingPermissionChanges = new Map();
+const permissionMutationQueues = new Map();
 
 const voiceMessages = [
     { id: 'dickrate', name: 'Dick Rate', file: 'dickrate.ogg', duration: '0:05' },
@@ -813,7 +829,7 @@ const invites = new Map();
 const onlineUserSockets = new Map();
 let snippetsRevision = 0;
 
-// Text Snippets хранилище (общее для всех админов)
+// Shared snippet storage; only explicitly authorized accounts can receive it.
 let globalSnippets = {
     folders: {},
     snippets: {},
@@ -1259,7 +1275,7 @@ app.get('/api/logs/registrations', requireRegistration, requireLogAccess, async 
 });
 
 // Get snippet logs (для страницы логов)
-app.get('/api/logs/snippets', requireRegistration, requireLogAccess, async (req, res) => {
+app.get('/api/logs/snippets', requireRegistration, requireSnippetsAccess, requireLogAccess, async (req, res) => {
     const { limit = 200, offset = 0, userNickname, action, itemType } = req.query;
 
     try {
@@ -1291,8 +1307,6 @@ app.get('/api/logs/snippets', requireRegistration, requireLogAccess, async (req,
         query += ` ORDER BY timestamp DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
         params.push(parseInt(limit), parseInt(offset));
 
-        const result = await pool.query(query, params);
-
         // Подсчитываем общее количество
         let countQuery = `SELECT COUNT(*) as total FROM snippet_logs WHERE 1=1`;
         const countParams = [];
@@ -1315,7 +1329,14 @@ app.get('/api/logs/snippets', requireRegistration, requireLogAccess, async (req,
             countParams.push(itemType);
         }
 
-        const countResult = await pool.query(countQuery, countParams);
+        const { result, countResult } = await backendState.transaction(pool, async client => {
+            const currentUser = await backendState.requireStoredSnippetsAccess(client, req.user.nickname);
+            if (currentUser.role !== 'admin') throw new backendState.ApiError(403, 'admin_required');
+            return {
+                result: await client.query(query, params),
+                countResult: await client.query(countQuery, countParams)
+            };
+        });
 
         return res.json({
             ok: true,
@@ -1325,6 +1346,7 @@ app.get('/api/logs/snippets', requireRegistration, requireLogAccess, async (req,
             offset: parseInt(offset)
         });
     } catch (err) {
+        if (err instanceof backendState.ApiError) return res.status(err.statusCode).json({ error: err.code });
         console.error('Get snippet logs error:', err);
         return res.status(500).json({ error: 'database_error' });
     }
@@ -1454,10 +1476,11 @@ app.post('/api/register', registerRateLimit, async (req, res) => {
                 VALUES ($1,$2,$3,$4)`, [authTokenHash(token), nickname,
                 new Date(now.getTime() + AUTH_SESSION_DAYS * 86400000), now]);
         });
-        users.set(nickname, { role });
+        const access = backendState.userAccess({ nickname, role, snippets_access: false });
+        users.set(nickname, access);
         if (invites.has(code)) invites.set(code, { ...invites.get(code), used: true });
         setAuthCookie(req, res, token, AUTH_SESSION_DAYS * 86400);
-        return res.json({ ok: true, role });
+        return res.json({ ok: true, ...access });
     } catch (err) {
         if (err.code === '23505') return res.status(409).json({ error: 'nickname_taken' });
         if (err instanceof backendState.ApiError) return res.status(err.statusCode).json({ error: err.code });
@@ -1496,12 +1519,43 @@ function authUserSocketRoom(nickname) {
 
 function disconnectAuthSessionSockets(tokenHash) {
     if (!tokenHash) return;
+    authenticationRevision += 1;
     io.in(authSessionSocketRoom(tokenHash)).disconnectSockets(true);
 }
 
 function disconnectAuthenticatedUserSockets(nickname) {
     if (!nickname) return;
+    authenticationRevision += 1;
     io.in(authUserSocketRoom(nickname)).disconnectSockets(true);
+}
+
+async function withPermissionMutation(nickname, work) {
+    const previous = permissionMutationQueues.get(nickname) || Promise.resolve();
+    const pending = previous.catch(() => {}).then(async () => {
+        pendingPermissionChanges.set(nickname, true);
+        authenticationRevision += 1;
+        try { return await work(); }
+        finally {
+            pendingPermissionChanges.delete(nickname);
+            authenticationRevision += 1;
+        }
+    });
+    permissionMutationQueues.set(nickname, pending);
+    try { return await pending; }
+    finally {
+        if (permissionMutationQueues.get(nickname) === pending) permissionMutationQueues.delete(nickname);
+    }
+}
+
+function refreshAuthenticatedUserSocketPermissions(access) {
+    // Updating an additive permission does not interrupt a running chat session.
+    for (const socket of io.sockets.sockets.values()) {
+        if (socket.data.authenticatedUser?.nickname !== access.nickname) continue;
+        socket.data.authenticatedUser = { ...socket.data.authenticatedUser, ...access };
+        if (backendState.canAccessSnippets(access)) socket.join(SNIPPETS_SOCKET_ROOM);
+        else socket.leave(SNIPPETS_SOCKET_ROOM);
+        socket.emit('permissions-changed', access);
+    }
 }
 
 function shouldUseSecureCookie(req) {
@@ -1547,7 +1601,7 @@ async function getAuthenticatedUserFromToken(token) {
 async function getAuthenticatedUserFromTokenHash(tokenHash) {
     if (!tokenHash) return null;
     const result = await pool.query(
-        `SELECT s.nickname, s.expires_at, u.role
+        `SELECT s.nickname, s.expires_at, u.role, u.snippets_access
          FROM auth_sessions s
          JOIN user_registrations u ON u.nickname=s.nickname
          WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at > NOW()
@@ -1555,14 +1609,28 @@ async function getAuthenticatedUserFromTokenHash(tokenHash) {
         [tokenHash]
     );
     if (!result.rows.length) return null;
-    const nickname = result.rows[0].nickname;
     return {
-        nickname,
-        role: nickname === SUPER_ADMIN ? 'admin' : (result.rows[0].role || 'reader'),
+        ...backendState.userAccess(result.rows[0]),
         sessionExpiresAt: result.rows[0].expires_at
             ? new Date(result.rows[0].expires_at).getTime()
             : 0
     };
+}
+
+async function getStableSocketAuthenticatedUser(tokenHash) {
+    // A handshake can be waiting on PostgreSQL while an owner changes a role.
+    // Never install its pre-change result after the account sockets were refreshed.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        const revision = authenticationRevision;
+        const user = await getAuthenticatedUserFromTokenHash(tokenHash);
+        const pending = user && permissionMutationQueues.get(user.nickname);
+        if (pending) {
+            await pending.catch(() => {});
+            continue;
+        }
+        if (revision === authenticationRevision) return user ? { ...user, authorizationRevision: revision } : null;
+    }
+    return null; // Busy/uncertain authorization must fail closed.
 }
 
 async function requireAuthenticatedSession(req, res, next) {
@@ -1594,7 +1662,7 @@ app.post('/api/login', loginIpRateLimit, loginRateLimit, async (req, res) => {
 
     try {
         // Find user in database with role
-        const userResult = await pool.query('SELECT nickname, password_hash, role FROM user_registrations WHERE nickname = $1', [nickname]);
+        const userResult = await pool.query('SELECT nickname, password_hash, role, snippets_access FROM user_registrations WHERE nickname = $1', [nickname]);
 
         if (userResult.rows.length === 0) {
             return res.status(401).json({ error: 'invalid_credentials' });
@@ -1618,11 +1686,12 @@ app.post('/api/login', loginIpRateLimit, loginRateLimit, async (req, res) => {
         const role = (nickname === SUPER_ADMIN) ? 'admin' : (user.role || 'reader');
 
         // Add user to memory
-        users.set(nickname, { role });
+        const access = backendState.userAccess(user);
+        users.set(nickname, access);
 
         console.log(`User logged in: ${nickname} (role: ${role})`);
         await issueAuthSession(req, res, nickname);
-        return res.json({ ok: true, nickname, role });
+        return res.json({ ok: true, ...access });
     } catch (err) {
         console.error('Login error:', err);
         return res.status(500).json({ error: 'database_error' });
@@ -1650,20 +1719,9 @@ app.post('/api/logout', async (req, res) => {
 });
 
 // Get current user role
-app.get('/api/user/role', requireAuthenticatedSession, async (req, res) => {
-    const nickname = req.user.nickname;
-    try {
-        const result = await pool.query('SELECT role FROM user_registrations WHERE nickname = $1', [nickname]);
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'user_not_found' });
-        }
-        // Ensure 02ashes is always admin
-        const role = (nickname === SUPER_ADMIN) ? 'admin' : (result.rows[0].role || 'reader');
-        return res.json({ nickname, role });
-    } catch (err) {
-        console.error('Get role error:', err);
-        return res.status(500).json({ error: 'database_error' });
-    }
+app.get('/api/user/role', requireAuthenticatedSession, (req, res) => {
+    const { nickname, role, snippetsAccess, snippetsAccessGranted, canManageSnippetsAccess } = req.user;
+    return res.json({ nickname, role, snippetsAccess, snippetsAccessGranted, canManageSnippetsAccess });
 });
 
 // Change user role (admin only)
@@ -1695,24 +1753,50 @@ app.post('/api/user/role', requireRegistration, async (req, res) => {
             return res.status(403).json({ error: 'cannot_change_super_admin' });
         }
 
-        // Update role in database
-        const updateResult = await pool.query(
-            'UPDATE user_registrations SET role = $1 WHERE nickname = $2 RETURNING nickname, role',
-            [newRole, targetNickname]
-        );
-
-        if (updateResult.rows.length === 0) {
-            return res.status(404).json({ error: 'user_not_found' });
-        }
-
-        // Update in memory cache (always — чтобы гард ученика сразу видел новую роль)
-        users.set(targetNickname, { role: newRole });
-        disconnectAuthenticatedUserSockets(targetNickname);
-
+        const access = await withPermissionMutation(targetNickname, async () => {
+            // The additive role is intentionally untouched by base-role changes.
+            const updateResult = await pool.query(
+                'UPDATE user_registrations SET role = $1 WHERE nickname = $2 RETURNING nickname, role, snippets_access',
+                [newRole, targetNickname]
+            );
+            if (!updateResult.rows.length) throw new backendState.ApiError(404, 'user_not_found');
+            const updated = backendState.userAccess(updateResult.rows[0]);
+            users.set(targetNickname, updated);
+            refreshAuthenticatedUserSocketPermissions(updated);
+            disconnectAuthenticatedUserSockets(targetNickname);
+            return updated;
+        });
         console.log(`Role changed: ${targetNickname} -> ${newRole} (by ${adminNickname})`);
-        return res.json({ ok: true, nickname: targetNickname, role: newRole });
+        return res.json({ ok: true, ...access });
     } catch (err) {
+        if (err instanceof backendState.ApiError) return res.status(err.statusCode).json({ error: err.code });
         console.error('Change role error:', err);
+        return res.status(500).json({ error: 'database_error' });
+    }
+});
+
+// Only the exact, authenticated owner can assign the independent snippets role.
+app.post('/api/user/snippets-access', requireRegistration, async (req, res) => {
+    if (req.user.nickname !== SUPER_ADMIN) return res.status(403).json({ error: 'owner_required' });
+    const { targetNickname, enabled } = req.body || {};
+    if (typeof targetNickname !== 'string' || !targetNickname || targetNickname.length > 1024 || typeof enabled !== 'boolean') {
+        return res.status(400).json({ error: 'invalid_snippets_access' });
+    }
+    if (targetNickname === SUPER_ADMIN) return res.status(403).json({ error: 'cannot_change_super_admin' });
+    try {
+        const access = await withPermissionMutation(targetNickname, async () => {
+            const result = await pool.query(`UPDATE user_registrations SET snippets_access=$1
+                WHERE nickname=$2 RETURNING nickname, role, snippets_access`, [enabled, targetNickname]);
+            if (!result.rows.length) throw new backendState.ApiError(404, 'user_not_found');
+            const updated = backendState.userAccess(result.rows[0]);
+            users.set(targetNickname, updated);
+            refreshAuthenticatedUserSocketPermissions(updated);
+            return updated;
+        });
+        return res.json({ ok: true, ...access });
+    } catch (err) {
+        if (err instanceof backendState.ApiError) return res.status(err.statusCode).json({ error: err.code });
+        console.error('Change snippets access error:', err);
         return res.status(500).json({ error: 'database_error' });
     }
 });
@@ -1730,8 +1814,10 @@ app.get('/api/users', requireRegistration, async (req, res) => {
             return res.status(403).json({ error: 'admin_required' });
         }
 
-        const result = await pool.query('SELECT nickname, role, registered_at FROM user_registrations ORDER BY registered_at DESC');
-        return res.json({ users: result.rows });
+        const result = await pool.query('SELECT nickname, role, snippets_access, registered_at FROM user_registrations ORDER BY registered_at DESC');
+        return res.json({ users: result.rows.map(row => ({
+            ...backendState.userAccess(row), registered_at: row.registered_at
+        })) });
     } catch (err) {
         console.error('Get users error:', err);
         return res.status(500).json({ error: 'database_error' });
@@ -1831,6 +1917,11 @@ async function requireRegistration(req, res, next) {
         if (!backendState.isStaff(req.user)) return res.status(403).json({ error: 'trainee_restricted' });
         next();
     });
+}
+
+function requireSnippetsAccess(req, res, next) {
+    if (!backendState.canAccessSnippets(req.user)) return res.status(403).json({ error: 'snippets_access_required' });
+    next();
 }
 
 async function requireLogAccess(req, res, next) {
@@ -2299,15 +2390,9 @@ async function callDay1GrokBounded(answer, taskId) {
     }
 }
 
-app.get('/api/auth/check', requireAuthenticatedSession, async (req, res) => {
-    const nickname = req.user.nickname;
-    try {
-        const result = await pool.query('SELECT role FROM user_registrations WHERE nickname = $1', [nickname]);
-        const role = (nickname === SUPER_ADMIN) ? 'admin' : (result.rows[0]?.role || 'reader');
-        return res.json({ ok: true, nickname, role });
-    } catch (err) {
-        return res.json({ ok: true, nickname, role: 'reader' });
-    }
+app.get('/api/auth/check', requireAuthenticatedSession, (req, res) => {
+    const { nickname, role, snippetsAccess, snippetsAccessGranted, canManageSnippetsAccess } = req.user;
+    return res.json({ ok: true, nickname, role, snippetsAccess, snippetsAccessGranted, canManageSnippetsAccess });
 });
 
 // ===================== ДЕНЬ 1 · ПРАКТИЧЕСКИЙ ТЕСТ v2 =====================
@@ -2773,9 +2858,13 @@ app.get('/api/voice/list', requireRegistration, (req, res) => {
 });
 
 // Snippets API
-app.get('/api/snippets/list', requireRegistration, async (req, res) => {
-    try { return res.json({ ok: true, ...await backendState.readSnippets(pool) }); }
-    catch (error) { console.error('Read snippets error:', error); return res.status(500).json({ error: 'database_error' }); }
+app.get('/api/snippets/list', requireRegistration, requireSnippetsAccess, async (req, res) => {
+    try { return res.json({ ok: true, ...await backendState.readSnippetsForUser(pool, req.user.nickname) }); }
+    catch (error) {
+        if (error instanceof backendState.ApiError) return res.status(error.statusCode).json({ error: error.code });
+        console.error('Read snippets error:', error);
+        return res.status(500).json({ error: 'database_error' });
+    }
 });
 
 // Функция логирования действий со сниппетами
@@ -2809,7 +2898,7 @@ async function handleSnippetSave(req, res, itemOnly) {
         globalSnippets = saved.snippets;
         snippetsRevision = saved.revision;
         const payload = { snippets: saved.snippets, revision: saved.revision };
-        io.to(STAFF_SOCKET_ROOM).emit('snippets-updated', payload);
+        await broadcastSnippetsUpdate(payload);
         await detectAndLogChanges(saved.previous, saved.snippets, req.user.nickname);
         return res.json({ ok: true, ...payload });
     } catch (error) {
@@ -2820,8 +2909,8 @@ async function handleSnippetSave(req, res, itemOnly) {
         return res.status(500).json({ error: 'database_error' });
     }
 }
-app.post('/api/snippets/save', requireRegistration, (req, res) => handleSnippetSave(req, res, false));
-app.post('/api/snippets/item', requireRegistration, (req, res) => handleSnippetSave(req, res, true));
+app.post('/api/snippets/save', requireRegistration, requireSnippetsAccess, (req, res) => handleSnippetSave(req, res, false));
+app.post('/api/snippets/item', requireRegistration, requireSnippetsAccess, (req, res) => handleSnippetSave(req, res, true));
 
 // Автоматическое определение изменений сниппетов
 async function detectAndLogChanges(oldSnippets, newSnippets, userNickname) {
@@ -2830,17 +2919,27 @@ async function detectAndLogChanges(oldSnippets, newSnippets, userNickname) {
         for (const [id, snippet] of Object.entries(newSnippets.snippets || {})) {
             if (!oldSnippets.snippets || !oldSnippets.snippets[id]) {
                 await logSnippetAction(userNickname, 'create', 'snippet', id, snippet.name, 'Сниппет создан');
-            } else if (oldSnippets.snippets[id].content !== snippet.content) {
-                await logSnippetAction(
-                    userNickname,
-                    'edit',
-                    'snippet',
-                    id,
-                    snippet.name,
-                    'Контент изменен',
-                    oldSnippets.snippets[id].content,
-                    snippet.content
-                );
+            } else {
+                const previous = oldSnippets.snippets[id];
+                const contentChanged = previous.content !== snippet.content;
+                // Compare canonical text-only Deltas. Store a human-readable
+                // summary and plain text in the audit log, never rendered HTML.
+                const formattingChanged = JSON.stringify(snippetsRichText.normalize(previous.richText, previous.content)) !==
+                    JSON.stringify(snippetsRichText.normalize(snippet.richText, snippet.content));
+                if (contentChanged || formattingChanged) {
+                    await logSnippetAction(
+                        userNickname,
+                        'edit',
+                        'snippet',
+                        id,
+                        snippet.name,
+                        contentChanged
+                            ? 'Текст изменён'
+                            : 'Оформление изменено; текст не менялся',
+                        previous.content,
+                        snippet.content
+                    );
+                }
             }
         }
 
@@ -3230,8 +3329,8 @@ io.use(async (socket, next) => {
         }, AUTH_COOKIE_NAME);
         if (token) {
             const tokenHash = authTokenHash(token);
-            const user = await getAuthenticatedUserFromTokenHash(tokenHash);
-            if (user) {
+            const user = await getStableSocketAuthenticatedUser(tokenHash);
+            if (user && user.authorizationRevision === authenticationRevision) {
                 socket.data.authenticatedUser = user;
                 socket.data.authTokenHash = tokenHash;
             }
@@ -3294,6 +3393,53 @@ function currentSocketAuthenticatedUser(socket) {
         return null;
     }
     return user;
+}
+
+async function authorizeSnippetSocket(socket) {
+    if (!socket.connected || !socket.data.authTokenHash) return false;
+    const previous = socket.data.authenticatedUser;
+    const tokenHash = socket.data.authTokenHash;
+    const current = await getStableSocketAuthenticatedUser(tokenHash);
+    if (!socket.connected || socket.data.authTokenHash !== tokenHash) return false;
+    if (current && current.authorizationRevision !== authenticationRevision) return false;
+    if (!current) {
+        socket.leave(SNIPPETS_SOCKET_ROOM);
+        expireSocketAuthentication(socket);
+        return false;
+    }
+    socket.data.authenticatedUser = current;
+    const allowed = backendState.canAccessSnippets(current) && !pendingPermissionChanges.has(current.nickname);
+    if (allowed) socket.join(SNIPPETS_SOCKET_ROOM);
+    else socket.leave(SNIPPETS_SOCKET_ROOM);
+    if (previous && (previous.role !== current.role || previous.snippetsAccess !== current.snippetsAccess ||
+        previous.snippetsAccessGranted !== current.snippetsAccessGranted)) {
+        const { sessionExpiresAt, authorizationRevision, ...access } = current;
+        socket.emit('permissions-changed', access);
+    }
+    return allowed;
+}
+
+async function broadcastSnippetsUpdate(payload) {
+    // Room membership is a routing hint, not proof of authorization: revalidate
+    // each connected account against PostgreSQL immediately before delivery.
+    // This also handles access changed outside this process without sending the
+    // new content to an old room member.
+    await Promise.all([...io.sockets.sockets.values()].map(async socket => {
+        if (!socket.data.authenticatedUser) return;
+        try {
+            if (await authorizeSnippetSocket(socket)) {
+                const user = currentSocketAuthenticatedUser(socket);
+                if (user && user.authorizationRevision === authenticationRevision &&
+                    !pendingPermissionChanges.has(user.nickname) && backendState.canAccessSnippets(user) &&
+                    socket.rooms.has(SNIPPETS_SOCKET_ROOM)) {
+                    socket.emit('snippets-updated', payload);
+                }
+            }
+        } catch (err) {
+            socket.leave(SNIPPETS_SOCKET_ROOM);
+            console.error('Snippet broadcast authorization error:', err.message);
+        }
+    }));
 }
 
 function onlineNicknames() {
@@ -3456,6 +3602,10 @@ io.on('connection', (socket) => {
         socket.join(authUserSocketRoom(connectedUser.nickname));
         socket.join(authSessionSocketRoom(socket.data.authTokenHash));
         scheduleSocketAuthenticationExpiry(socket);
+        void authorizeSnippetSocket(socket).catch(err => {
+            socket.leave(SNIPPETS_SOCKET_ROOM);
+            console.error('Snippet socket authorization error:', err.message);
+        });
     }
 
     socket.on('identify', (_claimedNickname, acknowledgement) => {

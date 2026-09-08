@@ -1,8 +1,8 @@
 /* Shared, side-effect-free three-way merge for the collaborative snippet editor. */
 (function (root, factory) {
-    if (typeof module === 'object' && module.exports) module.exports = factory();
-    else root.SnippetsSync = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+    if (typeof module === 'object' && module.exports) module.exports = factory(require('./snippets-richtext'));
+    else root.SnippetsSync = factory(root.SnippetsRichText);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (richText) {
     const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
     const equal = (a, b) => {
         if (a === b) return true;
@@ -18,7 +18,10 @@
             for (const [id, item] of Object.entries(items)) {
                 if (!item || typeof item !== 'object' || item.id !== id || typeof item.name !== 'string') return false;
                 if (['__proto__', 'prototype', 'constructor'].includes(id)) return false;
-                if (group === 'snippets' && typeof item.content !== 'string') return false;
+                if (group === 'snippets') {
+                    if (typeof item.content !== 'string') return false;
+                    try { richText.normalize(item.richText, item.content); } catch (_) { return false; }
+                }
                 if (item.parentId != null && typeof item.parentId !== 'string') return false;
             }
         }
@@ -30,19 +33,35 @@
             for (const [id, item] of Object.entries(data[kind])) {
                 if (['__proto__', 'prototype', 'constructor'].includes(id)) continue;
                 result[kind][id] = { id: item.id, name: item.name, parentId: item.parentId || null };
-                if (kind === 'snippets') result[kind][id].content = item.content;
+                if (kind === 'snippets') {
+                    result[kind][id].content = item.content;
+                    const formatted = richText.normalize(item.richText, item.content);
+                    if (formatted) result[kind][id].richText = formatted;
+                }
             }
         }
         return result;
     }
     function merge(base, local, remote) {
+        // Compare the same canonical documents that the server persists.
+        base = canonical(base); local = canonical(local); remote = canonical(remote);
         const conflicts = [];
         function visit(before, mine, theirs, path) {
             if (equal(mine, before)) return clone(theirs);
             if (equal(theirs, before) || equal(mine, theirs)) return clone(mine);
             if (before && mine && theirs && !Array.isArray(before) && typeof before === 'object' && typeof mine === 'object' && typeof theirs === 'object') {
                 const result = {};
+                // Text and its formatting describe one document, not independent fields.
+                // Never combine remote text with marks/offsets from a local draft.
+                const documentBody = path.length === 2 && path[0] === 'snippets';
+                if (documentBody) {
+                    const body = item => [item.content, item.richText || null];
+                    const chosen = visit(body(before), body(mine), body(theirs), path.concat('content'));
+                    result.content = chosen[0];
+                    if (chosen[1]) result.richText = chosen[1];
+                }
                 for (const key of new Set([...Object.keys(before), ...Object.keys(mine), ...Object.keys(theirs)])) {
+                    if (documentBody && ['content', 'richText'].includes(key)) continue;
                     if (['__proto__', 'prototype', 'constructor'].includes(key)) continue;
                     const value = visit(before[key], mine[key], theirs[key], path.concat(key));
                     if (value !== undefined) result[key] = value;

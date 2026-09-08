@@ -10,7 +10,9 @@
     <title>Рабочая панель · Control</title>
     <link rel="stylesheet" href="/workspace-theme.css">
     <script src="/workspace-theme.js"></script>
+    <link rel="stylesheet" href="/vendor/quill.core.css">
     <link rel="stylesheet" href="/panel.css">
+    <link rel="stylesheet" href="/snippet-editor.css">
 </head>
 
 <body class="work-ui">
@@ -22,7 +24,7 @@
                 <p class="subtitle">Сессии, ссылки и переписка</p>
             </div>
             <div class="app-tools">
-                <button type="button" onclick="toggleSnippetsPanel()" data-snippets-toggle aria-controls="snippetsContainer" aria-expanded="false">Сниппеты</button>
+                <button type="button" onclick="toggleSnippetsPanel()" data-snippets-toggle hidden aria-controls="snippetsContainer" aria-expanded="false">Сниппеты</button>
                 <button type="button" data-work-theme-toggle>Светлая тема</button>
             </div>
         </header>
@@ -120,7 +122,7 @@
         <div class="chat-window">
             <div class="chat-header">
                 <div class="chat-heading"><h3 id="chatSessionTitle">Чат с пользователем</h3><div class="chat-caption">Enter — отправить · Shift+Enter — новая строка</div></div>
-                <button type="button" onclick="toggleSnippetsPanel()" data-snippets-toggle aria-controls="snippetsContainer" aria-expanded="false">Сниппеты</button><button class="close-chat" aria-label="Закрыть чат" onclick="closeChat()">×</button>
+                <button type="button" onclick="toggleSnippetsPanel()" data-snippets-toggle hidden aria-controls="snippetsContainer" aria-expanded="false">Сниппеты</button><button class="close-chat" aria-label="Закрыть чат" onclick="closeChat()">×</button>
             </div>
 
             <!-- График контроля -->
@@ -150,7 +152,10 @@
         </div>
     </div>
 
+    <script src="/vendor/quill.js"></script>
+    <script src="/snippets-richtext.js"></script>
     <script src="/snippets-sync.js"></script>
+    <script src="/snippet-editor.js"></script>
     <script>
         // Система регистрации с инвайт-кодом и паролем
         const socket = io();
@@ -382,7 +387,71 @@
                 nicknameInput.focus();
             });
         }
-        let currentRole = 'reader'; // Global role storage
+        let currentRole = 'reader'; // Base role remains separate from snippets access.
+        let currentSnippetsAccess = false;
+        let canManageSnippetsAccess = false;
+        let snippetsPermissionEpoch = 0;
+
+        function hasSnippetsAccess() {
+            return !panelAccountInvalidated && currentSnippetsAccess && ['admin', 'user', 'reader'].includes(currentRole);
+        }
+
+        function canEditSnippets() {
+            return hasSnippetsAccess() && ['admin', 'user'].includes(currentRole);
+        }
+
+        function clearSnippetWorkspace() {
+            snippetsPermissionEpoch++;
+            snippetCopyAttempt++;
+            snippetEditors.forEach(editor => editor.destroy());
+            snippetEditors.clear();
+            autoSaveTimeouts.forEach(timeout => clearTimeout(timeout));
+            autoSaveTimeouts.clear();
+            snippetsData = { folders: {}, snippets: {}, structure: [] };
+            snippetsBaseData = SnippetsSync.clone(snippetsData);
+            snippetsRevision = null;
+            snippetsPendingSnapshot = null;
+            snippetsSavePromise = null;
+            snippetsConflicts = [];
+            snippetsSaveError = '';
+            expandedFolders = {};
+            openSnippets = [];
+            activeSnippetId = currentSnippetId = null;
+            snippetAction = snippetParentId = null;
+            for (const id of ['snippetContents', 'snippetTabs', 'snippetTree', 'snippetCopyStatus']) {
+                document.getElementById(id)?.replaceChildren();
+            }
+            document.getElementById('snippetsViewer')?.classList.remove('has-content');
+            document.getElementById('snippetsContainer')?.classList.remove('show');
+            document.body.classList.remove('snippets-open');
+            document.querySelectorAll('#snippetModal input, #snippetModal textarea').forEach(input => { input.value = ''; });
+            const file = document.getElementById('snippetImportFile');
+            if (file) file.value = '';
+            document.getElementById('snippetModal')?.classList.remove('show');
+            updateContainerMargin();
+        }
+
+        function applySnippetsAccess(enabled) {
+            const allowed = enabled === true && !panelAccountInvalidated && ['admin', 'user', 'reader'].includes(currentRole);
+            const changed = currentSnippetsAccess !== allowed;
+            const container = document.getElementById('snippetsContainer');
+            const restoreFocus = !allowed && (container?.contains(document.activeElement) || document.activeElement?.matches('[data-snippets-toggle]'));
+            currentSnippetsAccess = allowed;
+            if (!allowed) clearSnippetWorkspace();
+            else if (changed) snippetsPermissionEpoch++;
+            document.querySelectorAll('[data-snippets-toggle]').forEach(button => {
+                button.hidden = !allowed;
+                if (!allowed) button.setAttribute('aria-expanded', 'false');
+            });
+            if (container) container.hidden = !allowed;
+            applyRoleRestrictions();
+            if (restoreFocus) {
+                const target = document.querySelector('#chatModal.show #chatInput') || document.querySelector('.btn-generate');
+                target?.focus({ preventScroll: true });
+            }
+            return changed;
+        }
+
 
         async function ensureRegistration() {
             const epoch = authenticatedAccountEpoch;
@@ -399,7 +468,9 @@
                         return {
                             ok: true,
                             role: data.role || 'reader',
-                            nickname: data.nickname || ''
+                            nickname: data.nickname || '',
+                            snippetsAccess: data.snippetsAccess === true,
+                            canManageSnippetsAccess: data.canManageSnippetsAccess === true
                         };
                     }
                     return { ok: false, role: null };
@@ -421,6 +492,8 @@
                 localStorage.setItem('nickname', currentNickname);
                 currentRole = authResult.role || 'reader';
                 localStorage.setItem('role', currentRole);
+                canManageSnippetsAccess = authResult.canManageSnippetsAccess === true;
+                applySnippetsAccess(authResult.snippetsAccess);
 
                 // Ученик (роль 'new'): только обучение, остальной функционал панели скрыт
                 if (currentRole === 'new') { showTraineeView(); return; }
@@ -428,9 +501,6 @@
                 socket.emit('identify', currentNickname);
                 if (app) app.style.display = 'block';
 
-                // Показываем кнопку Snippets после успешной регистрации
-                const snippetsToggle = document.querySelector('.snippets-toggle');
-                if (snippetsToggle) snippetsToggle.classList.add('show');
 
                 // Показываем кнопку Logs только для админов
                 if (currentRole === 'admin') {
@@ -463,8 +533,8 @@
 
                 loadLinks();
 
-                // Загружаем snippets СРАЗУ после успешной регистрации
-                loadSnippets();
+                // Never request the shared library without a server-confirmed grant.
+                if (hasSnippetsAccess()) loadSnippets();
 
                 // Применяем ограничения для readers
                 applyRoleRestrictions();
@@ -497,16 +567,19 @@
         }
 
         function applyRoleRestrictions() {
-            if (currentRole === 'reader') {
-                // Disable snippet editing buttons for readers
-                document.querySelectorAll('.snippet-edit-btn, .snippet-delete-btn, .folder-edit-btn, .folder-delete-btn, .add-snippet-btn, .add-folder-btn, .snippet-mutation, .snippet-controls button').forEach(btn => {
-                    btn.style.display = 'none';
-                });
-            }
+            document.querySelectorAll('.snippet-edit-btn, .snippet-delete-btn, .folder-edit-btn, .folder-delete-btn, .add-snippet-btn, .add-folder-btn, .snippet-mutation, .snippet-controls button').forEach(btn => {
+                btn.hidden = !canEditSnippets();
+            });
+            document.querySelectorAll('.snippet-editor-title').forEach(input => {
+                input.readOnly = !canEditSnippets() || Boolean(input.closest('.snippet-content-area')?.querySelector('.snippet-editor-fallback'));
+            });
+            snippetEditors.forEach(editor => editor.setReadOnly(!canEditSnippets()));
         }
 
         // Users management modal for admins
         async function showUsersModal() {
+            if (panelAccountInvalidated || currentRole !== 'admin') return;
+            const epoch = authenticatedAccountEpoch;
             const modal = document.createElement('div');
             modal.className = 'auth-overlay';
 
@@ -519,6 +592,8 @@
                     <h3 style="margin:0;font-family:var(--work-font);">Пользователи</h3>
                     <button id="closeUsersModal" style="padding:4px 8px;">✕</button>
                 </div>
+                <p class="users-access-help">«Сниппеты» — дополнительная роль. Выдать или отозвать её может только владелец 02ashes.</p>
+                <div id="usersAccessStatus" role="status" aria-live="polite"></div>
                 <div id="usersList" style="font-family:var(--work-font);font-size:12px;">Загрузка…</div>
             `;
 
@@ -540,6 +615,7 @@
                 }
 
                 const data = await res.json();
+                if (epoch !== authenticatedAccountEpoch || !modal.isConnected) return;
                 const usersList = container.querySelector('#usersList');
 
                 if (data.users.length === 0) {
@@ -552,7 +628,8 @@
                         <thead>
                             <tr style="background:var(--work-border);color:var(--work-text);">
                                 <th style="padding:6px;text-align:left;border:1px solid var(--work-border);">Никнейм</th>
-                                <th style="padding:6px;text-align:left;border:1px solid var(--work-border);">Роль</th>
+                                <th style="padding:6px;text-align:left;border:1px solid var(--work-border);">Основная роль</th>
+                                <th style="padding:6px;text-align:left;border:1px solid var(--work-border);">Сниппеты</th>
                                 <th style="padding:6px;text-align:left;border:1px solid var(--work-border);">Регистрация</th>
                             </tr>
                         </thead>
@@ -565,18 +642,28 @@
                     const tr = document.createElement('tr');
                     const isSuperAdmin = user.nickname === '02ashes';
                     const dateStr = new Date(user.registered_at).toLocaleDateString();
+                    const granted = user.snippetsAccessGranted === true || user.snippetsAccess === true;
 
                     tr.innerHTML = `
                         <td style="padding:6px;border:1px solid var(--work-border);">${escapeHtml(user.nickname)}${isSuperAdmin ? ' · владелец' : ''}</td>
                         <td style="padding:6px;border:1px solid var(--work-border);">
                             ${isSuperAdmin ? '<span style="color:var(--work-text);font-weight:bold;">Администратор</span>' : `
-                                <select class="role-select" data-nickname="${escapeHtml(user.nickname)}" style="padding:2px;">
+                                <select class="role-select" aria-label="Основная роль: ${escapeHtml(user.nickname)}" data-nickname="${escapeHtml(user.nickname)}" style="padding:2px;">
                                     <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Администратор</option>
                                     <option value="user" ${user.role === 'user' ? 'selected' : ''}>Редактор</option>
                                     <option value="reader" ${user.role === 'reader' ? 'selected' : ''}>Читатель</option>
                                     <option value="new" ${user.role === 'new' ? 'selected' : ''}>Ученик</option>
                                 </select>
                             `}
+                        </td>
+                        <td class="snippet-access-cell" style="padding:6px;border:1px solid var(--work-border);">
+                            ${isSuperAdmin ? '<span>Всегда доступны</span>' : canManageSnippetsAccess && currentNickname === '02ashes' ? `
+                                <label class="snippet-access-control">
+                                    <input type="checkbox" class="snippet-access-toggle" data-nickname="${escapeHtml(user.nickname)}" aria-label="Роль Сниппеты: ${escapeHtml(user.nickname)}" ${granted ? 'checked' : ''}>
+                                    <span>${granted ? 'Выдана' : 'Не выдана'}</span>
+                                </label>
+                            ` : `<span>${granted ? 'Выдана' : 'Не выдана'}</span>`}
+                            ${user.role === 'new' ? '<small class="snippet-access-note">Ученик: только обучение</small>' : ''}
                         </td>
                         <td style="padding:6px;border:1px solid var(--work-border);">${dateStr}</td>
                     `;
@@ -599,7 +686,14 @@
 
                             if (res.ok) {
                                 const user = data.users.find(user => user.nickname === targetNickname);
+                                if (epoch !== authenticatedAccountEpoch || !modal.isConnected) return;
                                 if (user) user.role = newRole;
+                                const cell = e.target.closest('tr').querySelector('.snippet-access-cell');
+                                cell.querySelector('.snippet-access-note')?.remove();
+                                if (newRole === 'new') {
+                                    const note = document.createElement('small'); note.className = 'snippet-access-note';
+                                    note.textContent = 'Ученик: только обучение'; cell.appendChild(note);
+                                }
                                 e.target.style.background = 'var(--work-accent-soft)';
                                 setTimeout(() => e.target.style.background = '', 1000);
                             } else {
@@ -613,6 +707,42 @@
                             alert('Ошибка сети');
                         } finally {
                             e.target.disabled = false;
+                        }
+                    });
+                });
+
+                tbody.querySelectorAll('.snippet-access-toggle').forEach(checkbox => {
+                    checkbox.addEventListener('change', async () => {
+                        const targetNickname = checkbox.dataset.nickname;
+                        const user = data.users.find(item => item.nickname === targetNickname);
+                        const previous = user?.snippetsAccessGranted === true || user?.snippetsAccess === true;
+                        const enabled = checkbox.checked;
+                        const rowRole = checkbox.closest('tr').querySelector('.role-select');
+                        const status = container.querySelector('#usersAccessStatus');
+                        checkbox.disabled = true;
+                        if (rowRole) rowRole.disabled = true;
+                        status.textContent = 'Сохранение доступа…';
+                        try {
+                            const res = await fetch('/api/user/snippets-access', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ targetNickname, enabled })
+                            });
+                            if (epoch !== authenticatedAccountEpoch || !modal.isConnected) return;
+                            if (!res.ok) throw new Error('save_failed');
+                            const updated = await res.json();
+                            if (epoch !== authenticatedAccountEpoch || !modal.isConnected) return;
+                            user.snippetsAccessGranted = updated.snippetsAccessGranted ?? enabled;
+                            user.snippetsAccess = updated.snippetsAccess === true;
+                            checkbox.checked = user.snippetsAccessGranted;
+                            status.textContent = enabled ? `Роль «Сниппеты» выдана: ${targetNickname}.` : `Доступ к сниппетам отозван: ${targetNickname}.`;
+                        } catch (_) {
+                            checkbox.checked = previous;
+                            status.textContent = 'Не удалось изменить доступ. Проверьте соединение и права владельца.';
+                        } finally {
+                            checkbox.disabled = false;
+                            if (rowRole) rowRole.disabled = false;
+                            checkbox.nextElementSibling.textContent = checkbox.checked ? 'Выдана' : 'Не выдана';
                         }
                     });
                 });
@@ -785,18 +915,8 @@
             currentNickname = '';
             currentRole = 'reader';
             socket.disconnect();
-            autoSaveTimeouts.forEach(timeout => clearTimeout(timeout));
-            autoSaveTimeouts.clear();
-            snippetsData = { folders: {}, snippets: {}, structure: [] };
-            snippetsBaseData = SnippetsSync.clone(snippetsData);
-            snippetsRevision = null;
-            snippetsPendingSnapshot = null;
-            snippetsSavePromise = null;
-            snippetsConflicts = [];
-            snippetsSaveError = '';
-            openSnippets = [];
-            activeSnippetId = currentSnippetId = null;
-            snippetAction = snippetParentId = null;
+            canManageSnippetsAccess = false;
+            applySnippetsAccess(false);
             availableVoices = [];
             chatSendAttempt++;
             chatSendPending = false;
@@ -1547,6 +1667,13 @@
             snippets: {},
             structure: []
         };
+        const snippetEditors = new Map();
+
+        function destroySnippetEditor(id) {
+            snippetEditors.get(id)?.destroy();
+            snippetEditors.delete(id);
+        }
+
         let currentSnippetId = null;
         let snippetAction = null;
         let snippetParentId = null;
@@ -1591,6 +1718,7 @@
         }
 
         function renderSnippetSaveStatus() {
+            if (!hasSnippetsAccess()) return false;
             let status = document.getElementById('snippetSaveStatus');
             const tree = document.getElementById('snippetTree');
             if (!tree) return;
@@ -1639,6 +1767,7 @@
         function refreshSnippetEditors() {
             openSnippets = openSnippets.filter(id => {
                 if (snippetsData.snippets[id]) return true;
+                destroySnippetEditor(id);
                 document.getElementById(`snippet-content-${id}`)?.remove();
                 if (autoSaveTimeouts.has(id)) clearTimeout(autoSaveTimeouts.get(id));
                 autoSaveTimeouts.delete(id);
@@ -1653,6 +1782,7 @@
         }
 
         function receiveSnippets(data) {
+            if (!hasSnippetsAccess()) return false;
             if (panelAccountInvalidated) return false;
             if (!SnippetsSync.valid(data?.snippets) || !Number.isSafeInteger(Number(data.revision)) || Number(data.revision) < 0 || data.revision == null) return false;
             if (snippetsRevision !== null && Number(data.revision) <= Number(snippetsRevision)) return false;
@@ -1671,14 +1801,17 @@
 
         // A failed load must never make an empty local library overwrite the server.
         async function loadSnippets() {
-            if (panelAccountInvalidated) return false;
+            if (!hasSnippetsAccess()) return false;
             const epoch = authenticatedAccountEpoch;
+            const permissionEpoch = snippetsPermissionEpoch;
             const owner = currentNickname;
             try {
                 const res = await fetch('/api/snippets/list', { headers: { 'X-Nickname': currentNickname } });
+                if (epoch !== authenticatedAccountEpoch || permissionEpoch !== snippetsPermissionEpoch || !hasSnippetsAccess()) return false;
+                if (res.status === 401 || res.status === 403) { applySnippetsAccess(false); return false; }
                 if (!res.ok) throw new Error('load_failed');
                 const data = await res.json();
-                if (epoch !== authenticatedAccountEpoch || owner !== currentNickname) return false;
+                if (epoch !== authenticatedAccountEpoch || permissionEpoch !== snippetsPermissionEpoch || !hasSnippetsAccess() || owner !== currentNickname) return false;
                 if (!SnippetsSync.valid(data.snippets) || data.revision == null) throw new Error('invalid_snippets');
                 loadExpandedState();
                 receiveSnippets(data);
@@ -1686,7 +1819,7 @@
                 renderSnippetSaveStatus();
                 return true;
             } catch (error) {
-                if (epoch !== authenticatedAccountEpoch || owner !== currentNickname) return false;
+                if (epoch !== authenticatedAccountEpoch || permissionEpoch !== snippetsPermissionEpoch || !hasSnippetsAccess() || owner !== currentNickname) return false;
                 snippetsSaveError = 'Не удалось загрузить сниппеты. Повторите попытку; черновик не потерян.';
                 renderSnippetSaveStatus();
                 return false;
@@ -1694,13 +1827,14 @@
         }
 
         window.addEventListener('beforeunload', event => {
-            if (panelAccountInvalidated || !hasUnsavedSnippets()) return;
+            if (!hasSnippetsAccess() || !hasUnsavedSnippets()) return;
             event.preventDefault();
             event.returnValue = '';
         });
 
         // Переключение панели snippets
         function toggleSnippetsPanel() {
+            if (!hasSnippetsAccess()) return false;
             if (panelAccountInvalidated) return;
             const container = document.getElementById('snippetsContainer');
             if (!container) return;
@@ -1840,6 +1974,7 @@
 
         // Рендеринг дерева snippets
         function renderSnippetsTree() {
+            if (!hasSnippetsAccess()) return false;
             const tree = document.getElementById('snippetTree');
             if (!tree) return;
             tree.innerHTML = '';
@@ -1882,7 +2017,7 @@
             folderEl.querySelector('.folder-label').onclick = () => toggleSnippetFolder(folderId);
             [createSnippetInFolder, renameSnippetFolder, deleteSnippetFolder].forEach((action, index) => {
                 const button = folderEl.querySelectorAll('.snippet-actions button')[index];
-                button.hidden = !['admin', 'user'].includes(currentRole);
+                button.hidden = !canEditSnippets();
                 button.onclick = event => { event.stopPropagation(); action(folderId); };
             });
 
@@ -1917,7 +2052,7 @@
             div.querySelector('.snippet-label').onclick = () => openSnippetViewer(snippetId);
             const buttons = div.querySelectorAll('.snippet-actions button');
             buttons[0].onclick = event => { event.stopPropagation(); copySnippetToClipboard(snippetId); };
-            buttons[1].hidden = !['admin', 'user'].includes(currentRole);
+            buttons[1].hidden = !canEditSnippets();
             buttons[1].onclick = event => { event.stopPropagation(); deleteSnippetItem(snippetId); };
             return div;
         }
@@ -1951,6 +2086,7 @@
 
         // Создание папки (автоматически без модального окна)
         function createSnippetFolder() {
+            if (!canEditSnippets()) return false;
             createFolderWithDefaultName(null);
         }
 
@@ -2003,10 +2139,12 @@
 
         // Создание сниппета (автоматически без модального окна)
         function createNewSnippet() {
+            if (!canEditSnippets()) return false;
             createSnippetWithDefaultName(null);
         }
 
         function createSnippetInFolder(folderId) {
+            if (!canEditSnippets()) return false;
             createSnippetWithDefaultName(folderId);
         }
 
@@ -2037,6 +2175,7 @@
 
         // Создание сниппета с автоматическим именем
         async function createSnippetWithDefaultName(parentId = null) {
+            if (!canEditSnippets()) return false;
             const name = generateUniqueSnippetName(parentId);
             const id = generateId();
 
@@ -2101,6 +2240,7 @@
         }
 
         async function confirmSnippetModal() {
+            if (!canEditSnippets()) return false;
             const name = document.getElementById('snippetModalInput').value.trim();
             if (!name) return;
 
@@ -2137,7 +2277,9 @@
                 const snippet = snippetsData.snippets[currentSnippetId];
                 if (snippet) {
                     snippet.name = name;
-                    snippet.content = document.getElementById('snippetModalTextarea').value;
+                    const content = document.getElementById('snippetModalTextarea').value;
+                    if (content !== snippet.content) delete snippet.richText;
+                    snippet.content = content;
                 }
             }
 
@@ -2146,6 +2288,7 @@
         }
 
         function renameSnippetFolder(folderId) {
+            if (!canEditSnippets()) return false;
             const folder = snippetsData.folders[folderId];
             if (!folder) return;
 
@@ -2162,6 +2305,7 @@
         }
 
         function openSnippetViewer(snippetId) {
+            if (!hasSnippetsAccess()) return false;
             const snippet = snippetsData.snippets[snippetId];
             if (!snippet) return;
 
@@ -2202,6 +2346,7 @@
                 }
             }
 
+            destroySnippetEditor(snippetId);
             document.getElementById(`snippet-content-${snippetId}`)?.remove();
             renderSnippetTabs();
 
@@ -2225,22 +2370,23 @@
 
         // Сохранение текущего состояния сниппета без отправки на сервер
         function saveCurrentSnippetState(snippetId) {
+            if (!canEditSnippets()) return false;
             const contentArea = document.getElementById(`snippet-content-${snippetId}`);
-            if (!contentArea) return;
-
             const snippet = snippetsData.snippets[snippetId];
-            if (!snippet) return;
-
+            if (!contentArea || !snippet) return;
             const titleInput = contentArea.querySelector('.snippet-editor-title');
-            const textArea = contentArea.querySelector('.snippet-editor-textarea');
-
-            if (titleInput && textArea) {
-                snippet.name = titleInput.value;
-                snippet.content = textArea.value;
+            if (titleInput) snippet.name = titleInput.value;
+            const editor = snippetEditors.get(snippetId);
+            if (editor) {
+                const value = editor.getValue();
+                snippet.content = value.content;
+                if (value.richText) snippet.richText = value.richText;
+                else delete snippet.richText;
             }
         }
 
         function renderSnippetTabs() {
+            if (!hasSnippetsAccess()) return false;
             const tabsContainer = document.getElementById('snippetTabs');
             const focused = document.activeElement;
             const restoreTabFocus = tabsContainer.contains(focused);
@@ -2295,46 +2441,61 @@
         }
 
         function renderSnippetContent(snippetId) {
+            if (!hasSnippetsAccess()) return false;
             const snippet = snippetsData.snippets[snippetId];
             if (!snippet) return;
-
             const contentContainer = document.getElementById('snippetContents');
-
-            // Проверяем, есть ли уже контент для этого сниппета
             let contentArea = document.getElementById(`snippet-content-${snippetId}`);
-
             if (!contentArea) {
                 contentArea = document.createElement('div');
                 contentArea.id = `snippet-content-${snippetId}`;
                 contentArea.className = 'snippet-content-area';
-
                 contentArea.innerHTML = `
                     <input type="text" class="snippet-editor-title" aria-label="Название сниппета" placeholder="Название сниппета">
-                    <textarea class="snippet-editor-textarea" aria-label="Текст сниппета" placeholder="Содержимое сниппета..."></textarea>
-                    <div class="snippet-editor-actions"><button type="button">Копировать</button><span class="snippet-copy-feedback" role="status" aria-live="polite"></span></div>`;
+                    <div class="snippet-rich-editor"></div>
+                    <div class="snippet-editor-actions"><button type="button" class="snippet-copy-button" title="Копировать текст без оформления">Копировать</button><span class="snippet-copy-feedback" role="status" aria-live="polite"></span></div>`;
                 contentArea.querySelector('.snippet-editor-title').oninput = () => autoSaveSnippet(snippetId);
-                contentArea.querySelector('.snippet-editor-textarea').oninput = () => autoSaveSnippet(snippetId);
-                contentArea.querySelector('button').onclick = () => copySnippetToClipboard(snippetId);
+                contentArea.querySelector('.snippet-copy-button').onclick = () => copySnippetToClipboard(snippetId);
                 contentContainer.appendChild(contentArea);
+                const host = contentArea.querySelector('.snippet-rich-editor');
+                try {
+                    const editor = SnippetEditor.create(host, {
+                        content: snippet.content, richText: snippet.richText,
+                        readOnly: !canEditSnippets(),
+                        onChange: () => autoSaveSnippet(snippetId)
+                    });
+                    snippetEditors.set(snippetId, editor);
+                } catch (error) {
+                    // A missing editor asset must not erase text or formatting.
+                    host.replaceChildren();
+                    const notice = document.createElement('p');
+                    notice.className = 'snippet-editor-error';
+                    notice.textContent = 'Редактор не загрузился. Обновите страницу. Текст доступен для копирования.';
+                    const fallback = document.createElement('pre');
+                    fallback.className = 'snippet-editor-fallback';
+                    fallback.textContent = snippet.content;
+                    host.append(notice, fallback);
+                }
             }
             const titleInput = contentArea.querySelector('.snippet-editor-title');
-            const textArea = contentArea.querySelector('.snippet-editor-textarea');
-            // The model includes input events immediately. Updating only changed
-            // values refreshes inactive tabs without moving the active cursor.
             if (titleInput.value !== snippet.name) titleInput.value = snippet.name;
-            if (textArea.value !== snippet.content) textArea.value = snippet.content;
-            titleInput.readOnly = textArea.readOnly = !['admin', 'user'].includes(currentRole);
-
-            // Показываем только активный контент (НЕ убираем active здесь, это сделано в renderSnippetTabs)
-            if (snippetId === activeSnippetId) {
-                contentArea.classList.add('active');
+            titleInput.readOnly = !canEditSnippets() || !snippetEditors.has(snippetId);
+            const editor = snippetEditors.get(snippetId);
+            if (editor) {
+                // Equal acknowledgements must not reset selection or undo history.
+                editor.setValue({ content: snippet.content, richText: snippet.richText });
+                editor.setReadOnly(!canEditSnippets());
+            } else {
+                const fallback = contentArea.querySelector('.snippet-editor-fallback');
+                if (fallback) fallback.textContent = snippet.content;
             }
+            if (snippetId === activeSnippetId) contentArea.classList.add('active');
         }
 
         // Автосохранение с debounce (отдельный таймер для каждого сниппета)
         const autoSaveTimeouts = new Map();
         function autoSaveSnippet(snippetId) {
-            if (!['admin', 'user'].includes(currentRole)) return;
+            if (!canEditSnippets()) return;
             saveCurrentSnippetState(snippetId);
             renderSnippetSaveStatus();
             // Очищаем предыдущий таймер для ЭТОГО сниппета
@@ -2352,18 +2513,8 @@
         }
 
         function saveSnippetContent(snippetId) {
-            const contentArea = document.getElementById(`snippet-content-${snippetId}`);
-            if (!contentArea) return;
-
-            const snippet = snippetsData.snippets[snippetId];
-            if (!snippet) return;
-
-            const titleInput = contentArea.querySelector('.snippet-editor-title');
-            const textArea = contentArea.querySelector('.snippet-editor-textarea');
-
-            snippet.name = titleInput.value;
-            snippet.content = textArea.value;
-
+            if (!canEditSnippets() || !snippetEditors.has(snippetId)) return false;
+            saveCurrentSnippetState(snippetId);
             saveSnippets();
             renderSnippetsTree();
             renderSnippetTabs();
@@ -2372,7 +2523,7 @@
         let snippetCopyAttempt = 0;
         async function copySnippetToClipboard(snippetId) {
             const snippet = snippetsData.snippets[snippetId];
-            if (!snippet || panelAccountInvalidated) return;
+            if (!snippet || !hasSnippetsAccess()) return;
             const epoch = authenticatedAccountEpoch;
             const attempt = ++snippetCopyAttempt;
             document.querySelectorAll('.snippet-copy-feedback').forEach(element => {
@@ -2415,6 +2566,7 @@
         }
 
         function deleteSnippetItem(snippetId) {
+            if (!canEditSnippets()) return false;
             if (!confirm('Удалить сниппет?')) return;
 
             // Закрываем вкладку если она открыта
@@ -2424,6 +2576,7 @@
             }
 
             // Удаляем контент
+            destroySnippetEditor(snippetId);
             const contentArea = document.getElementById(`snippet-content-${snippetId}`);
             if (contentArea) {
                 contentArea.remove();
@@ -2457,6 +2610,7 @@
         }
 
         function deleteSnippetFolder(folderId) {
+            if (!canEditSnippets()) return false;
             if (!confirm('Удалить папку со всем содержимым?')) return;
 
             const deletedFolders = new Set([folderId]);
@@ -2482,15 +2636,16 @@
         // Serialize saves; optimistic revisions prevent stale clients replacing
         // the complete shared library. Failures remain visible and retryable.
         async function saveSnippets() {
-            if (panelAccountInvalidated || !['admin', 'user'].includes(currentRole)) return false;
+            if (panelAccountInvalidated || !canEditSnippets()) return false;
             const epoch = authenticatedAccountEpoch;
+            const permissionEpoch = snippetsPermissionEpoch;
             if (snippetsSavePromise) return snippetsSavePromise;
             snippetsSavePromise = (async () => {
                 if (snippetsRevision === null && !(await loadSnippets())) return false;
-                if (epoch !== authenticatedAccountEpoch || snippetsConflicts.length) return false;
+                if (epoch !== authenticatedAccountEpoch || permissionEpoch !== snippetsPermissionEpoch || !hasSnippetsAccess() || snippetsConflicts.length) return false;
                 snippetsSaveError = '';
                 let conflictRetries = 0;
-                while (epoch === authenticatedAccountEpoch && hasUnsavedSnippets() && !snippetsConflicts.length) {
+                while (epoch === authenticatedAccountEpoch && permissionEpoch === snippetsPermissionEpoch && hasSnippetsAccess() && hasUnsavedSnippets() && !snippetsConflicts.length) {
                     const snapshot = SnippetsSync.clone(snippetsData);
                     snippetsPendingSnapshot = snapshot;
                     renderSnippetSaveStatus();
@@ -2501,7 +2656,8 @@
                             body: JSON.stringify({ snippets: snapshot, baseRevision: snippetsRevision })
                         });
                         const data = await res.json();
-                        if (epoch !== authenticatedAccountEpoch) return false;
+                        if (epoch !== authenticatedAccountEpoch || permissionEpoch !== snippetsPermissionEpoch || !hasSnippetsAccess()) return false;
+                        if (res.status === 401 || res.status === 403) { applySnippetsAccess(false); return false; }
                         if (res.status === 409) {
                             if (!SnippetsSync.valid(data.snippets) || data.revision == null || ++conflictRetries > 3) throw new Error('invalid_conflict');
                             receiveSnippets(data);
@@ -2513,20 +2669,20 @@
                         conflictRetries = 0;
                         receiveSnippets(data);
                     } catch (error) {
-                        if (epoch !== authenticatedAccountEpoch) return false;
+                        if (epoch !== authenticatedAccountEpoch || permissionEpoch !== snippetsPermissionEpoch || !hasSnippetsAccess()) return false;
                         snippetsSaveError = 'Не удалось сохранить. Черновик остался в редакторе — повторите сохранение.';
                         return false;
                     } finally {
-                        if (epoch === authenticatedAccountEpoch) snippetsPendingSnapshot = null;
+                        if (epoch === authenticatedAccountEpoch && permissionEpoch === snippetsPermissionEpoch && hasSnippetsAccess()) snippetsPendingSnapshot = null;
                     }
                 }
-                if (epoch !== authenticatedAccountEpoch) return false;
+                if (epoch !== authenticatedAccountEpoch || permissionEpoch !== snippetsPermissionEpoch || !hasSnippetsAccess()) return false;
                 refreshSnippetEditors();
                 return !snippetsConflicts.length;
             })();
             try { return await snippetsSavePromise; }
             finally {
-                if (epoch === authenticatedAccountEpoch) {
+                if (epoch === authenticatedAccountEpoch && permissionEpoch === snippetsPermissionEpoch && hasSnippetsAccess()) {
                     snippetsSavePromise = null;
                     renderSnippetSaveStatus();
                 }
@@ -2535,6 +2691,7 @@
 
         // Экспорт snippets
         function exportSnippets() {
+            if (!hasSnippetsAccess()) return false;
             const blob = new Blob([JSON.stringify(snippetsData, null, 2)], {
                 type: 'application/json'
             });
@@ -2551,14 +2708,15 @@
 
         // Импорт snippets
         function importSnippets(input) {
-            if (panelAccountInvalidated || !['admin', 'user'].includes(currentRole)) { input.value = ''; return; }
+            if (panelAccountInvalidated || !canEditSnippets()) { input.value = ''; return; }
             const epoch = authenticatedAccountEpoch;
+            const permissionEpoch = snippetsPermissionEpoch;
             const file = input.files[0];
             if (!file) return;
 
             const reader = new FileReader();
             reader.onload = async function (e) {
-                if (epoch !== authenticatedAccountEpoch) return;
+                if (epoch !== authenticatedAccountEpoch || permissionEpoch !== snippetsPermissionEpoch || !hasSnippetsAccess()) return;
                 try {
                     const importedData = JSON.parse(e.target.result);
                     if (!SnippetsSync.valid(importedData)) throw new Error('invalid_snippets');
@@ -2579,13 +2737,26 @@
 
         // Merge remote updates into every open tab, never over a local draft.
         socket.on('snippets-updated', receiveSnippets);
+        socket.on('permissions-changed', auth => {
+            if (panelAccountInvalidated || !currentNickname || auth?.nickname !== currentNickname) return;
+            if (auth.role !== currentRole) {
+                invalidateAuthenticatedPanel();
+                window.location.reload();
+                return;
+            }
+            canManageSnippetsAccess = auth.canManageSnippetsAccess === true;
+            const changed = applySnippetsAccess(auth.snippetsAccess);
+            if (changed && hasSnippetsAccess()) loadSnippets();
+        });
         socket.on('connect', () => {
-            if (currentNickname && currentRole !== 'new') loadSnippets();
+            if (currentNickname && hasSnippetsAccess()) loadSnippets();
         });
 
         // Периодическая проверка авторизации (каждые 30 секунд)
         setInterval(async () => {
-            if (!currentNickname) return;
+            if (!currentNickname || panelAccountInvalidated) return;
+            const epoch = authenticatedAccountEpoch;
+            const permissionEpoch = snippetsPermissionEpoch;
 
             try {
                 const res = await fetch('/api/auth/check', {
@@ -2594,11 +2765,17 @@
 
                 if (res.ok) {
                     const auth = await res.json();
+                    if (epoch !== authenticatedAccountEpoch || permissionEpoch !== snippetsPermissionEpoch || panelAccountInvalidated) return;
                     if (auth.nickname !== currentNickname || auth.role !== currentRole) {
                         invalidateAuthenticatedPanel();
                         window.location.reload();
+                    } else {
+                        canManageSnippetsAccess = auth.canManageSnippetsAccess === true;
+                        const changed = applySnippetsAccess(auth.snippetsAccess);
+                        if (changed && hasSnippetsAccess()) loadSnippets();
                     }
                 } else if (res.status === 401 || res.status === 403) {
+                    if (epoch !== authenticatedAccountEpoch || permissionEpoch !== snippetsPermissionEpoch) return;
                     invalidateAuthenticatedPanel();
                     // Пользователь больше не авторизован - выкидываем
                     console.log('User no longer authorized, logging out...');
@@ -2613,7 +2790,7 @@
     </script>
 
     <!-- Snippets Container -->
-    <aside class="snippets-container" id="snippetsContainer" aria-label="Библиотека сниппетов">
+    <aside class="snippets-container" id="snippetsContainer" hidden aria-label="Библиотека сниппетов">
         <!-- Snippets Panel (список) -->
         <div class="snippets-panel" id="snippetsPanel">
             <div class="snippets-header">
@@ -2646,7 +2823,7 @@
     </aside>
 
     <!-- Snippets Toggle Button -->
-    <button type="button" class="snippets-toggle" data-snippets-toggle aria-controls="snippetsContainer" aria-expanded="false" onclick="toggleSnippetsPanel()">Сниппеты</button>
+    <button type="button" class="snippets-toggle" data-snippets-toggle hidden aria-controls="snippetsContainer" aria-expanded="false" onclick="toggleSnippetsPanel()">Сниппеты</button>
 
     <!-- Snippet Modal (для создания) -->
     <div class="snippet-modal" id="snippetModal" onclick="if(event.target === this) closeSnippetModal()">

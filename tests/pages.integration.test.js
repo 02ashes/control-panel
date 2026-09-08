@@ -8,13 +8,19 @@ const { startApplication } = require('./helpers/application');
 test('complete panel and Day 1 pages initialize with actual HTTP assets/auth/state', async t => {
   const app = await startApplication();
   t.after(() => app.close());
+  const ownerCookie = await app.register('02ashes');
   const editorCookie = await app.register('page-editor');
   const learnerCookie = await app.register('page-learner');
   await app.pool.query("UPDATE user_registrations SET role='user' WHERE nickname='page-editor'");
   await app.pool.query("UPDATE user_registrations SET role='new' WHERE nickname='page-learner'");
+  const granted = await app.request('/api/user/snippets-access', {
+    method: 'POST', cookie: ownerCookie, body: { targetNickname: 'page-editor', enabled: true }
+  });
+  assert.equal(granted.status, 200, JSON.stringify(granted.data));
 
   async function open(route, cookie) {
     const errors = [];
+    const requests = [];
     const jar = new CookieJar();
     jar.setCookieSync(cookie + '; Path=/; HttpOnly', app.base);
     const resources = { interceptors: [requestInterceptor(request => {
@@ -42,6 +48,7 @@ test('complete panel and Day 1 pages initialize with actual HTTP assets/auth/sta
         window.fetch = (url, options = {}) => {
           const target = new URL(url, window.location.href);
           if (target.origin !== app.base) throw new Error('External requests disabled');
+          requests.push(target.pathname);
           const headers = new Headers(options.headers || {});
           headers.set('Cookie', cookie);
           return fetch(target, { ...options, headers });
@@ -53,7 +60,7 @@ test('complete panel and Day 1 pages initialize with actual HTTP assets/auth/sta
       }
     });
     t.after(() => dom.window.close());
-    return { dom, errors };
+    return { dom, errors, requests };
   }
 
   async function until(predicate, errors) {
@@ -71,9 +78,23 @@ test('complete panel and Day 1 pages initialize with actual HTTP assets/auth/sta
   await until(() => panel.dom.window.document.getElementById('snippetSaveStatus'), panel.errors);
   assert.equal(panel.dom.window.localStorage.getItem('nickname'), 'page-editor');
   assert.match(panel.dom.window.document.getElementById('snippetSaveStatus').textContent, /сохранены/);
+  assert.ok(panel.requests.includes('/api/snippets/list'));
+
+  const revoked = await app.request('/api/user/snippets-access', {
+    method: 'POST', cookie: ownerCookie, body: { targetNickname: 'page-editor', enabled: false }
+  });
+  assert.equal(revoked.status, 200);
+  const deniedPanel = await open('/admin', editorCookie);
+  await until(() => deniedPanel.dom.window.document.getElementById('appRoot').style.display === 'block', deniedPanel.errors);
+  assert.equal(deniedPanel.dom.window.document.getElementById('snippetsContainer').hidden, true);
+  const toggles = [...deniedPanel.dom.window.document.querySelectorAll('[data-snippets-toggle]')];
+  assert.ok(toggles.length > 0);
+  assert.ok(toggles.every(button => button.hidden));
+  assert.ok(!deniedPanel.requests.some(route => route.startsWith('/api/snippets/')),
+    'An account without access must not bootstrap a private snippets request');
 
   const course = await open('/learn/day1.html', learnerCookie);
   await until(() => course.dom.window.document.querySelectorAll('#taskNavList button').length > 0, course.errors);
   assert.ok(course.dom.window.document.getElementById('taskContent').textContent.trim().length > 0);
-  assert.deepEqual(panel.errors.concat(course.errors), []);
+  assert.deepEqual(panel.errors.concat(deniedPanel.errors, course.errors), []);
 });

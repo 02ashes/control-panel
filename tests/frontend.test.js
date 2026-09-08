@@ -22,10 +22,11 @@ function panel(file = 'index.html') {
     const run = code => vm.runInContext(code, context);
     const listeners = new Map();
     const timeouts = new Map();
+    const intervals = new Map();
     let timerId = 0;
     w.setTimeout = fn => { timeouts.set(++timerId, fn); return timerId; };
     w.clearTimeout = id => timeouts.delete(id);
-    w.setInterval = () => ++timerId;
+    w.setInterval = fn => { intervals.set(++timerId, fn); return timerId; };
     w.clearInterval = () => {};
     w.alert = () => {};
     w.HTMLMediaElement.prototype.play = async () => {};
@@ -39,7 +40,15 @@ function panel(file = 'index.html') {
     w.HTMLCanvasElement.prototype.getContext = () => ({ clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {} });
     w.io = () => ({ connected: true, on(name, fn) { if (!listeners.has(name)) listeners.set(name, []); listeners.get(name).push(fn); }, once() {}, emit() {}, connect() {}, disconnect() {} });
     w.fetch = async () => reply(200, { ok: true, snippets: empty(), revision: '0', sessions: [] });
-    w.console = { log() {}, error() {} };
+    w.console = { log() {}, error() {}, warn() {} };
+    w.Range.prototype.getBoundingClientRect = () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 });
+    w.Range.prototype.getClientRects = () => [];
+    w.document.execCommand = () => false;
+    run(fs.readFileSync(path.join(root, 'public/snippets-richtext.js'), 'utf8'));
+    if (file === 'index.html') {
+        run(fs.readFileSync(path.join(root, 'node_modules/quill/dist/quill.js'), 'utf8'));
+        run(fs.readFileSync(path.join(root, 'public/snippet-editor.js'), 'utf8'));
+    }
     run(fs.readFileSync(path.join(root, 'public/snippets-sync.js'), 'utf8'));
     for (const script of source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
         let code = script[1];
@@ -49,14 +58,18 @@ function panel(file = 'index.html') {
         if (file === 'logs.html') code = code.replace(/        \(async function \(\) \{[\s\S]*?        \}\)\(\);/, '');
         run(code);
     }
-    return { w, dom, listeners, timeouts, run, emit: (name, data) => (listeners.get(name) || []).forEach(fn => fn(data)) };
+    return { w, dom, listeners, timeouts, intervals, run, emit: (name, data) => (listeners.get(name) || []).forEach(fn => fn(data)) };
 }
 function initEditor(p, data = library()) {
     p.w.seed = data;
-    p.run("currentNickname = 'alice'; currentRole = 'user'; receiveSnippets({snippets:seed, revision:'1'});");
+    p.run("currentNickname = 'alice'; currentRole = 'user'; applySnippetsAccess(true); receiveSnippets({snippets:seed, revision:'1'});");
+}
+function snippetEditor(p, id) {
+    p.w.testSnippetId = id;
+    return p.run('snippetEditors.get(testSnippetId)');
 }
 function draft(p, id, text) {
-    p.w.document.getElementById(`snippet-content-${id}`).querySelector('textarea').value = text;
+    snippetEditor(p, id).setValue({ content: text });
     p.w.autoSaveSnippet(id);
 }
 
@@ -79,9 +92,9 @@ test('remote inactive-tab updates cannot be replaced by stale DOM when tab opens
     p.w.openSnippetViewer('b'); p.w.openSnippetViewer('a');
     const remote = library(); remote.snippets.b.content = 'updated by colleague';
     p.emit('snippets-updated', { snippets: remote, revision: '2' });
-    const input = p.w.document.getElementById('snippet-content-b').querySelector('textarea');
-    assert.equal(input.value, 'updated by colleague');
-    p.w.switchToSnippetTab('b'); draft(p, 'b', input.value + '!');
+    const editor = snippetEditor(p, 'b');
+    assert.equal(editor.getValue().content, 'updated by colleague');
+    p.w.switchToSnippetTab('b'); draft(p, 'b', editor.getValue().content + '!');
     assert.equal(p.run('snippetsData.snippets.b.content'), 'updated by colleague!');
 });
 
@@ -93,7 +106,7 @@ test('in-flight input is protected and conflicting remote edits block autosave v
     let writes = 0; p.w.fetch = async () => { writes++; throw new Error('must not save conflict'); };
     assert.equal(await p.w.saveSnippets(), false);
     assert.equal(writes, 0);
-    assert.equal(p.w.document.querySelector('textarea.snippet-editor-textarea').value, 'local draft');
+    assert.equal(snippetEditor(p, 'a').getValue().content, 'local draft');
     assert.match(p.w.document.getElementById('snippetSaveStatus').textContent, /Конфликт/);
 });
 
@@ -139,7 +152,7 @@ test('closing a dirty tab flushes debounce and safely deletes its editor DOM', a
     assert.equal(saved.snippets.snippets.a.content, 'before close');
     assert.equal(p.w.document.getElementById('snippet-content-a'), null);
     p.w.openSnippetViewer('a');
-    assert.equal(p.w.document.querySelector('.snippet-editor-textarea').value, 'before close');
+    assert.equal(snippetEditor(p, 'a').getValue().content, 'before close');
 });
 
 test('nickname, snippet names and IDs stay text, not executable markup or handlers', async t => {
@@ -154,6 +167,7 @@ test('nickname, snippet names and IDs stay text, not executable markup or handle
     assert.equal(p.w.document.querySelector('#snippetContents img'), null);
     assert.equal(p.w.document.querySelector('[onerror]'), null);
     p.w.fetch = async () => reply(200, { users: [{ nickname: payload, role: 'user', registered_at: new Date().toISOString() }] });
+    p.run("currentRole = 'admin';");
     await p.w.showUsersModal();
     assert.equal(p.w.document.querySelector('.role-select').dataset.nickname, payload);
     assert.equal(p.w.document.querySelector('#usersTableBody img'), null);
@@ -228,7 +242,7 @@ test('reader can copy but cannot mutate snippets in the editor', async t => {
     const p = panel(); t.after(() => p.dom.window.close()); initEditor(p);
     p.run("currentRole = 'reader'; renderSnippetsTree();"); p.w.openSnippetViewer('a');
     assert.equal(p.w.document.querySelector('.snippet-editor-title').readOnly, true);
-    assert.equal(p.w.document.querySelector('.snippet-editor-textarea').readOnly, true);
+    assert.equal(snippetEditor(p, 'a').root.getAttribute('contenteditable'), 'false');
     assert.equal(await p.w.saveSnippets(), false);
     assert.equal([...p.w.document.querySelectorAll('#snippetTree .snippet-mutation')].every(button => button.hidden), true);
 });
@@ -282,7 +296,7 @@ test('chat drafts do not leak into a different control session', t => {
 
 test('log search in snippets mode actually searches snippet logs', t => {
     const p = panel('logs.html'); t.after(() => p.dom.window.close());
-    p.run("allSnippetLogs = [{user_nickname:'alice',item_name:'Find me',action:'edit',item_type:'snippet',timestamp:'2025-01-01'}];");
+    p.run("applySnippetAccess(true); allSnippetLogs = [{user_nickname:'alice',item_name:'Find me',action:'edit',item_type:'snippet',timestamp:'2025-01-01'}];");
     p.w.document.getElementById('viewMode').value = 'snippets';
     const search = p.w.document.getElementById('searchInput'); search.value = 'find'; search.dispatchEvent(new p.w.Event('input'));
     assert.match(p.w.document.getElementById('sessionsList').textContent, /Find me/);
@@ -477,15 +491,17 @@ test('snippet tab switches and closes restore focus to a remaining usable contro
 test('unrelated snippet-tab rerenders preserve active editor selection and scrolling', t => {
     const p = panel(); t.after(() => p.dom.window.close()); initEditor(p);
     p.w.openSnippetViewer('a'); p.w.openSnippetViewer('b'); p.w.switchToSnippetTab('a');
-    const textarea = p.w.document.querySelector('#snippet-content-a textarea');
+    const textarea = snippetEditor(p, 'a').root;
     const tabs = p.w.document.getElementById('snippetTabs');
-    textarea.focus(); textarea.setSelectionRange(1, 4, 'backward');
+    textarea.focus();
+    const textNode = textarea.querySelector('p').firstChild;
+    p.w.getSelection().setBaseAndExtent(textNode, 4, textNode, 1);
     textarea.scrollTop = 24; tabs.scrollLeft = 90;
     p.w.renderSnippetTabs();
     assert.equal(p.w.document.activeElement, textarea);
-    assert.equal(textarea.selectionStart, 1);
-    assert.equal(textarea.selectionEnd, 4);
-    assert.equal(textarea.selectionDirection, 'backward');
+    assert.equal(p.w.getSelection().focusOffset, 1);
+    assert.equal(p.w.getSelection().anchorOffset, 4);
+    assert.equal(p.w.getSelection().toString(), 'irs');
     assert.equal(textarea.scrollTop, 24);
     assert.equal(tabs.scrollLeft, 90);
     assert.equal(textarea.closest('.snippet-content-area').classList.contains('active'), true);
@@ -527,8 +543,8 @@ test('copy failures are visible and late copy results cannot restore feedback af
 
 test('fallback snippet copy preserves the chat composer selection and copies the current draft', async t => {
     const p = panel(); t.after(() => p.dom.window.close()); initEditor(p); p.w.openSnippetViewer('a');
-    const textarea = p.w.document.querySelector('#snippet-content-a textarea');
-    textarea.value = 'Current editor text';
+    const textarea = snippetEditor(p, 'a').root;
+    snippetEditor(p, 'a').setValue({ content: 'Current editor text' });
     const composer = p.w.document.getElementById('chatInput');
     composer.value = 'A chat draft'; composer.focus(); composer.setSelectionRange(2, 7);
     let copied;
@@ -555,7 +571,7 @@ test('snippet geometry is clamped to the viewport and session switches keep the 
     p.w.openChat('session-two');
     assert.equal(container.classList.contains('show'), true);
     assert.equal(p.run('activeSnippetId'), 'a');
-    assert.equal(p.w.document.querySelector('#snippet-content-a textarea').value, 'first');
+    assert.equal(snippetEditor(p, 'a').getValue().content, 'first');
     p.w.openChat('session-one');
     assert.equal(p.w.document.getElementById('chatInput').value, 'Session one draft');
     p.w.innerWidth = 600; p.w.updateContainerMargin();
@@ -589,7 +605,7 @@ test('saved folder expansion is restored before the initial library render', asy
     const data = library();
     data.folders.parent = { id: 'parent', name: 'Saved folder', parentId: null };
     data.snippets.a.parentId = 'parent'; data.structure = ['parent', 'b'];
-    p.run("currentNickname = 'alice'; currentRole = 'user';");
+    p.run("currentNickname = 'alice'; currentRole = 'user'; applySnippetsAccess(true);");
     p.w.localStorage.setItem('snippetsExpandedState', JSON.stringify({ parent: true }));
     p.w.fetch = async () => reply(200, { snippets: data, revision: '1' });
     assert.equal(await p.w.loadSnippets(), true);
@@ -598,4 +614,279 @@ test('saved folder expansion is restored before the initial library render', asy
     p.w.localStorage.setItem('snippetsExpandedState', 'null');
     p.w.loadExpandedState();
     assert.doesNotThrow(() => p.w.renderSnippetsTree());
+});
+
+test('snippet controls start hidden and all base roles require a separate server grant', async t => {
+    const p = panel(); t.after(() => p.dom.window.close());
+    let requests = 0; p.w.fetch = async () => { requests++; throw new Error('unauthorized fetch'); };
+    p.w.localStorage.setItem('role', 'admin');
+    p.w.localStorage.setItem('snippetsAccess', 'true');
+    for (const role of ['admin', 'user', 'reader', 'new']) {
+        p.w.testRole = role; p.run("currentNickname = 'alice'; currentRole = testRole;");
+        assert.equal(p.w.receiveSnippets({ snippets: library(), revision: 1 }), false);
+        assert.equal(await p.w.loadSnippets(), false);
+        assert.equal(await p.w.saveSnippets(), false);
+        p.w.toggleSnippetsPanel(); p.w.exportSnippets(); p.w.createNewSnippet();
+        assert.ok([...p.w.document.querySelectorAll('[data-snippets-toggle]')].every(button => button.hidden));
+        assert.equal(p.w.document.getElementById('snippetsContainer').hidden, true);
+        assert.equal(p.w.document.getElementById('snippetsContainer').classList.contains('show'), false);
+        assert.equal(p.run('Object.keys(snippetsData.snippets).length'), 0);
+    }
+    assert.equal(requests, 0);
+    p.w.applySnippetsAccess(true);
+    assert.equal(p.w.hasSnippetsAccess(), false, 'training remains isolated even with a stale true flag');
+});
+
+test('revoking snippet access immediately clears its workspace but preserves chat and the current draft', t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p);
+    p.w.openSnippetViewer('a'); p.w.toggleSnippetsPanel(); draft(p, 'a', 'private edit');
+    p.w.openChat('session-one');
+    const composer = p.w.document.getElementById('chatInput'); composer.value = 'Keep this chat draft';
+    snippetEditor(p, 'a').focus();
+    p.emit('permissions-changed', { nickname: 'alice', role: 'user', snippetsAccess: false, canManageSnippetsAccess: false });
+    assert.equal(p.w.hasSnippetsAccess(), false);
+    assert.equal(p.run('panelAccountInvalidated'), false);
+    assert.equal(p.run('autoSaveTimeouts.size'), 0);
+    assert.equal(p.run('Object.keys(snippetsData.snippets).length'), 0);
+    assert.equal(p.w.document.getElementById('snippetContents').textContent, '');
+    assert.equal(p.w.document.getElementById('snippetTree').textContent, '');
+    assert.equal(p.w.document.getElementById('snippetTabs').textContent, '');
+    assert.equal(p.w.document.getElementById('snippetsContainer').hidden, true);
+    assert.equal(p.w.document.getElementById('chatModal').classList.contains('snippets-open'), false);
+    assert.equal(p.run('currentChatSessionId'), 'session-one');
+    assert.equal(composer.value, 'Keep this chat draft');
+    assert.equal(p.w.document.activeElement, composer);
+    const leaving = new p.w.Event('beforeunload', { cancelable: true }); p.w.dispatchEvent(leaving);
+    assert.equal(leaving.defaultPrevented, false);
+    p.emit('snippets-updated', { snippets: library(), revision: 2 });
+    assert.equal(p.run('Object.keys(snippetsData.snippets).length'), 0);
+});
+
+test('late snippet GET and POST responses remain fenced after revoke and regrant to the same account', async t => {
+    for (const operation of ['GET', 'POST']) {
+        const p = panel(); t.after(() => p.dom.window.close()); initEditor(p); p.w.openSnippetViewer('a');
+        const pending = deferred(); let body;
+        p.w.fetch = (url, options) => { body = options.body && JSON.parse(options.body); return pending.promise; };
+        if (operation === 'POST') draft(p, 'a', 'old restricted draft');
+        const work = operation === 'GET' ? p.w.loadSnippets() : p.w.saveSnippets();
+        p.w.applySnippetsAccess(false); p.w.applySnippetsAccess(true);
+        const fresh = library(); fresh.snippets.a.content = 'Newly authorized snapshot';
+        p.w.receiveSnippets({ snippets: fresh, revision: 3 });
+        pending.resolve(reply(200, { snippets: body?.snippets || library(), revision: 4 }));
+        assert.equal(await work, false);
+        assert.equal(p.run('snippetsData.snippets.a.content'), 'Newly authorized snapshot');
+        assert.equal(p.run('snippetsRevision'), 3);
+        assert.equal(p.run('snippetsSavePromise'), null);
+    }
+});
+
+test('a server permission denial removes private snippets instead of offering to export a forbidden draft', async t => {
+    for (const operation of ['GET', 'POST']) {
+        const p = panel(); t.after(() => p.dom.window.close()); initEditor(p); p.w.openSnippetViewer('a');
+        if (operation === 'POST') draft(p, 'a', 'pending private edit');
+        p.w.fetch = async () => reply(403, { error: 'snippets_access_required' });
+        const result = await (operation === 'GET' ? p.w.loadSnippets() : p.w.saveSnippets());
+        assert.equal(result, false);
+        assert.equal(p.w.hasSnippetsAccess(), false);
+        assert.equal(p.run('snippetsSaveError'), '');
+        assert.equal(p.run('Object.keys(snippetsData.snippets).length'), 0);
+        assert.equal(p.w.document.getElementById('snippetContents').textContent, '');
+    }
+});
+
+test('late clipboard feedback and file imports cannot revive snippet data after access is revoked', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p); p.w.openSnippetViewer('a');
+    const clipboard = deferred(); p.w.navigator.clipboard = { writeText: () => clipboard.promise };
+    const copying = p.w.copySnippetToClipboard('a');
+    let reader; p.w.FileReader = class { constructor() { reader = this; } readAsText() {} };
+    p.w.importSnippets({ files: [{}], value: 'test.json' });
+    p.w.applySnippetsAccess(false);
+    clipboard.resolve(); await copying;
+    await reader.onload({ target: { result: JSON.stringify(library()) } });
+    assert.equal(p.w.document.getElementById('snippetCopyStatus').textContent, '');
+    assert.equal(p.run('Object.keys(snippetsData.snippets).length'), 0);
+    assert.equal(p.w.document.getElementById('snippetContents').textContent, '');
+});
+
+test('live permission grant reveals controls and loads snippets without reopening the chat', async t => {
+    const p = panel(); t.after(() => p.dom.window.close());
+    p.run("currentNickname = 'alice'; currentRole = 'reader';");
+    p.w.openChat('session-one'); p.w.document.getElementById('chatInput').value = 'Keep draft';
+    const urls = [];
+    p.w.fetch = async url => { urls.push(url); return reply(200, { snippets: library(), revision: 1 }); };
+    p.emit('permissions-changed', { nickname: 'someone-else', role: 'reader', snippetsAccess: true });
+    assert.equal(p.w.hasSnippetsAccess(), false);
+    p.emit('permissions-changed', { nickname: 'alice', role: 'reader', snippetsAccess: true });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(urls, ['/api/snippets/list']);
+    assert.equal(p.w.hasSnippetsAccess(), true);
+    assert.ok([...p.w.document.querySelectorAll('[data-snippets-toggle]')].every(button => !button.hidden));
+    p.w.openSnippetViewer('a');
+    assert.equal(snippetEditor(p, 'a').root.getAttribute('contenteditable'), 'false');
+    assert.equal(p.w.document.getElementById('chatInput').value, 'Keep draft');
+});
+
+test('a stale periodic auth response cannot restore snippets after a live revocation', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p);
+    const pending = deferred(); p.w.fetch = () => pending.promise;
+    const poll = [...p.intervals.values()].find(fn => String(fn).includes('/api/auth/check'));
+    assert.ok(poll);
+    const checking = poll();
+    p.emit('permissions-changed', { nickname: 'alice', role: 'user', snippetsAccess: false });
+    pending.resolve(reply(200, { nickname: 'alice', role: 'user', snippetsAccess: true }));
+    await checking;
+    assert.equal(p.w.hasSnippetsAccess(), false);
+    assert.equal(p.w.document.getElementById('snippetsContainer').hidden, true);
+});
+
+test('only the owner sees snippet role controls and grant failures restore the previous state', async t => {
+    const fixtures = [
+        { nickname: '02ashes', role: 'admin', snippetsAccess: true, snippetsAccessGranted: true, registered_at: '2026-09-01' },
+        { nickname: 'alice', role: 'reader', snippetsAccess: false, snippetsAccessGranted: false, registered_at: '2026-09-01' },
+        { nickname: 'student', role: 'new', snippetsAccess: false, snippetsAccessGranted: true, registered_at: '2026-09-01' }
+    ];
+    for (const owner of [false, true]) {
+        const p = panel(); t.after(() => p.dom.window.close());
+        p.run(`currentNickname = '${owner ? '02ashes' : 'admin-user'}'; currentRole = 'admin'; canManageSnippetsAccess = ${owner};`);
+        p.w.fetch = async () => reply(200, { users: fixtures.map(user => ({ ...user })) });
+        await p.w.showUsersModal();
+        const controls = p.w.document.querySelectorAll('.snippet-access-toggle');
+        assert.equal(controls.length, owner ? 2 : 0);
+        if (!owner) continue;
+        assert.equal(p.w.document.querySelector('[data-nickname="02ashes"]'), null);
+        assert.equal(controls[1].checked, true, 'owner can revoke a dormant trainee grant');
+        const pending = deferred(); let payload;
+        p.w.fetch = (url, options) => { assert.equal(url, '/api/user/snippets-access'); payload = JSON.parse(options.body); return pending.promise; };
+        controls[0].click();
+        assert.deepEqual(payload, { targetNickname: 'alice', enabled: true });
+        assert.equal(controls[0].disabled, true);
+        pending.resolve(reply(403, { error: 'owner_required' }));
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(controls[0].checked, false);
+        assert.equal(controls[0].disabled, false);
+        assert.match(p.w.document.getElementById('usersAccessStatus').textContent, /Не удалось/);
+        p.w.fetch = async () => reply(200, { snippetsAccess: true, snippetsAccessGranted: true });
+        controls[0].click(); await new Promise(resolve => setImmediate(resolve));
+        assert.equal(controls[0].checked, true);
+        assert.match(controls[0].nextElementSibling.textContent, /Выдана/);
+        assert.match(p.w.document.getElementById('usersAccessStatus').textContent, /выдана: alice/);
+    }
+});
+
+function styledLibrary() {
+    const data = library();
+    data.snippets.a.richText = { ops: [
+        { insert: 'first', attributes: { bold: true, color: '#93c5fd' } }, { insert: '\n' }
+    ] };
+    return data;
+}
+
+test('formatted snippets render their styles while the main copy action sends only exact plain text', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, styledLibrary());
+    p.w.openSnippetViewer('a');
+    const editor = snippetEditor(p, 'a');
+    assert.equal(editor.root.querySelector('strong').textContent, 'first');
+    assert.match(editor.root.innerHTML, /color:/);
+    p.w.openChat('session-one'); p.w.document.getElementById('chatInput').value = 'Keep the session draft';
+    let copied; p.w.navigator.clipboard = { writeText: async value => { copied = value; } };
+    assert.equal(await p.w.copySnippetToClipboard('a'), true);
+    assert.equal(copied, 'first');
+    assert.equal(p.w.document.getElementById('chatInput').value, 'Keep the session draft');
+    assert.equal(p.run('hasUnsavedSnippets()'), false);
+    assert.ok(editor.getValue().richText);
+});
+
+test('formatting through the live toolbar saves text and styles together and own acknowledgement preserves undo', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p); p.w.openSnippetViewer('a');
+    const editor = snippetEditor(p, 'a');
+    const quill = p.w.Quill.find(editor.root.parentElement);
+    quill.setSelection(0, 5, 'silent');
+    const button = p.w.document.querySelector('#snippet-content-a [data-editor-action="bold"]');
+    button.dispatchEvent(new p.w.MouseEvent('mousedown', { bubbles: true, cancelable: true })); button.click();
+    assert.equal(p.run('hasUnsavedSnippets()'), true);
+    assert.ok(editor.root.querySelector('strong'));
+    let payload;
+    p.w.fetch = async (_url, options) => {
+        payload = JSON.parse(options.body);
+        return reply(200, { snippets: payload.snippets, revision: 2 });
+    };
+    assert.equal(await p.w.saveSnippets(), true);
+    assert.equal(payload.snippets.snippets.a.content, 'first');
+    assert.equal(payload.snippets.snippets.a.richText.ops[0].attributes.bold, true);
+    assert.ok(quill.history.stack.undo.length > 0);
+    p.w.document.querySelector('#snippet-content-a [data-editor-action="undo"]').click();
+    assert.equal(editor.getValue().richText, undefined);
+    assert.equal(editor.getValue().content, 'first');
+    assert.equal(p.run('hasUnsavedSnippets()'), true);
+});
+
+test('remote formatting refreshes inactive editors and switching tabs cannot silently discard it', t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p);
+    p.w.openSnippetViewer('a'); p.w.openSnippetViewer('b');
+    p.emit('snippets-updated', { snippets: styledLibrary(), revision: 2 });
+    p.w.switchToSnippetTab('a');
+    assert.ok(snippetEditor(p, 'a').root.querySelector('strong'));
+    p.w.switchToSnippetTab('b');
+    assert.equal(p.run('hasUnsavedSnippets()'), false);
+    assert.ok(p.run('snippetsData.snippets.a.richText'));
+});
+
+test('formatted local draft stays intact when a concurrent plain-text edit conflicts', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p); p.w.openSnippetViewer('a');
+    snippetEditor(p, 'a').setValue(styledLibrary().snippets.a); p.w.autoSaveSnippet('a');
+    const remote = library(); remote.snippets.a.content = 'Remote replacement text';
+    p.emit('snippets-updated', { snippets: remote, revision: 2 });
+    assert.equal(snippetEditor(p, 'a').getValue().content, 'first');
+    assert.ok(snippetEditor(p, 'a').root.querySelector('strong'));
+    assert.match(p.w.document.getElementById('snippetSaveStatus').textContent, /Конфликт/);
+    let requests = 0; p.w.fetch = async () => { requests++; throw new Error('must resolve conflict'); };
+    assert.equal(await p.w.saveSnippets(), false);
+    assert.equal(requests, 0);
+});
+
+test('snippet export and import retain formatting without converting any content to HTML', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, styledLibrary());
+    let exported;
+    p.w.Blob = class { constructor(parts) { exported = parts.join(''); } };
+    p.w.URL.createObjectURL = () => 'blob:preview'; p.w.URL.revokeObjectURL = () => {};
+    p.w.HTMLAnchorElement.prototype.click = () => {};
+    p.w.exportSnippets();
+    assert.deepEqual(JSON.parse(exported), styledLibrary());
+    let reader; p.w.FileReader = class { constructor() { reader = this; } readAsText() {} };
+    let saved; p.w.fetch = async (_url, options) => {
+        saved = JSON.parse(options.body).snippets;
+        return reply(200, { snippets: saved, revision: 2 });
+    };
+    const imported = styledLibrary(); imported.snippets.a.name = 'Formatted import';
+    p.w.importSnippets({ files: [{}], value: 'snippets.json' });
+    await reader.onload({ target: { result: JSON.stringify(imported) } });
+    assert.deepEqual(saved, imported);
+    p.w.openSnippetViewer('a');
+    assert.ok(snippetEditor(p, 'a').root.querySelector('strong'));
+});
+
+test('access revocation destroys rich editor instances and their retained content', t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, styledLibrary()); p.w.openSnippetViewer('a');
+    const editor = snippetEditor(p, 'a');
+    p.w.applySnippetsAccess(false);
+    assert.equal(p.run('snippetEditors.size'), 0);
+    assert.equal(editor.getValue().content, '');
+    assert.equal(editor.root.textContent, '');
+    assert.equal(p.w.document.querySelector('.ql-editor'), null);
+    editor.setValue(styledLibrary().snippets.a);
+    assert.equal(editor.getValue().content, '');
+});
+
+test('an unavailable rich editor retains formatted source and offers safe plain-text copying', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, styledLibrary());
+    p.w.SnippetEditor = undefined; p.w.openSnippetViewer('a');
+    assert.match(p.w.document.querySelector('.snippet-editor-error').textContent, /Редактор не загрузился/);
+    assert.equal(p.w.document.querySelector('.snippet-editor-fallback').textContent, 'first');
+    p.w.applyRoleRestrictions();
+    assert.equal(p.w.document.querySelector('.snippet-editor-title').readOnly, true);
+    let copied; p.w.navigator.clipboard = { writeText: async value => { copied = value; } };
+    await p.w.copySnippetToClipboard('a');
+    assert.equal(copied, 'first');
+    assert.equal(p.run('hasUnsavedSnippets()'), false);
+    assert.ok(p.run('snippetsData.snippets.a.richText'));
 });

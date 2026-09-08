@@ -1,0 +1,114 @@
+.snippet-rich-editor {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 180px;
+    height: 100%;
+    color: var(--work-text);
+    background: var(--work-bg);
+    border: 1px solid var(--work-border);
+    border-radius: var(--work-radius, 6px);
+    overflow: hidden;
+}
+.snippet-rich-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 4px;
+    padding: 7px;
+    border-bottom: 1px solid var(--work-border);
+    background: var(--work-surface);
+}
+.snippet-rich-toolbar[hidden] { display: none; }
+body.work-ui .snippet-rich-toolbar .snippet-rich-button,
+body.work-ui .snippet-rich-toolbar .snippet-rich-palette {
+    min-width: 28px;
+    min-height: 28px;
+    height: 28px;
+    margin: 0;
+    padding: 3px 7px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--work-text);
+    background: transparent;
+    font: 12px/1.25 var(--work-font);
+    box-shadow: none;
+}
+body.work-ui .snippet-rich-toolbar .snippet-rich-button:hover:not(:disabled),
+body.work-ui .snippet-rich-toolbar .snippet-rich-palette:hover {
+    border-color: var(--work-border);
+    background: var(--work-surface-2);
+}
+body.work-ui .snippet-rich-toolbar .snippet-rich-button[aria-pressed="true"] {
+    border-color: var(--work-accent);
+    background: var(--work-accent-soft);
+    color: var(--work-text);
+}
+body.work-ui .snippet-rich-toolbar .snippet-rich-button[data-editor-action="bold"] { font-weight: 800; }
+body.work-ui .snippet-rich-toolbar .snippet-rich-button[data-editor-action="italic"] { font-style: italic; }
+body.work-ui .snippet-rich-toolbar .snippet-rich-button[data-editor-action="underline"] { text-decoration: underline; }
+body.work-ui .snippet-rich-toolbar .snippet-rich-button[data-editor-action="strike"] { text-decoration: line-through; }
+body.work-ui .snippet-rich-toolbar .snippet-rich-palette {
+    min-width: 0;
+    max-width: 140px;
+    width: auto;
+    padding-right: 2px;
+    border-color: var(--work-border);
+    background-color: var(--work-bg);
+}
+.snippet-rich-editor .snippet-rich-content.ql-container {
+    flex: 1 1 auto;
+    display: flex;
+    min-width: 0;
+    min-height: 100px;
+    overflow: hidden;
+    font: 14px/1.65 var(--work-font);
+}
+.snippet-rich-editor .ql-editor {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 100px;
+    padding: 14px;
+    color: var(--work-text);
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    tab-size: 4;
+}
+.snippet-rich-editor .ql-editor p { margin: 0; }
+.snippet-rich-editor .ql-editor:focus-visible {
+    outline: 2px solid var(--work-muted);
+    outline-offset: -3px;
+}
+.snippet-rich-editor .ql-editor.ql-blank::before {
+    color: var(--work-muted);
+    font-style: normal;
+    left: 14px;
+    right: 14px;
+}
+.snippet-rich-status {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    color: var(--work-danger);
+    font: 12px/1.4 var(--work-font);
+}
+.snippet-rich-status:empty { display: none; }
+.snippet-rich-editor.is-readonly .ql-editor { cursor: text; }
+
+/* Store a single palette in the document while keeping its text colors legible
+   in either workbench theme. Quill's style attributors serialize colors as RGB. */
+:root[data-work-theme="light"] .snippet-rich-editor .ql-editor :is([style^="color: rgb(147, 197, 253)"], [style*="; color: rgb(147, 197, 253)"]) { color: #1d4ed8 !important; }
+:root[data-work-theme="light"] .snippet-rich-editor .ql-editor :is([style^="color: rgb(134, 239, 172)"], [style*="; color: rgb(134, 239, 172)"]) { color: #166534 !important; }
+:root[data-work-theme="light"] .snippet-rich-editor .ql-editor :is([style^="color: rgb(252, 165, 165)"], [style*="; color: rgb(252, 165, 165)"]) { color: #b91c1c !important; }
+:root[data-work-theme="light"] .snippet-rich-editor .ql-editor :is([style^="color: rgb(216, 180, 254)"], [style*="; color: rgb(216, 180, 254)"]) { color: #7e22ce !important; }
+:root[data-work-theme="light"] .snippet-rich-editor .ql-editor :is([style^="color: rgb(253, 230, 138)"], [style*="; color: rgb(253, 230, 138)"]) { color: #92400e !important; }
+/* Preset highlights use dark ink, including nested inline color spans. */
+.snippet-rich-editor .ql-editor :is([style*="background-color: rgb(254, 243, 199)"], [style*="background-color: rgb(219, 234, 254)"], [style*="background-color: rgb(220, 252, 231)"], [style*="background-color: rgb(243, 232, 255)"]),
+.snippet-rich-editor .ql-editor :is([style*="background-color: rgb(254, 243, 199)"], [style*="background-color: rgb(219, 234, 254)"], [style*="background-color: rgb(220, 252, 231)"], [style*="background-color: rgb(243, 232, 255)"]) * { color: #17202b !important; }
+
+@media (max-width: 500px) {
+    .snippet-rich-toolbar { padding: 5px; gap: 3px; }
+    .snippet-rich-editor .ql-editor { padding: 10px; }
+    body.work-ui .snippet-rich-toolbar .snippet-rich-palette { max-width: 128px; }
+}

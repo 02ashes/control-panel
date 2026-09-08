@@ -150,7 +150,6 @@
             <select id="viewMode" aria-label="Раздел журнала">
                 <option value="sessions">Сессии</option>
                 <option value="registrations">Регистрации</option>
-                <option value="snippets">Изменения сниппетов</option>
             </select>
             <button onclick="loadData()">Обновить</button>
             <button class="cleanup-btn" onclick="cleanupAllDeleted()">Очистить удалённые</button>
@@ -171,6 +170,7 @@
         <div class="chat-messages" id="chatMessages"></div>
     </aside>
 
+    <script src="/socket.io/socket.io.js"></script>
     <script>
         let currentNickname = localStorage.getItem('nickname') || '';
         let allSessions = [];
@@ -179,36 +179,117 @@
         let currentSessionId = null;
         let accessGranted = false;
         let chatReturnFocus = null;
+        let snippetsAccess = false;
+        let snippetsAccessGeneration = 0;
+        let authCheckGeneration = 0;
+        let logsSocket = null;
 
-        // Проверка доступа
+        function applySnippetAccess(enabled) {
+            const granted = enabled === true;
+            if (snippetsAccess !== granted || !granted) snippetsAccessGeneration++;
+            snippetsAccess = granted;
+            const selector = document.getElementById('viewMode');
+            const option = selector.querySelector('option[value="snippets"]');
+            if (granted && !option) {
+                const item = document.createElement('option');
+                item.value = 'snippets';
+                item.textContent = 'Изменения сниппетов';
+                selector.appendChild(item);
+            } else if (!granted) {
+                allSnippetLogs = [];
+                const wasViewingSnippets = selector.value === 'snippets';
+                if (option) option.remove();
+                if (wasViewingSnippets) {
+                    selector.value = 'sessions';
+                    renderSessions();
+                    document.getElementById('statusFilter').disabled = false;
+                    document.querySelector('.cleanup-btn').disabled = false;
+                    updateStats();
+                }
+            }
+        }
+
+        function denyLogAccess(message) {
+            accessGranted = false;
+            applySnippetAccess(false);
+            allSessions = [];
+            allRegistrations = [];
+            document.getElementById('sessionsList').replaceChildren();
+            document.getElementById('chatMessages').replaceChildren();
+            closeChatViewer();
+            const app = document.getElementById('appRoot');
+            app.style.display = 'block';
+            app.classList.add('access-denied');
+            showError(message);
+        }
+
+        // Permissions come only from the authenticated server response, never localStorage.
         async function checkAccess() {
-            if (!currentNickname) {
-                showError('Требуется авторизация. Пожалуйста, войдите через главную страницу.');
+            const requestGeneration = ++authCheckGeneration;
+            const nickname = currentNickname;
+            const isCurrent = () => requestGeneration === authCheckGeneration && nickname === currentNickname;
+            if (!nickname) {
+                denyLogAccess('Требуется авторизация. Пожалуйста, войдите через главную страницу.');
                 return false;
             }
 
             try {
                 const res = await fetch('/api/auth/check', {
-                    headers: { 'X-Nickname': currentNickname }
+                    headers: { 'X-Nickname': nickname }
                 });
-
+                if (!isCurrent()) return accessGranted;
                 if (!res.ok) {
-                    showError('Требуется авторизация. Пожалуйста, войдите через главную страницу.');
+                    denyLogAccess('Требуется авторизация. Пожалуйста, войдите через главную страницу.');
                     return false;
                 }
 
                 const data = await res.json();
-                // Only admins can view logs
+                if (!isCurrent()) return accessGranted;
+                // Preserve the journal's existing admin restriction. Snippets are an additional permission.
                 if (data.role !== 'admin') {
-                    showError('У вас нет доступа к просмотру логов. Требуется роль admin.');
+                    denyLogAccess('У вас нет доступа к просмотру логов. Требуется роль admin.');
                     return false;
                 }
-
+                accessGranted = true;
+                applySnippetAccess(data.snippetsAccess);
+                document.getElementById('appRoot').classList.remove('access-denied');
+                document.getElementById('errorContainer').replaceChildren();
                 return true;
             } catch (e) {
-                showError('Ошибка проверки доступа.');
+                if (!isCurrent()) return accessGranted;
+                denyLogAccess('Ошибка проверки доступа.');
                 return false;
             }
+        }
+
+        function connectPermissions() {
+            if (logsSocket || typeof io !== 'function') return;
+            logsSocket = io();
+            logsSocket.on('permissions-changed', data => {
+                if (!data || data.nickname !== currentNickname) return;
+                // Fence a pending auth response so it cannot restore a just-revoked permission.
+                authCheckGeneration++;
+                if (data.role !== 'admin') {
+                    denyLogAccess('У вас нет доступа к просмотру логов. Требуется роль admin.');
+                    return;
+                }
+                accessGranted = true;
+                applySnippetAccess(data.snippetsAccess);
+                document.getElementById('appRoot').classList.remove('access-denied');
+            });
+            logsSocket.on('force-logout', () => {
+                authCheckGeneration++;
+                currentNickname = '';
+                denyLogAccess('Авторизация отозвана. Войдите через главную страницу.');
+            });
+            logsSocket.on('disconnect', () => {
+                // Revocation may happen while offline: retain no snippet content until revalidated.
+                authCheckGeneration++;
+                applySnippetAccess(false);
+            });
+            logsSocket.on('connect', async () => {
+                if (await checkAccess()) await loadData();
+            });
         }
 
         // Функция для вычисления конкретных изменений между двумя текстами
@@ -320,21 +401,33 @@
         }
 
         async function loadSnippetLogs() {
+            if (!snippetsAccess) {
+                applySnippetAccess(false);
+                return;
+            }
+            const requestGeneration = snippetsAccessGeneration;
+            const nickname = currentNickname;
+            const isCurrent = () => snippetsAccess && requestGeneration === snippetsAccessGeneration && nickname === currentNickname;
             try {
                 const res = await fetch('/api/logs/snippets', {
-                    headers: { 'X-Nickname': currentNickname }
+                    headers: { 'X-Nickname': nickname }
                 });
-
-                if (!res.ok) {
-                    throw new Error('Failed to load snippet logs');
+                if (!isCurrent()) return;
+                if (res.status === 401 || res.status === 403) {
+                    authCheckGeneration++;
+                    applySnippetAccess(false);
+                    showError('Доступ к журналу сниппетов отозван.');
+                    return;
                 }
+                if (!res.ok) throw new Error('Не удалось загрузить изменения');
 
                 const data = await res.json();
+                if (!isCurrent()) return;
                 allSnippetLogs = data.logs || [];
                 if (document.getElementById('viewMode').value === 'snippets') renderSnippetLogs();
                 updateStats();
             } catch (e) {
-                showError('Ошибка загрузки логов сниппетов: ' + e.message);
+                if (isCurrent()) showError('Ошибка загрузки логов сниппетов: ' + e.message);
             }
         }
 
@@ -495,6 +588,7 @@
         }
 
         function renderSnippetLogs() {
+            if (!snippetsAccess) { applySnippetAccess(false); return; }
             const container = document.getElementById('sessionsList');
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
 
@@ -862,6 +956,7 @@
             accessGranted = await checkAccess();
             document.getElementById('appRoot').style.display = 'block';
             if (accessGranted) {
+                connectPermissions();
                 await loadSessions();
                 await loadRegistrations();
             } else {
@@ -870,10 +965,8 @@
         })();
 
         // Автообновление каждые 30 секунд
-        setInterval(() => {
-            if (accessGranted) {
-                loadData();
-            }
+        setInterval(async () => {
+            if (accessGranted && await checkAccess()) await loadData();
         }, 30000);
 
         // === CLEANUP FUNCTIONS ===
