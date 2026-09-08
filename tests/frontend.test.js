@@ -309,7 +309,7 @@ test('wheel only announces persisted results and retries the same result after a
     p.w.fetch = async () => { throw new Error('network'); };
     assert.equal(await p.w.sendResult(), false);
     assert.equal(p.w.announced, undefined);
-    assert.match(p.w.document.getElementById('spinBtn').textContent, /Retry/);
+    assert.match(p.w.document.getElementById('spinBtn').textContent, /Повторить сохранение/);
     p.w.document.getElementById('codeInput').value = 'BBBB2222';
     let body; p.w.fetch = async (url, options) => { body=JSON.parse(options.body); return reply(200, {ok:true,prize:'Lovense',reused:true}); };
     await p.w.checkCodeAndSpin();
@@ -433,4 +433,169 @@ test('controller send blocks concurrent submissions and preserves text after tim
     assert.equal(p.w.sendCount,1);
     assert.equal(inp.textContent,'draft');
     assert.match(p.w.document.getElementById('controllerSendStatus').textContent,/Disconnected/);
+});
+
+test('snippet folder buttons retain keyboard focus while expanding and collapsing', t => {
+    const p = panel(); t.after(() => p.dom.window.close());
+    const data = library();
+    data.folders.parent = { id: 'parent', name: 'Parent folder', parentId: null };
+    data.folders.child = { id: 'child', name: 'Child folder', parentId: 'parent' };
+    data.structure = ['parent', 'a', 'b'];
+    initEditor(p, data);
+    let button = p.w.document.querySelector('.folder-label');
+    button.focus(); button.click();
+    button = p.w.document.querySelector('.folder-label');
+    assert.equal(p.w.document.activeElement, button);
+    assert.equal(button.getAttribute('aria-expanded'), 'true');
+    assert.equal(p.w.document.querySelectorAll('.folder-label').length, 2);
+    button.click();
+    button = p.w.document.querySelector('.folder-label');
+    assert.equal(p.w.document.activeElement, button);
+    assert.equal(button.getAttribute('aria-expanded'), 'false');
+    const composer = p.w.document.getElementById('chatInput');
+    composer.value = 'Keep typing here'; composer.focus(); composer.setSelectionRange(2, 5);
+    p.w.toggleSnippetFolder('parent');
+    assert.equal(p.w.document.activeElement, composer);
+    assert.equal(composer.selectionStart, 2);
+    assert.equal(composer.selectionEnd, 5);
+});
+
+test('snippet tab switches and closes restore focus to a remaining usable control', t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p);
+    p.w.openSnippetViewer('a'); p.w.openSnippetViewer('b');
+    const find = (id, kind = 'title') => [...p.w.document.querySelectorAll(`.snippet-tab-${kind}`)].find(button => button.dataset.snippetId === id);
+    find('a').focus(); find('a').click();
+    assert.equal(p.w.document.activeElement, find('a'));
+    assert.equal(find('a').getAttribute('aria-pressed'), 'true');
+    find('a', 'close').focus(); find('a', 'close').click();
+    assert.equal(p.w.document.activeElement, find('b'));
+    find('b', 'close').focus(); find('b', 'close').click();
+    assert.equal(p.w.document.querySelectorAll('.snippet-tab').length, 0);
+    assert.equal(p.w.document.activeElement, p.w.document.querySelector('#snippetsPanel .snippets-header button'));
+});
+
+test('unrelated snippet-tab rerenders preserve active editor selection and scrolling', t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p);
+    p.w.openSnippetViewer('a'); p.w.openSnippetViewer('b'); p.w.switchToSnippetTab('a');
+    const textarea = p.w.document.querySelector('#snippet-content-a textarea');
+    const tabs = p.w.document.getElementById('snippetTabs');
+    textarea.focus(); textarea.setSelectionRange(1, 4, 'backward');
+    textarea.scrollTop = 24; tabs.scrollLeft = 90;
+    p.w.renderSnippetTabs();
+    assert.equal(p.w.document.activeElement, textarea);
+    assert.equal(textarea.selectionStart, 1);
+    assert.equal(textarea.selectionEnd, 4);
+    assert.equal(textarea.selectionDirection, 'backward');
+    assert.equal(textarea.scrollTop, 24);
+    assert.equal(tabs.scrollLeft, 90);
+    assert.equal(textarea.closest('.snippet-content-area').classList.contains('active'), true);
+    assert.equal(p.w.document.querySelector('#snippet-content-b').classList.contains('active'), false);
+});
+
+test('consecutive snippet copies clear previous feedback and stale completions cannot relabel it', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p);
+    p.w.openSnippetViewer('a'); p.w.openSnippetViewer('b');
+    const pending = deferred(); let count = 0;
+    p.w.navigator.clipboard = { writeText: () => ++count === 1 ? pending.promise : Promise.resolve() };
+    const first = p.w.copySnippetToClipboard('a');
+    await p.w.copySnippetToClipboard('b');
+    pending.resolve(); await first;
+    const feedback = id => p.w.document.querySelector(`#snippet-content-${id} .snippet-copy-feedback`).textContent;
+    assert.equal(feedback('a'), '');
+    assert.equal(feedback('b'), 'Скопировано');
+    await p.w.copySnippetToClipboard('a');
+    assert.equal(feedback('a'), 'Скопировано');
+    assert.equal(feedback('b'), '');
+    [...p.timeouts.values()].forEach(callback => callback());
+    assert.equal(feedback('a'), '');
+    assert.equal(feedback('b'), '');
+    assert.equal(p.w.document.getElementById('snippetCopyStatus').textContent, '');
+});
+
+test('copy failures are visible and late copy results cannot restore feedback after account invalidation', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p); p.w.openSnippetViewer('a');
+    p.w.navigator.clipboard = { writeText: async () => { throw new Error('Clipboard blocked'); } };
+    assert.equal(await p.w.copySnippetToClipboard('a'), false);
+    assert.match(p.w.document.getElementById('snippetCopyStatus').textContent, /Не удалось скопировать/);
+    const pending = deferred();
+    p.w.navigator.clipboard.writeText = () => pending.promise;
+    const copying = p.w.copySnippetToClipboard('a');
+    assert.equal(p.w.document.getElementById('snippetCopyStatus').textContent, '');
+    p.w.invalidateAuthenticatedPanel(); pending.resolve(); await copying;
+    assert.equal(p.w.document.getElementById('snippetCopyStatus').textContent, '');
+});
+
+test('fallback snippet copy preserves the chat composer selection and copies the current draft', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p); p.w.openSnippetViewer('a');
+    const textarea = p.w.document.querySelector('#snippet-content-a textarea');
+    textarea.value = 'Current editor text';
+    const composer = p.w.document.getElementById('chatInput');
+    composer.value = 'A chat draft'; composer.focus(); composer.setSelectionRange(2, 7);
+    let copied;
+    p.w.document.execCommand = action => { assert.equal(action, 'copy'); copied = p.w.document.activeElement.value; return true; };
+    assert.equal(await p.w.copySnippetToClipboard('a'), true);
+    assert.equal(copied, 'Current editor text');
+    assert.equal(p.w.document.activeElement, composer);
+    assert.equal(composer.selectionStart, 2);
+    assert.equal(composer.selectionEnd, 7);
+    assert.equal(composer.value, 'A chat draft');
+});
+
+test('snippet geometry is clamped to the viewport and session switches keep the left workspace intact', t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p); p.w.openSnippetViewer('a');
+    p.w.innerWidth = 1200;
+    p.run('preferredSnippetWidth = 1000;');
+    p.w.toggleSnippetsPanel();
+    const container = p.w.document.getElementById('snippetsContainer');
+    const viewer = p.w.document.getElementById('snippetsViewer');
+    assert.equal(viewer.style.width, '620px');
+    assert.equal(p.w.document.querySelector('.container').style.marginLeft, '840px');
+    p.w.openChat('session-one');
+    p.w.document.getElementById('chatInput').value = 'Session one draft';
+    p.w.openChat('session-two');
+    assert.equal(container.classList.contains('show'), true);
+    assert.equal(p.run('activeSnippetId'), 'a');
+    assert.equal(p.w.document.querySelector('#snippet-content-a textarea').value, 'first');
+    p.w.openChat('session-one');
+    assert.equal(p.w.document.getElementById('chatInput').value, 'Session one draft');
+    p.w.innerWidth = 600; p.w.updateContainerMargin();
+    assert.equal(p.w.document.querySelector('.container').style.marginLeft, '');
+    assert.equal(p.w.document.getElementById('chatModal').style.getPropertyValue('--snippets-width'), '0px');
+    assert.equal(container.classList.contains('show'), true);
+});
+
+test('snippet resizing is keyboard accessible and covered background controls are inert', t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p); p.w.openSnippetViewer('a');
+    p.w.innerWidth = 1280;
+    p.w.initSnippetResize(); p.w.updateContainerMargin();
+    const handle = p.w.document.getElementById('snippetResizeHandle');
+    handle.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowRight', cancelable: true }));
+    assert.equal(p.w.localStorage.getItem('control-panel.snippet-width'), '384');
+    assert.equal(handle.getAttribute('aria-valuenow'), '384');
+    p.w.toggleSnippetsPanel(); p.w.openChat('test-session');
+    const app = p.w.document.getElementById('appRoot');
+    assert.equal(app.inert, true);
+    p.w.closeChat(); assert.equal(app.inert, false);
+    p.w.innerWidth = 390; p.w.updateContainerMargin();
+    assert.equal(app.inert, true);
+    const close = p.w.document.querySelector('.snippets-header button'); close.focus(); p.w.toggleSnippetsPanel();
+    assert.equal(app.inert, false);
+    assert.equal(p.w.document.activeElement, app.querySelector('[data-snippets-toggle]'));
+    assert.equal(app.querySelector('[data-snippets-toggle]').getAttribute('aria-expanded'), 'false');
+});
+
+test('saved folder expansion is restored before the initial library render', async t => {
+    const p = panel(); t.after(() => p.dom.window.close());
+    const data = library();
+    data.folders.parent = { id: 'parent', name: 'Saved folder', parentId: null };
+    data.snippets.a.parentId = 'parent'; data.structure = ['parent', 'b'];
+    p.run("currentNickname = 'alice'; currentRole = 'user';");
+    p.w.localStorage.setItem('snippetsExpandedState', JSON.stringify({ parent: true }));
+    p.w.fetch = async () => reply(200, { snippets: data, revision: '1' });
+    assert.equal(await p.w.loadSnippets(), true);
+    assert.equal(p.w.document.querySelector('.folder-label').getAttribute('aria-expanded'), 'true');
+    assert.equal(p.w.document.querySelector('.snippet-folder-children .snippet-label').textContent, 'A');
+    p.w.localStorage.setItem('snippetsExpandedState', 'null');
+    p.w.loadExpandedState();
+    assert.doesNotThrow(() => p.w.renderSnippetsTree());
 });

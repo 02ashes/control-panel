@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 
 <head>
     <meta charset="UTF-8">
@@ -7,404 +7,61 @@
     <meta name="description" content="Lovense remote toy">
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
-    <title>🎀 Spin the Wheel of Fortune 🎀</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <title>Колесо призов</title>
+    <link rel="stylesheet" href="/workspace-theme.css">
+    <script src="/workspace-theme.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        * { box-sizing:border-box; }
+        body.work-ui { margin:0; padding:28px 18px; font:14px/1.5 var(--work-font); background:var(--work-bg); color:var(--work-text); min-height:100vh; }
+        .container { width:100%; max-width:620px; margin:0 auto; }
+        .page-tools { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:30px; }
+        .page-label { color:var(--work-muted); font-size:11px; letter-spacing:.1em; text-transform:uppercase; }
+        body.work-ui button { font:550 13px/1.4 var(--work-font); color:var(--work-text); background:var(--work-surface-2); border:1px solid var(--work-border); border-radius:var(--work-radius); min-height:36px; padding:8px 12px; cursor:pointer; }
+        button:hover { border-color:var(--work-muted); }
+        button:disabled { opacity:.55; cursor:wait; }
+        :where(button,input,a):focus-visible { outline:2px solid var(--work-accent); outline-offset:3px; }
+        .header { margin-bottom:24px; }
+        .header h1 { margin:0 0 7px; font-size:27px; font-weight:650; line-height:1.3; letter-spacing:-.03em; }
+        .header p { margin:0; color:var(--work-muted); font-size:13px; }
+        .code-section { padding:20px; margin-bottom:16px; background:var(--work-surface); border:1px solid var(--work-border); border-radius:var(--work-radius); }
+        .code-label { display:block; margin-bottom:8px; font-size:12px; font-weight:500; color:var(--work-muted); }
+        .code-input-group { display:flex; align-items:stretch; gap:10px; }
+        body.work-ui .code-input { flex:1; width:100%; min-width:0; font:500 15px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.08em; border:1px solid var(--work-border); border-radius:var(--work-radius); padding:10px 12px; background:var(--work-bg); color:var(--work-text); }
+        .code-input::placeholder { color:var(--work-muted); letter-spacing:0; font:400 13px/1.4 var(--work-font); }
+        body.work-ui .spin-btn { min-width:132px; border-color:var(--work-accent); color:var(--work-on-accent); background:var(--work-accent); }
+        body.work-ui .spin-btn:hover:not(:disabled) { background:var(--work-accent-hover); border-color:var(--work-accent-hover); }
+        .sound-option { display:inline-flex; align-items:center; gap:8px; margin-top:14px; font-size:12px; color:var(--work-muted); cursor:pointer; }
+        .sound-option input { accent-color:var(--work-accent); margin:0; width:15px; height:15px; }
+        .wheel-container { position:relative; text-align:center; background:var(--work-surface); border:1px solid var(--work-border); border-radius:var(--work-radius); padding:24px; }
+        .wheel-wrapper { display:inline-block; position:relative; max-width:100%; vertical-align:top; }
+        .wheel-canvas { display:block; max-width:100%; border-radius:50%; }
+        .pointer { position:absolute; top:1px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:10px solid transparent; border-right:10px solid transparent; border-top:20px solid var(--work-text); z-index:2; }
+        .wheel-caption { font-size:12px; color:var(--work-muted); margin:14px 0 0; }
+        .error-message { display:none; color:var(--work-danger); margin-top:14px; font-size:13px; }
+        .error-message.show { display:block; }
+        .loading { display:none; color:var(--work-muted); font-size:12px; margin-top:14px; }
+        .loading.show { display:flex; gap:8px; align-items:center; }
+        .spinner { display:none; }
+        .result-card { margin-top:16px; padding:18px 20px; background:var(--work-accent-soft); border:1px solid var(--work-border); border-radius:var(--work-radius); }
+        .result-card[hidden] { display:none; }
+        .result-card h2 { margin:0 0 5px; font-size:12px; color:var(--work-muted); font-weight:500; }
+        .result-card p { margin:0; font-size:20px; font-weight:600; overflow-wrap:anywhere; }
+        .result-note { display:block; margin-top:7px; color:var(--work-muted); font-size:12px; }
+        @media(max-width:480px) {
+            body.work-ui { padding:18px 12px; }
+            .page-tools { margin-bottom:24px; }
+            .header h1 { font-size:24px; }
+            .code-section { padding:16px; }
+            .code-input-group { flex-direction:column; }
+            body.work-ui .code-input { font-size:16px; }
+            body.work-ui .spin-btn { width:100%; }
+            .wheel-container { padding:16px; }
         }
-
-        body {
-            font-family: 'Poppins', sans-serif;
-            background: linear-gradient(135deg, #ff69b4 0%, #ff1493 25%, #9370db 50%, #ff69b4 75%, #ff1493 100%);
-            background-size: 400% 400%;
-            background-attachment: fixed;
-            animation: gradientShift 15s ease infinite;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            color: #fff;
-            overflow-x: hidden;
-            position: relative;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: url('pic.png') center/cover no-repeat;
-            opacity: 0.35;
-            z-index: 0;
-            pointer-events: none;
-            will-change: transform;
-            transform: translateZ(0);
-        }
-
-        @keyframes gradientShift {
-            0% {
-                background-position: 0% 50%;
-            }
-
-            50% {
-                background-position: 100% 50%;
-            }
-
-            100% {
-                background-position: 0% 50%;
-            }
-        }
-
-        .container {
-            text-align: center;
-            max-width: 650px;
-            width: 90%;
-            padding: 20px;
-            position: relative;
-            z-index: 1;
-        }
-
-        .header {
-            margin-bottom: 30px;
-            animation: float 3s ease-in-out infinite;
-        }
-
-        @keyframes float {
-
-            0%,
-            100% {
-                transform: translateY(0px);
-            }
-
-            50% {
-                transform: translateY(-10px);
-            }
-        }
-
-        .header h1 {
-            font-size: 3rem;
-            margin-bottom: 15px;
-            text-shadow:
-                0 0 10px rgba(255, 105, 180, 0.8),
-                0 0 20px rgba(255, 105, 180, 0.6),
-                0 0 30px rgba(255, 105, 180, 0.4),
-                3px 3px 6px rgba(0, 0, 0, 0.5);
-            font-weight: 800;
-            letter-spacing: 2px;
-            background: linear-gradient(45deg, #fff, #ffb6d9, #fff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .header p {
-            font-size: 1.3rem;
-            text-shadow:
-                0 0 10px rgba(255, 182, 217, 0.8),
-                2px 2px 4px rgba(0, 0, 0, 0.4);
-            font-weight: 600;
-            letter-spacing: 1px;
-        }
-
-        .code-section {
-            background: rgba(255, 255, 255, 0.15);
-            backdrop-filter: blur(15px);
-            border-radius: 30px;
-            padding: 35px;
-            margin-bottom: 30px;
-            border: 3px solid rgba(255, 182, 217, 0.4);
-            box-shadow:
-                0 8px 32px rgba(255, 105, 180, 0.3),
-                inset 0 0 20px rgba(255, 255, 255, 0.1);
-        }
-
-        .code-input-group {
-            display: flex;
-            gap: 15px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-
-        .code-input {
-            flex: 1;
-            min-width: 220px;
-            padding: 18px 25px;
-            border: none;
-            border-radius: 50px;
-            font-size: 1.2rem;
-            text-align: center;
-            background: linear-gradient(135deg, #fff 0%, #ffe6f2 100%);
-            color: #d10869;
-            box-shadow:
-                0 4px 15px rgba(255, 105, 180, 0.3),
-                inset 0 2px 4px rgba(255, 255, 255, 0.5);
-            transition: all 0.3s ease;
-            font-weight: 600;
-            letter-spacing: 2px;
-        }
-
-        .code-input:focus {
-            outline: none;
-            transform: scale(1.05);
-            box-shadow:
-                0 6px 25px rgba(255, 20, 147, 0.5),
-                inset 0 2px 4px rgba(255, 255, 255, 0.5);
-            border: 2px solid #ff69b4;
-        }
-
-        .code-input::placeholder {
-            color: #ff69b4;
-            font-weight: 500;
-            letter-spacing: 1px;
-        }
-
-        .spin-btn {
-            padding: 18px 40px;
-            background: linear-gradient(45deg, #ff1493, #ff69b4, #ff1493);
-            background-size: 200% 200%;
-            color: white;
-            border: none;
-            border-radius: 50px;
-            font-size: 1.2rem;
-            font-weight: 800;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow:
-                0 6px 20px rgba(255, 20, 147, 0.4),
-                inset 0 2px 8px rgba(255, 255, 255, 0.3);
-            min-width: 150px;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            animation: buttonPulse 2s ease-in-out infinite;
-        }
-
-        @keyframes buttonPulse {
-
-            0%,
-            100% {
-                background-position: 0% 50%;
-            }
-
-            50% {
-                background-position: 100% 50%;
-            }
-        }
-
-        .spin-btn:hover:not(:disabled) {
-            transform: translateY(-3px) scale(1.05);
-            box-shadow:
-                0 8px 30px rgba(255, 20, 147, 0.6),
-                inset 0 2px 8px rgba(255, 255, 255, 0.4);
-        }
-
-        .spin-btn:active:not(:disabled) {
-            transform: translateY(-1px) scale(1.02);
-        }
-
-        .spin-btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-            animation: none;
-        }
-
-        .wheel-container {
-            background: rgba(255, 255, 255, 0.15);
-            backdrop-filter: blur(15px);
-            border-radius: 30px;
-            padding: 40px;
-            margin-bottom: 30px;
-            border: 3px solid rgba(255, 182, 217, 0.4);
-            box-shadow:
-                0 8px 32px rgba(255, 105, 180, 0.3),
-                inset 0 0 20px rgba(255, 255, 255, 0.1);
-            position: relative;
-        }
-
-        .wheel-wrapper {
-            position: relative;
-            display: inline-block;
-            animation: wheelGlow 2s ease-in-out infinite alternate;
-        }
-
-        @keyframes wheelGlow {
-            0% {
-                filter: drop-shadow(0 0 20px rgba(255, 105, 180, 0.6));
-            }
-
-            100% {
-                filter: drop-shadow(0 0 40px rgba(255, 20, 147, 0.8));
-            }
-        }
-
-        .wheel-canvas {
-            border-radius: 50%;
-            box-shadow:
-                0 0 30px rgba(255, 105, 180, 0.5),
-                0 0 60px rgba(147, 112, 219, 0.3),
-                0 10px 40px rgba(0, 0, 0, 0.3);
-        }
-
-        .pointer {
-            position: absolute;
-            top: -15px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 0;
-            height: 0;
-            border-left: 20px solid transparent;
-            border-right: 20px solid transparent;
-            border-top: 40px solid #ff1493;
-            filter: drop-shadow(0 4px 8px rgba(255, 20, 147, 0.6));
-            z-index: 10;
-            animation: pointerBounce 1s ease-in-out infinite;
-        }
-
-        @keyframes pointerBounce {
-
-            0%,
-            100% {
-                transform: translateX(-50%) translateY(0);
-            }
-
-            50% {
-                transform: translateX(-50%) translateY(-5px);
-            }
-        }
-
-        .error-message {
-            color: #fff;
-            background: rgba(255, 20, 147, 0.8);
-            padding: 12px 20px;
-            border-radius: 20px;
-            font-size: 1rem;
-            font-weight: 600;
-            margin-top: 15px;
-            opacity: 0;
-            transition: opacity 0.3s ease;
-            box-shadow: 0 4px 15px rgba(255, 20, 147, 0.4);
-        }
-
-        .error-message.show {
-            opacity: 1;
-        }
-
-        .loading {
-            display: none;
-            margin-top: 20px;
-        }
-
-        .loading.show {
-            display: block;
-        }
-
-        .spinner {
-            width: 50px;
-            height: 50px;
-            border: 5px solid rgba(255, 255, 255, 0.3);
-            border-top: 5px solid #ff1493;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            margin: 0 auto;
-            box-shadow: 0 0 20px rgba(255, 20, 147, 0.5);
-        }
-
-        @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
-
-            100% {
-                transform: rotate(360deg);
-            }
-        }
-
-        .hearts-bg {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 0;
-            overflow: hidden;
-        }
-
-        .heart {
-            position: absolute;
-            font-size: 30px;
-            opacity: 0.3;
-            animation: floatHeart 10s linear infinite;
-        }
-
-        @keyframes floatHeart {
-            0% {
-                transform: translateY(100vh) rotate(0deg);
-                opacity: 0.3;
-            }
-
-            50% {
-                opacity: 0.5;
-            }
-
-            100% {
-                transform: translateY(-100px) rotate(360deg);
-                opacity: 0;
-            }
-        }
-
-        @media (max-width: 768px) {
-            body {
-                background-attachment: scroll;
-            }
-
-            body::before {
-                position: absolute;
-                background-attachment: scroll;
-            }
-
-            .header h1 {
-                font-size: 2.2rem;
-            }
-
-            .header p {
-                font-size: 1.1rem;
-            }
-
-            .code-input-group {
-                flex-direction: column;
-            }
-
-            .code-input {
-                min-width: auto;
-                font-size: 16px;
-            }
-
-            .wheel-container {
-                padding: 15px;
-            }
-
-            .container {
-                width: 95%;
-                padding: 10px;
-            }
-
-            .code-section {
-                padding: 25px 20px;
-            }
-        }
+        @media(prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
     </style>
 </head>
 
-<body>
+<body class="work-ui wheel-page">
     <!-- Audio elements -->
     <audio id="spinSound" loop preload="auto">
         <source src="spin.mp3" type="audio/mpeg">
@@ -416,64 +73,54 @@
         <source src="music.mp3" type="audio/mpeg">
     </audio>
 
-    <div class="hearts-bg" id="heartsBackground"></div>
-
-    <div class="container">
-        <div class="header">
-            <h1>💕 Wheel of Fortune 💕</h1>
-            <p>✨ Enter your code and spin the wheel! ✨</p>
+    <main class="container">
+        <div class="page-tools">
+            <span class="page-label">Панель · Призы</span>
+            <button type="button" data-work-theme-toggle>Светлая тема</button>
         </div>
+        <header class="header">
+            <h1>Колесо призов</h1>
+            <p>Введите полученный код, чтобы открыть свой приз.</p>
+        </header>
 
-        <div class="code-section">
+        <section class="code-section" aria-label="Открытие приза">
+            <label class="code-label" for="codeInput">Код доступа</label>
             <div class="code-input-group">
-                <input type="text" id="codeInput" class="code-input" placeholder="Enter code..." maxlength="8">
-                <button id="spinBtn" class="spin-btn">💖 SPIN!</button>
+                <input type="text" id="codeInput" class="code-input" placeholder="Введите код" maxlength="8" autocomplete="off" spellcheck="false">
+                <button id="spinBtn" class="spin-btn" type="button">Открыть приз</button>
             </div>
-            <div id="errorMessage" class="error-message"></div>
-            <div id="loading" class="loading">
-                <div class="spinner"></div>
-            </div>
-        </div>
+            <label class="sound-option"><input type="checkbox" id="soundEnabled">Звуковое сопровождение</label>
+            <div id="errorMessage" class="error-message" role="alert"></div>
+            <div id="loading" class="loading" role="status"><span>Проверяем и сохраняем результат…</span></div>
+        </section>
 
         <div class="wheel-container">
             <div class="wheel-wrapper">
-                <canvas id="wheelCanvas" class="wheel-canvas" width="400" height="400"></canvas>
-                <div class="pointer"></div>
+                <canvas id="wheelCanvas" class="wheel-canvas" width="400" height="400" role="img" aria-label="Колесо с возможными призами. Результат появится под колесом."></canvas>
+                <div class="pointer" aria-hidden="true"></div>
             </div>
+            <p class="wheel-caption">Один код — одно открытие</p>
         </div>
-
-    </div>
+        <section id="wheelResult" class="result-card" role="status" hidden>
+            <h2>Ваш приз</h2><p id="wheelResultPrize"></p>
+            <span class="result-note">Результат сохранён.</span>
+        </section>
+    </main>
 
     <script>
-        // Create floating hearts background
-        function createHeartsBackground() {
-            const heartsContainer = document.getElementById('heartsBackground');
-            const hearts = ['💕', '💖', '💗', '💓', '💝', '💘'];
-
-            for (let i = 0; i < 15; i++) {
-                setTimeout(() => {
-                    const heart = document.createElement('div');
-                    heart.className = 'heart';
-                    heart.textContent = hearts[Math.floor(Math.random() * hearts.length)];
-                    heart.style.left = Math.random() * 100 + '%';
-                    heart.style.animationDelay = Math.random() * 5 + 's';
-                    heart.style.animationDuration = (8 + Math.random() * 4) + 's';
-                    heartsContainer.appendChild(heart);
-                }, i * 500);
-            }
-        }
-
         // Prizes on the wheel
         const prizes = [
             'Lovense', 'Threesome', 'Fucklist', 'Sexting', 'Custom',
             'Videocall', 'Anal', 'Pussy', 'Nudes', 'Squirt'
         ];
 
-        // Hentai-style colors (vibrant pinks, purples, neons)
+        // Restrained sector colors remain distinct without animated decoration.
         const colors = [
-            '#ff1493', '#ff69b4', '#da70d6', '#ba55d3', '#ff6ec7',
-            '#ff9ff3', '#ee82ee', '#dda0dd', '#ffb6c1', '#ff8fd8'
+            '#304459', '#43576b', '#344958', '#536071', '#354657',
+            '#405a70', '#35495f', '#4d5d6c', '#364e65', '#445468'
         ];
+        const reduceMotion = () => typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const soundEnabled = () => document.getElementById('soundEnabled').checked;
 
         let canvas = null;
         let ctx = null;
@@ -506,8 +153,7 @@
             // Set canvas size - make it responsive
             const containerWidth = document.querySelector('.wheel-container').offsetWidth;
             const isMobile = window.innerWidth <= 768;
-            const maxSize = isMobile ? Math.min(containerWidth - 30, 350) : 400;
-            const size = Math.min(maxSize, containerWidth - 60);
+            const size = Math.floor(Math.max(140, Math.min(isMobile ? 350 : 400, containerWidth - (isMobile ? 32 : 48))));
 
             canvas.width = size;
             canvas.height = size;
@@ -556,9 +202,9 @@
                 ctx.fill();
 
                 // Draw sector border with glow effect
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 3;
-                ctx.shadowBlur = 10;
+                ctx.strokeStyle = '#182431';
+                ctx.lineWidth = 1;
+                ctx.shadowBlur = 0;
                 ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
                 ctx.stroke();
                 ctx.shadowBlur = 0;
@@ -576,18 +222,17 @@
                 ctx.strokeStyle = '#000';
 
                 // Responsive font size based on canvas size
-                const baseFontSize = Math.max(14, Math.floor(canvas.width / 25));
+                const baseFontSize = Math.max(10, Math.floor(canvas.width / 28));
                 ctx.lineWidth = Math.max(2, Math.floor(baseFontSize / 6));
-                ctx.font = `bold ${baseFontSize}px Poppins`;
+                ctx.font = `500 ${baseFontSize}px system-ui, sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
 
                 // Draw text with better shadow for readability
-                ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-                ctx.shadowBlur = 4;
-                ctx.shadowOffsetX = 2;
-                ctx.shadowOffsetY = 2;
-                ctx.strokeText(prize, 0, 0);
+                ctx.shadowColor = 'transparent';
+                ctx.shadowBlur = 0;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
                 ctx.shadowBlur = 0;
                 ctx.shadowOffsetX = 0;
                 ctx.shadowOffsetY = 0;
@@ -599,9 +244,9 @@
             const centerRadius = Math.max(25, canvas.width / 15);
             ctx.beginPath();
             ctx.arc(0, 0, centerRadius, 0, 2 * Math.PI);
-            ctx.fillStyle = '#fff';
+            ctx.fillStyle = '#182431';
             ctx.fill();
-            ctx.strokeStyle = '#ff1493';
+            ctx.strokeStyle = '#637d96';
             ctx.lineWidth = Math.max(3, canvas.width / 100);
             ctx.stroke();
 
@@ -682,7 +327,7 @@
 
         // Start background music (only once)
         function startBackgroundMusic() {
-            if (!userInteracted) {
+            if (soundEnabled() && !userInteracted) {
                 userInteracted = true;
                 bgMusic.play().catch(err => {
                     console.log('Background music autoplay prevented:', err);
@@ -698,8 +343,11 @@
             startBackgroundMusic();
 
             // Play spin sound
-            spinSound.currentTime = 0; // Reset to start
-            spinSound.play().catch(err => console.log('Spin sound error:', err));
+            document.getElementById('wheelResult').hidden = true;
+            if (soundEnabled() && !reduceMotion()) {
+                spinSound.currentTime = 0;
+                spinSound.play().catch(err => console.log('Spin sound error:', err));
+            }
 
             isSpinning = true;
             startTime = 0; // Reset time
@@ -734,77 +382,28 @@
                 console.log('Target prize, anglePerSector:', anglePerSector, 'targetAngle:', targetAngle, 'targetNormalized:', targetNormalized, 'fullRotations:', fullRotations, 'targetRotation:', targetRotation);
             }
 
-            requestAnimationFrame(animate);
+            if (reduceMotion()) {
+                currentRotation = targetRotation;
+                isSpinning = false;
+                drawWheel();
+                pendingWheelResult = { code: currentCode, prize: getWinningPrize() };
+                sendResult();
+            } else {
+                requestAnimationFrame(animate);
+            }
         }
 
-        // Show result
+        // Announce a result only after the server has persisted it.
         function showResult(prize) {
-            // Stop spin sound and play win sound
             spinSound.pause();
             spinSound.currentTime = 0;
-            winSound.currentTime = 0;
-            winSound.play().catch(err => console.log('Win sound error:', err));
-
-            // Show result with alert
-            alert(`🎉 Congratulations! You won: ${prize} 💕`);
-
-            // Confetti animation
-            createConfetti();
-        }
-
-        // Оптимизированное создание конфетти с использованием DocumentFragment
-        function createConfetti() {
-            const fragment = document.createDocumentFragment();
-            const confettiCount = 80;
-            const confettiElements = [];
-
-            // Создаем все элементы конфетти за один раз
-            for (let i = 0; i < confettiCount; i++) {
-                const confetti = document.createElement('div');
-                confetti.className = 'confetti-particle';
-                confetti.style.position = 'fixed';
-                confetti.style.left = Math.random() * 100 + 'vw';
-                confetti.style.top = '-10px';
-                confetti.style.width = '12px';
-                confetti.style.height = '12px';
-                confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
-                confetti.style.borderRadius = Math.random() > 0.5 ? '50%' : '0';
-                confetti.style.pointerEvents = 'none';
-                confetti.style.zIndex = '1000';
-                confetti.style.animationDelay = (i * 30) + 'ms';
-                confetti.style.animation = 'fall 3s linear forwards';
-                confetti.style.boxShadow = '0 0 10px ' + colors[Math.floor(Math.random() * colors.length)];
-                confetti.style.opacity = '0';
-
-                confettiElements.push(confetti);
-                fragment.appendChild(confetti);
+            if (soundEnabled()) {
+                winSound.currentTime = 0;
+                winSound.play().catch(err => console.log('Win sound error:', err));
             }
-
-            // Добавляем все конфетти за один DOM update
-            document.body.appendChild(fragment);
-
-            // Запускаем анимацию появления
-            requestAnimationFrame(() => {
-                confettiElements.forEach(el => el.style.opacity = '1');
-            });
-
-            // Удаляем все элементы через 3.5 секунды
-            setTimeout(() => {
-                confettiElements.forEach(el => el.remove());
-            }, 3500);
+            document.getElementById('wheelResultPrize').textContent = prize;
+            document.getElementById('wheelResult').hidden = false;
         }
-
-        // CSS for confetti falling animation
-        const style = document.createElement('style');
-        style.textContent = `
-            @keyframes fall {
-                to {
-                    transform: translateY(100vh) rotate(720deg);
-                    opacity: 0;
-                }
-            }
-        `;
-        document.head.appendChild(style);
 
         // Send result to server
         async function sendResult() {
@@ -824,15 +423,15 @@
                 const data = await response.json();
                 if (!response.ok || !data.ok || data.prize !== result.prize) throw new Error(data.error || 'save_failed');
                 pendingWheelResult = null;
-                button.textContent = '💖 SPIN!';
+                button.textContent = 'Открыть приз';
                 showResult(result.prize);
                 return true;
             } catch (error) {
                 // Keep the exact result/code for an idempotent retry, rather than
                 // awarding an unrecorded prize or consuming a different code.
                 spinSound.pause();
-                button.textContent = 'Retry saving result';
-                showError('Result not confirmed. Check your connection and retry saving.');
+                button.textContent = 'Повторить сохранение';
+                showError('Результат пока не подтверждён. Проверьте соединение и повторите сохранение.');
                 return false;
             } finally {
                 isSavingResult = false;
@@ -849,12 +448,12 @@
             const code = codeInput.value.trim().toUpperCase();
 
             if (!code) {
-                showError('Please enter a code!');
+                showError('Введите код доступа.');
                 return;
             }
 
             if (isSpinning) {
-                showError('Wheel is already spinning!');
+                showError('Дождитесь завершения открытия.');
                 return;
             }
 
@@ -875,7 +474,7 @@
                 const data = await response.json();
 
                 if (!response.ok) {
-                    showError(data.error || 'Invalid code!');
+                    showError(data.error || 'Код недействителен.');
                     showLoading(false);
                     return;
                 }
@@ -890,11 +489,11 @@
 
             } catch (error) {
                 console.error('Error checking code:', error);
-                showError('Connection error or invalid result. Please retry.');
+                showError('Не удалось проверить код. Проверьте соединение и попробуйте снова.');
                 showLoading(false);
             } finally {
                 isChecking = false;
-                document.getElementById('spinBtn').disabled = isSpinning;
+                document.getElementById('spinBtn').disabled = isSpinning || isSavingResult;
             }
         }
 
@@ -930,47 +529,18 @@
             }
         });
 
-        // Start background music on first input interaction
-        document.getElementById('codeInput').addEventListener('input', startBackgroundMusic, { once: true });
-        document.getElementById('codeInput').addEventListener('focus', startBackgroundMusic, { once: true });
-
-        // Universal interaction handler to start music
-        function handleUserInteraction() {
-            if (!userInteracted) {
-                userInteracted = true;
-                bgMusic.play()
-                    .then(() => {
-                        console.log('Background music started!');
-                        // Remove listeners after successful start
-                        document.removeEventListener('click', handleUserInteraction);
-                        document.removeEventListener('touchstart', handleUserInteraction);
-                        document.removeEventListener('keydown', handleUserInteraction);
-                    })
-                    .catch(err => {
-                        console.log('Background music blocked:', err);
-                    });
+        // Sounds are opt-in; focusing a field or changing the theme stays silent.
+        document.getElementById('soundEnabled').addEventListener('change', () => {
+            if (soundEnabled()) {
+                userInteracted = false;
+                startBackgroundMusic();
+            } else {
+                [bgMusic, spinSound, winSound].forEach(audio => audio.pause());
+                userInteracted = false;
             }
-        }
-
-        // Initialize on load
-        window.addEventListener('load', () => {
-            initWheel();
-            createHeartsBackground();
-
-            // Try to autoplay music immediately (will fail on most browsers, but worth trying)
-            bgMusic.play()
-                .then(() => {
-                    console.log('Music autoplay succeeded!');
-                    userInteracted = true;
-                })
-                .catch(() => {
-                    // Autoplay blocked, set up listeners for ANY user interaction
-                    console.log('Autoplay blocked - waiting for user interaction');
-                    document.addEventListener('click', handleUserInteraction);
-                    document.addEventListener('touchstart', handleUserInteraction);
-                    document.addEventListener('keydown', handleUserInteraction);
-                });
         });
+
+        window.addEventListener('load', initWheel);
     </script>
 </body>
 

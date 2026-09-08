@@ -7,378 +7,114 @@
     <meta name="description" content="Lovense remote toy">
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
-    <title>Lovense Remote Control</title>
+    <title>Журнал — Рабочая панель</title>
+    <link rel="stylesheet" href="/workspace-theme.css">
+    <script src="/workspace-theme.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        * { box-sizing: border-box; }
+        body.work-ui { margin:0; padding:24px; font:14px/1.5 var(--work-font); color:var(--work-text); background:var(--work-bg); min-height:100vh; }
+        .container { max-width:1400px; margin:0 auto; }
+        .container.access-denied :is(.stats,.filters,.sessions-list) { display:none; }
+        .page-header { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:24px; }
+        .page-header nav { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+        .page-eyebrow { margin:0 0 4px; color:var(--work-muted); font-size:11px; letter-spacing:.12em; text-transform:uppercase; }
+        h1 { margin:0; font-size:24px; line-height:1.3; font-weight:650; letter-spacing:-.03em; }
+        .subtitle { margin:6px 0 0; color:var(--work-muted); font-size:13px; }
+        button, input, select, .page-link { font:inherit; border:1px solid var(--work-border); border-radius:var(--work-radius); }
+        button, .page-link { min-height:36px; padding:7px 12px; color:var(--work-text); background:var(--work-surface-2); cursor:pointer; text-decoration:none; font-size:13px; font-weight:550; }
+        button:hover, .page-link:hover { background:var(--work-surface); border-color:var(--work-muted); }
+        button:disabled { opacity:.55; cursor:wait; }
+        :where(button,a,input,select):focus-visible { outline:2px solid var(--work-accent); outline-offset:3px; }
+        .stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); margin-bottom:20px; background:var(--work-surface); border:1px solid var(--work-border); border-radius:var(--work-radius); }
+        .stat-item { padding:17px 20px; min-width:0; }
+        .stat-item + .stat-item { border-left:1px solid var(--work-border); }
+        .stat-value { font-size:23px; font-weight:600; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+        .stat-label { color:var(--work-muted); font-size:12px; margin-top:3px; }
+        .filters { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+        .filters input, .filters select { min-height:36px; padding:7px 10px; background:var(--work-surface); color:var(--work-text); min-width:0; }
+        .filters input { flex:1 1 230px; }
+        input::placeholder { color:var(--work-muted); }
+        .filters .export-btn { background:var(--work-accent); color:var(--work-on-accent); border-color:var(--work-accent); }
+        .filters .export-btn:hover { background:var(--work-accent-hover); }
+        body.work-ui .cleanup-btn, body.work-ui .btn-delete-log { color:var(--work-danger); }
+        .btn-delete-log { min-height:28px; padding:3px 8px; font-size:12px; margin-left:8px; background:transparent; }
+        .sessions-list { background:var(--work-surface); border:1px solid var(--work-border); border-radius:var(--work-radius); overflow:auto; max-height:calc(100vh - 275px); min-height:160px; }
+        .session-item { padding:16px 18px; border-bottom:1px solid var(--work-border); }
+        .session-item:last-child { border-bottom:0; }
+        .session-item:hover { background:var(--work-surface-2); }
+        .session-item.active { background:var(--work-accent-soft); }
+        .session-header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; }
+        .session-header > div { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+        .session-id { color:var(--work-text); font:550 13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; min-width:0; }
+        body.work-ui button.session-id { background:transparent; padding:0; min-height:28px; border:0; text-align:left; color:var(--work-text); }
+        body.work-ui button.session-id:hover { text-decoration:underline; }
+        .session-status { display:inline-block; padding:2px 7px; border:1px solid var(--work-border); border-radius:4px; font-size:11px; color:var(--work-muted); white-space:nowrap; }
+        .session-status.active { color:var(--work-success); }
+        .session-status.revoked, .session-status.deleted { color:var(--work-danger); }
+        .session-info { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:7px 18px; font-size:12px; color:var(--work-text); }
+        .info-item { display:flex; flex-wrap:wrap; align-items:baseline; gap:5px; min-width:0; overflow-wrap:anywhere; }
+        .info-label { color:var(--work-muted); }
+        .chat-viewer { position:fixed; inset:0 0 0 auto; width:min(620px,55%); background:var(--work-bg); border-left:1px solid var(--work-border); display:none; flex-direction:column; z-index:1000; box-shadow:var(--work-shadow); }
+        .chat-viewer.show { display:flex; }
+        .chat-header { padding:18px; border-bottom:1px solid var(--work-border); display:flex; gap:16px; align-items:flex-start; justify-content:space-between; background:var(--work-surface); }
+        .chat-header h2 { margin:0; font-size:14px; line-height:1.5; overflow-wrap:anywhere; }
+        .close-chat { min-height:30px; flex-shrink:0; padding:3px 10px; font-size:18px; }
+        .chat-messages { flex:1; min-height:0; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:10px; }
+        .message { padding:11px 13px; border:1px solid var(--work-border); border-radius:var(--work-radius); max-width:88%; overflow-wrap:anywhere; font-size:13px; }
+        .message.admin { background:var(--work-accent-soft); align-self:flex-end; }
+        .message.controller { background:var(--work-surface); align-self:flex-start; }
+        .message.system { background:var(--work-surface-2); align-self:center; text-align:center; font-size:12px; color:var(--work-muted); max-width:95%; white-space:pre-line; }
+        .message-time { font-size:11px; color:var(--work-muted); margin-top:5px; font-variant-numeric:tabular-nums; }
+        .voice-message { display:flex; align-items:center; gap:10px; margin-top:8px; }
+        .voice-play-btn { width:34px; min-height:34px; flex-shrink:0; padding:0; }
+        .no-data, .loading { padding:46px 20px; text-align:center; color:var(--work-muted); }
+        .error-message { padding:12px 14px; border:1px solid var(--work-danger); color:var(--work-danger); background:var(--work-surface); margin-bottom:16px; border-radius:var(--work-radius); }
+        .diff-box { width:100%; background:var(--work-bg); padding:8px; border:1px solid var(--work-border); max-height:200px; overflow:auto; border-radius:4px; }
+        .diff-line { padding:3px 6px; margin:2px 0; background:var(--work-surface-2); }
+        .diff-line.removed { color:var(--work-danger); }
+        .diff-line.added { color:var(--work-success); }
+        .diff-summary { color:var(--work-muted); font-style:italic; }
+        @media(max-width:850px) {
+            body.work-ui { padding:18px; }
+            .page-header { align-items:flex-start; }
+            .stats { grid-template-columns:repeat(3,minmax(0,1fr)); }
+            .stat-item { padding:13px; }
+            .stat-item:nth-child(4) { border-left:0; }
+            .stat-item:nth-child(n+4) { border-top:1px solid var(--work-border); }
+            .sessions-list { max-height:none; }
         }
-
-        body {
-            font-family: Tahoma, 'MS Sans Serif', 'Segoe UI', Arial, sans-serif;
-            background: #c0c0c0;
-            min-height: 100vh;
-            padding: 20px;
-            color: #000;
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            background: #e5e5e5;
-            border: 2px solid #000;
-            padding: 24px;
-        }
-
-        h1 {
-            color: #000;
-            margin-bottom: 8px;
-            font-size: 22px;
-            font-weight: 700;
-        }
-
-        .subtitle {
-            color: #222;
-            margin-bottom: 18px;
-            font-size: 13px;
-        }
-
-        .stats {
-            background: #e5e5e5;
-            border: 1px solid #000;
-            padding: 10px;
-            margin-bottom: 16px;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 8px;
-        }
-
-        .stat-item {
-            text-align: center;
-        }
-
-        .stat-value {
-            font-size: 20px;
-            font-weight: 700;
-            color: #000;
-        }
-
-        .stat-label {
-            color: #111;
-            font-size: 11px;
-            margin-top: 2px;
-        }
-
-        .filters {
-            background: #f5f5f5;
-            border: 1px solid #000;
-            padding: 12px;
-            margin-bottom: 16px;
-            display: flex;
-            gap: 12px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        .filters input,
-        .filters select {
-            padding: 6px 10px;
-            border: 1px solid #000;
-            font-family: inherit;
-            font-size: 13px;
-        }
-
-        .filters button {
-            padding: 6px 16px;
-            border: 2px solid #000;
-            background: #e0e0e0;
-            cursor: pointer;
-            font-weight: 700;
-            font-size: 13px;
-        }
-
-        .filters button:hover {
-            filter: brightness(0.95);
-        }
-
-        .sessions-list {
-            background: #fff;
-            border: 1px solid #000;
-            max-height: 800px;
-            overflow-y: auto;
-        }
-
-        .session-item {
-            border-bottom: 1px solid #ddd;
-            padding: 12px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-        .session-item:hover {
-            background: #f5f5f5;
-        }
-
-        .session-item.active {
-            background: #e3f2fd;
-        }
-
-        .session-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-
-        .session-id {
-            font-family: monospace;
-            font-weight: 700;
-            color: #0000ee;
-        }
-
-        .session-status {
-            padding: 2px 8px;
-            border: 1px solid #000;
-            font-size: 11px;
-            font-weight: 700;
-        }
-
-        .session-status.active {
-            background: #c8e6c9;
-            color: #2e7d32;
-        }
-
-        .session-status.revoked {
-            background: #ffcdd2;
-            color: #c62828;
-        }
-
-        .session-status.deleted {
-            background: #ffebee;
-            color: #c62828;
-            border: 1px solid #ef5350;
-        }
-
-        .session-info {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 8px;
-            font-size: 12px;
-            color: #555;
-        }
-
-        .info-item {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-
-        .info-label {
-            font-weight: 600;
-        }
-
-        .chat-viewer {
-            position: fixed;
-            right: 0;
-            top: 0;
-            bottom: 0;
-            width: 50%;
-            background: #fff;
-            border-left: 2px solid #000;
-            display: none;
-            flex-direction: column;
-            z-index: 1000;
-        }
-
-        .chat-viewer.show {
-            display: flex;
-        }
-
-        .chat-header {
-            padding: 16px;
-            border-bottom: 1px solid #000;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: #dcdcdc;
-        }
-
-        .chat-header h2 {
-            font-size: 16px;
-            margin: 0;
-        }
-
-        .close-chat {
-            background: #e0e0e0;
-            border: 2px solid #000;
-            font-size: 16px;
-            color: #000;
-            cursor: pointer;
-            padding: 0 8px;
-            height: 24px;
-        }
-
-        .close-chat:hover {
-            background: #f5f5f5;
-        }
-
-        .chat-messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .message {
-            padding: 10px 12px;
-            border: 1px solid #000;
-            max-width: 80%;
-            word-wrap: break-word;
-        }
-
-        .message.admin {
-            background: #ffffff;
-            align-self: flex-end;
-            margin-left: auto;
-        }
-
-        .message.controller {
-            background: #f2f2f2;
-            align-self: flex-start;
-        }
-
-        .message.system {
-            background: #e3f2fd;
-            align-self: center;
-            text-align: center;
-            font-size: 12px;
-            color: #1565c0;
-            max-width: 90%;
-            white-space: pre-line;
-            font-weight: 600;
-            border: 1px solid #90caf9;
-        }
-
-        .message-time {
-            font-size: 10px;
-            color: #999;
-            margin-top: 4px;
-        }
-
-        .voice-message {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px;
-            background: #e8f5e9;
-            border: 1px solid #000;
-        }
-
-        .voice-play-btn {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            background: #4CAF50;
-            border: none;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            flex-shrink: 0;
-        }
-
-        .voice-play-btn:hover {
-            transform: scale(1.1);
-        }
-
-        .no-data {
-            text-align: center;
-            padding: 40px;
-            color: #999;
-            font-size: 14px;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #666;
-            font-size: 14px;
-        }
-
-        .error-message {
-            background: #ffebee;
-            color: #c62828;
-            padding: 12px;
-            border: 1px solid #ef5350;
-            margin-bottom: 16px;
-            font-size: 13px;
-        }
-
-        .export-btn {
-            padding: 8px 16px;
-            border: 2px solid #000;
-            background: #4CAF50;
-            color: white;
-            cursor: pointer;
-            font-weight: 700;
-            font-size: 13px;
-            margin-left: auto;
-        }
-
-        .export-btn:hover {
-            filter: brightness(1.1);
-        }
-
-        .cleanup-btn {
-            padding: 8px 16px;
-            border: 2px solid #000;
-            background: #ff9800;
-            color: white;
-            cursor: pointer;
-            font-weight: 700;
-            font-size: 13px;
-        }
-
-        .cleanup-btn:hover {
-            filter: brightness(1.1);
-        }
-
-        .btn-delete-log {
-            padding: 4px 8px;
-            border: 1px solid #000;
-            background: #f44336;
-            color: white;
-            cursor: pointer;
-            font-size: 11px;
-            font-weight: 700;
-            margin-left: 8px;
-        }
-
-        .btn-delete-log:hover {
-            filter: brightness(1.1);
-        }
-
-        @media (max-width: 768px) {
-            .chat-viewer {
-                width: 100%;
-            }
-
-            .session-info {
-                grid-template-columns: 1fr;
-            }
+        @media(max-width:600px) {
+            body.work-ui { padding:14px; }
+            .page-header { flex-direction:column; gap:14px; }
+            .page-header nav { width:100%; }
+            .stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
+            .stat-item:nth-child(n) { border:0; }
+            .stat-item:nth-child(even) { border-left:1px solid var(--work-border); }
+            .stat-item:nth-child(n+3) { border-top:1px solid var(--work-border); }
+            .stat-value { font-size:20px; }
+            .stat-item:last-child { grid-column:1 / -1; }
+            .filters { gap:8px; }
+            .filters select { flex:1 1 140px; }
+            .filters button { flex:1 1 auto; }
+            .session-header { align-items:flex-start; flex-direction:column; }
+            .session-info { grid-template-columns:1fr; }
+            .chat-viewer { width:100%; }
+            .message { max-width:95%; }
         }
     </style>
 </head>
 
-<body>
+<body class="work-ui logs-page">
     <div class="container" id="appRoot" style="display:none;">
-        <h1>Логи сессий</h1>
-        <p class="subtitle">Просмотр истории всех сессий и чатов</p>
+        <header class="page-header">
+            <div><p class="page-eyebrow">Рабочая панель</p><h1>Журнал</h1><p class="subtitle">История сессий, сообщений и изменений</p></div>
+            <nav aria-label="Навигация журнала">
+                <a href="/admin" class="page-link">Вернуться к сессиям</a>
+                <button type="button" data-work-theme-toggle>Светлая тема</button>
+            </nav>
+        </header>
 
-        <div id="errorContainer"></div>
+        <div id="errorContainer" role="alert"></div>
 
         <div class="stats">
             <div class="stat-item">
@@ -391,7 +127,7 @@
             </div>
             <div class="stat-item">
                 <div class="stat-value" id="deletedSessions">0</div>
-                <div class="stat-label">Удаленные</div>
+                <div class="stat-label">Удалённые</div>
             </div>
             <div class="stat-item">
                 <div class="stat-value" id="totalMessages">0</div>
@@ -404,21 +140,20 @@
         </div>
 
         <div class="filters">
-            <input type="text" id="searchInput" placeholder="Поиск по ID или никнейму..."
-                style="flex:1;min-width:200px;">
-            <select id="statusFilter">
+            <input type="text" id="searchInput" placeholder="Поиск по ID или имени" aria-label="Поиск в журнале">
+            <select id="statusFilter" aria-label="Статус сессии">
                 <option value="all">Все статусы</option>
                 <option value="active">Активные</option>
                 <option value="revoked">Отозванные</option>
-                <option value="deleted">Удаленные</option>
+                <option value="deleted">Удалённые</option>
             </select>
-            <select id="viewMode">
+            <select id="viewMode" aria-label="Раздел журнала">
                 <option value="sessions">Сессии</option>
                 <option value="registrations">Регистрации</option>
-                <option value="snippets">Логи сниппетов</option>
+                <option value="snippets">Изменения сниппетов</option>
             </select>
             <button onclick="loadData()">Обновить</button>
-            <button class="cleanup-btn" onclick="cleanupAllDeleted()">Очистить все удаленные</button>
+            <button class="cleanup-btn" onclick="cleanupAllDeleted()">Очистить удалённые</button>
             <button class="export-btn" onclick="exportLogs()">Экспорт</button>
         </div>
 
@@ -428,13 +163,13 @@
     </div>
 
     <!-- Chat Viewer -->
-    <div class="chat-viewer" id="chatViewer">
+    <aside class="chat-viewer" id="chatViewer" aria-labelledby="chatTitle">
         <div class="chat-header">
             <h2 id="chatTitle">История чата</h2>
-            <button class="close-chat" onclick="closeChatViewer()">×</button>
+            <button class="close-chat" aria-label="Закрыть историю чата" onclick="closeChatViewer()">×</button>
         </div>
         <div class="chat-messages" id="chatMessages"></div>
-    </div>
+    </aside>
 
     <script>
         let currentNickname = localStorage.getItem('nickname') || '';
@@ -442,6 +177,8 @@
         let allRegistrations = [];
         let allSnippetLogs = [];
         let currentSessionId = null;
+        let accessGranted = false;
+        let chatReturnFocus = null;
 
         // Проверка доступа
         async function checkAccess() {
@@ -507,7 +244,7 @@
         function formatDiffHtml(oldContent, newContent) {
             const changes = getTextDiff(oldContent, newContent);
             if (!changes || changes.length === 0) {
-                return '<div style="color:#666;font-style:italic;">Нет видимых изменений</div>';
+                return '<div class="diff-summary">Нет видимых изменений</div>';
             }
 
             // Ограничиваем количество показываемых изменений
@@ -518,17 +255,17 @@
 
             displayChanges.forEach(change => {
                 if (change.type === 'removed') {
-                    html += `<div style="background:#ffebee;color:#c62828;padding:2px 4px;margin:1px 0;">- [строка ${change.line}] ${escapeHtml(change.text.substring(0, 100))}${change.text.length > 100 ? '...' : ''}</div>`;
+                    html += `<div class="diff-line removed">- [строка ${change.line}] ${escapeHtml(change.text.substring(0, 100))}${change.text.length > 100 ? '...' : ''}</div>`;
                 } else if (change.type === 'added') {
-                    html += `<div style="background:#e8f5e9;color:#2e7d32;padding:2px 4px;margin:1px 0;">+ [строка ${change.line}] ${escapeHtml(change.text.substring(0, 100))}${change.text.length > 100 ? '...' : ''}</div>`;
+                    html += `<div class="diff-line added">+ [строка ${change.line}] ${escapeHtml(change.text.substring(0, 100))}${change.text.length > 100 ? '...' : ''}</div>`;
                 } else if (change.type === 'changed') {
-                    html += `<div style="background:#ffebee;color:#c62828;padding:2px 4px;margin:1px 0;">- [строка ${change.line}] ${escapeHtml(change.oldText.substring(0, 100))}${change.oldText.length > 100 ? '...' : ''}</div>`;
-                    html += `<div style="background:#e8f5e9;color:#2e7d32;padding:2px 4px;margin:1px 0;">+ [строка ${change.line}] ${escapeHtml(change.newText.substring(0, 100))}${change.newText.length > 100 ? '...' : ''}</div>`;
+                    html += `<div class="diff-line removed">- [строка ${change.line}] ${escapeHtml(change.oldText.substring(0, 100))}${change.oldText.length > 100 ? '...' : ''}</div>`;
+                    html += `<div class="diff-line added">+ [строка ${change.line}] ${escapeHtml(change.newText.substring(0, 100))}${change.newText.length > 100 ? '...' : ''}</div>`;
                 }
             });
 
             if (changes.length > maxChanges) {
-                html += `<div style="color:#666;font-style:italic;margin-top:4px;">... ещё ${changes.length - maxChanges} изменений</div>`;
+                html += `<div class="diff-summary">... ещё ${changes.length - maxChanges} изменений</div>`;
             }
 
             html += '</div>';
@@ -556,7 +293,7 @@
                 console.log('Loaded sessions:', allSessions.length);
                 console.log('Deleted sessions:', allSessions.filter(s => s.deleted_at).length);
 
-                renderSessions();
+                if (document.getElementById('viewMode').value === 'sessions') renderSessions();
                 updateStats();
             } catch (e) {
                 showError('Ошибка загрузки сессий: ' + e.message);
@@ -575,7 +312,7 @@
 
                 const data = await res.json();
                 allRegistrations = data.registrations || [];
-                renderRegistrations();
+                if (document.getElementById('viewMode').value === 'registrations') renderRegistrations();
                 updateStats();
             } catch (e) {
                 showError('Ошибка загрузки регистраций: ' + e.message);
@@ -594,7 +331,7 @@
 
                 const data = await res.json();
                 allSnippetLogs = data.logs || [];
-                renderSnippetLogs();
+                if (document.getElementById('viewMode').value === 'snippets') renderSnippetLogs();
                 updateStats();
             } catch (e) {
                 showError('Ошибка загрузки логов сниппетов: ' + e.message);
@@ -603,6 +340,8 @@
 
         async function loadData() {
             const viewMode = document.getElementById('viewMode').value;
+            document.getElementById('statusFilter').disabled = viewMode !== 'sessions';
+            document.querySelector('.cleanup-btn').disabled = viewMode !== 'sessions';
             if (viewMode === 'sessions') {
                 await loadSessions();
             } else if (viewMode === 'registrations') {
@@ -673,7 +412,7 @@
                 return `
                     <div class="session-item">
                         <div class="session-header">
-                            <span class="session-id" data-view-session="${escapeHtml(session.id)}" style="cursor:pointer;">${escapeHtml(session.id)}</span>
+                            <button type="button" class="session-id" data-view-session="${escapeHtml(session.id)}" aria-label="Открыть историю сессии ${escapeHtml(session.id)}">${escapeHtml(session.id)}</button>
                             <div>
                                 <span class="session-status ${status}">${statusText}</span>
                                 <button class="btn-delete-log" data-delete-session="${escapeHtml(session.id)}">Удалить</button>
@@ -699,7 +438,7 @@
                             ${deletedDate ? `
                             <div class="info-item">
                                 <span class="info-label">Удалена:</span>
-                                <span style="color:#c62828;">${formatDate(deletedDate)}</span>
+                                <span style="color:var(--work-danger);">${formatDate(deletedDate)}</span>
                             </div>
                             ` : ''}
                         </div>
@@ -733,7 +472,7 @@
                             <span class="session-id">${escapeHtml(reg.nickname)}</span>
                             <div>
                                 <span class="session-status ${isMasterCode ? 'active' : 'inactive'}">${isMasterCode ? 'Мастер-код' : 'Инвайт'}</span>
-                                <button class="btn-delete-log" data-delete-user="${escapeHtml(reg.nickname)}">Удалить юзера</button>
+                                <button class="btn-delete-log" data-delete-user="${escapeHtml(reg.nickname)}">Удалить пользователя</button>
                             </div>
                         </div>
                         <div class="session-info">
@@ -775,34 +514,33 @@
                 const timestamp = new Date(log.timestamp);
 
                 let actionText = '';
-                let actionColor = '#000';
+                let actionColor = 'var(--work-muted)';
                 switch (log.action) {
                     case 'create':
                         actionText = 'Создан';
-                        actionColor = '#2e7d32';
+                        actionColor = 'var(--work-success)';
                         break;
                     case 'edit':
                         actionText = 'Изменен';
-                        actionColor = '#1976d2';
+                        actionColor = 'var(--work-accent)';
                         break;
                     case 'delete':
                         actionText = 'Удален';
-                        actionColor = '#c62828';
+                        actionColor = 'var(--work-danger)';
                         break;
                     default:
                         actionText = log.action;
                 }
 
-                const itemTypeIcon = log.item_type === 'snippet' ? '📄' : '📁';
                 const itemTypeName = log.item_type === 'snippet' ? 'Сниппет' : 'Папка';
 
                 return `
                     <div class="session-item">
                         <div class="session-header">
                             <span class="session-id">
-                                ${itemTypeIcon} ${escapeHtml(log.item_name || 'Без названия')}
+                                ${escapeHtml(log.item_name || 'Без названия')}
                             </span>
-                            <span class="session-status" style="background:#e0e0e0;color:${actionColor};">${escapeHtml(actionText)}</span>
+                            <span class="session-status" style="color:${actionColor};">${escapeHtml(actionText)}</span>
                         </div>
                         <div class="session-info">
                             <div class="info-item">
@@ -826,7 +564,7 @@
                             ${typeof log.old_content === 'string' && typeof log.new_content === 'string' ? `
                             <div class="info-item" style="grid-column: 1 / -1;">
                                 <span class="info-label">Изменения:</span>
-                                <div style="background:#f5f5f5;padding:8px;margin-top:4px;border:1px solid #ccc;max-height:200px;overflow-y:auto;">
+                                <div class="diff-box">
                                     ${formatDiffHtml(log.old_content, log.new_content)}
                                 </div>
                             </div>
@@ -839,6 +577,7 @@
 
         async function viewChat(sessionId) {
             currentSessionId = sessionId;
+            if (!document.getElementById('chatViewer').classList.contains('show')) chatReturnFocus = document.activeElement;
 
             try {
                 const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
@@ -856,6 +595,7 @@
 
                 document.getElementById('chatTitle').textContent = `Чат сессии: ${sessionId} (создатель: ${creatorNickname || 'неизвестно'})`;
                 document.getElementById('chatViewer').classList.add('show');
+                document.querySelector('.close-chat').focus();
             } catch (e) {
                 alert('Ошибка загрузки чата: ' + e.message);
             }
@@ -898,7 +638,7 @@
                         <div class="message ${className}">
                             <div><strong>${escapeHtml(label)}:</strong></div>
                             <div class="voice-message">
-                                <button class="voice-play-btn" data-audio-id="${escapeHtml(audioId)}" data-voice-url="${escapeHtml(voiceUrl)}">
+                                <button class="voice-play-btn" aria-label="Воспроизвести или приостановить голосовое сообщение" data-audio-id="${escapeHtml(audioId)}" data-voice-url="${escapeHtml(voiceUrl)}">
                                     ▶
                                 </button>
                                 <span>Голосовое сообщение (${escapeHtml(msg.duration)})</span>
@@ -925,14 +665,24 @@
             }, 100);
         }
 
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && document.getElementById('chatViewer').classList.contains('show')) closeChatViewer();
+        });
+
         function closeChatViewer() {
             audioPlayers.forEach(audio => audio.pause());
             document.getElementById('chatViewer').classList.remove('show');
             currentSessionId = null;
+            if (chatReturnFocus && chatReturnFocus.isConnected) chatReturnFocus.focus();
+            chatReturnFocus = null;
         }
 
         function updateStats() {
             const viewMode = document.getElementById('viewMode').value;
+            const labels = viewMode === 'snippets'
+                ? ['Всего изменений', 'Создано', 'Изменено', 'Удалено', 'Пользователей']
+                : ['Всего сессий', 'Активные', 'Удалённые', 'Всего сообщений', 'Пользователей'];
+            document.querySelectorAll('.stat-label').forEach((label, index) => { label.textContent = labels[index]; });
 
             if (viewMode === 'sessions') {
                 const total = allSessions.length;
@@ -959,9 +709,9 @@
                 const deleted = allSnippetLogs.filter(l => l.action === 'delete').length;
 
                 document.getElementById('totalSessions').textContent = allSnippetLogs.length;
-                document.getElementById('activeSessions').textContent = `${created} созданий`;
-                document.getElementById('deletedSessions').textContent = `${edited} изменений`;
-                document.getElementById('totalMessages').textContent = `${deleted} удалений`;
+                document.getElementById('activeSessions').textContent = created;
+                document.getElementById('deletedSessions').textContent = edited;
+                document.getElementById('totalMessages').textContent = deleted;
                 document.getElementById('totalUsers').textContent = allRegistrations.length;
             } else {
                 document.getElementById('totalSessions').textContent = allSessions.length;
@@ -1102,22 +852,26 @@
                 renderRegistrations();
             }
         });
-        document.getElementById('statusFilter').addEventListener('change', renderSessions);
+        document.getElementById('statusFilter').addEventListener('change', () => {
+            if (document.getElementById('viewMode').value === 'sessions') renderSessions();
+        });
         document.getElementById('viewMode').addEventListener('change', loadData);
 
         // Инициализация
         (async function () {
-            const hasAccess = await checkAccess();
-            if (hasAccess) {
-                document.getElementById('appRoot').style.display = 'block';
+            accessGranted = await checkAccess();
+            document.getElementById('appRoot').style.display = 'block';
+            if (accessGranted) {
                 await loadSessions();
                 await loadRegistrations();
+            } else {
+                document.getElementById('appRoot').classList.add('access-denied');
             }
         })();
 
         // Автообновление каждые 30 секунд
         setInterval(() => {
-            if (document.getElementById('appRoot').style.display === 'block') {
+            if (accessGranted) {
                 loadData();
             }
         }, 30000);

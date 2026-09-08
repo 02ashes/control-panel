@@ -745,6 +745,9 @@ const PUBLIC_FILES = new Map([
     ['/spin.mp3', 'spin.mp3'], ['/win.mp3', 'win.mp3'], ['/music.mp3', 'music.mp3'],
     ['/snippets-sync.js', 'public/snippets-sync.js'],
     ['/public/snippets-sync.js', 'public/snippets-sync.js'],
+    ['/workspace-theme.css', 'public/workspace-theme.css'],
+    ['/workspace-theme.js', 'public/workspace-theme.js'],
+    ['/panel.css', 'public/panel.css'],
     ['/public/lovense-home.html', 'public/lovense-home.html']
 ]);
 app.use((req, res, next) => {

@@ -3,21 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="dark light">
   <title>Day 1 · Результаты кандидатов</title>
+  <script src="/workspace-theme.js"></script>
+  <link rel="stylesheet" href="/workspace-theme.css">
   <link rel="stylesheet" href="/learn/day1-dashboard.css">
 </head>
-<body>
+<body class="work-ui">
   <div class="page-shell">
+    <nav class="learning-topbar" aria-label="Рабочая область">
+      <div class="learning-location"><a href="/admin">Control Panel</a><span aria-hidden="true">/</span><span>Результаты обучения</span></div>
+      <button class="learning-theme-button" type="button" data-work-theme-toggle>Светлая тема</button>
+    </nav>
     <header class="page-header">
       <div class="page-header__copy">
-        <div class="eyebrow">WORKER ONBOARDING · ADMIN</div>
+        <div class="eyebrow">Обучение · Администрирование</div>
         <h1>Результаты Day 1</h1>
         <p>Прогресс теории, ответы кандидатов, оценки Grok и история попыток.</p>
       </div>
 
       <nav class="page-actions" aria-label="Навигация">
-        <a class="text-link" href="/admin">← В панель</a>
         <button id="refreshButton" class="primary-button" type="button">
           <span class="refresh-icon" aria-hidden="true">↻</span>
           Обновить

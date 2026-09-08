@@ -7,964 +7,60 @@
     <meta name="description" content="Lovense remote toy">
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
-    <title>Lovense Remote App</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: Tahoma, 'MS Sans Serif', 'Segoe UI', Arial, sans-serif;
-            background: #c0c0c0;
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-            color: #000;
-        }
-
-        .container {
-            background: #e5e5e5;
-            border: 2px solid #000;
-            border-radius: 0;
-            box-shadow: none;
-            padding: 24px;
-            max-width: 720px;
-            width: 100%;
-        }
-
-        h1 {
-            color: #000;
-            margin-bottom: 8px;
-            font-size: 22px;
-            text-align: left;
-            font-weight: 700;
-        }
-
-        .subtitle {
-            color: #222;
-            margin-bottom: 18px;
-            text-align: left;
-            font-size: 13px;
-        }
-
-        .btn-generate {
-            width: 100%;
-            background: #e0e0e0;
-            color: #000;
-            border: 2px solid #000;
-            padding: 12px 16px;
-            font-size: 14px;
-            border-radius: 0;
-            cursor: pointer;
-            font-weight: 700;
-        }
-
-        .btn-generate:hover {
-            filter: brightness(0.95);
-        }
-
-        .btn-generate:active {
-            filter: brightness(0.9);
-        }
-
-        .links-section {
-            margin-top: 16px;
-        }
-
-        .links-title {
-            color: #000;
-            font-size: 14px;
-            margin-bottom: 8px;
-            font-weight: 700;
-        }
-
-        .link-item {
-            background: #e5e5e5;
-            border: 1px solid #000;
-            border-radius: 0;
-            padding: 10px;
-            margin-bottom: 8px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .link-item:hover {
-            background: #dcdcdc;
-        }
-
-        .link-url {
-            color: #0000ee;
-            text-decoration: none;
-            flex: 1;
-            word-break: break-all;
-            margin-right: 10px;
-            font-size: 14px;
-        }
-
-        .link-actions {
-            display: flex;
-            gap: 10px;
-        }
-
-        .btn-copy,
-        .btn-delete,
-        .btn-chat {
-            padding: 6px 12px;
-            border: 2px solid #000;
-            background: #e0e0e0;
-            color: #000;
-            border-radius: 0;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: 700;
-        }
-
-        .btn-copy:hover,
-        .btn-delete:hover,
-        .btn-chat:hover {
-            filter: brightness(0.95);
-        }
-
-        .btn-copy:active,
-        .btn-delete:active,
-        .btn-chat:active {
-            filter: brightness(0.9);
-        }
-
-        .no-links {
-            text-align: center;
-            color: #999;
-            padding: 30px;
-            font-style: italic;
-        }
-
-        .stats {
-            background: #e5e5e5;
-            border: 1px solid #000;
-            border-radius: 0;
-            padding: 10px;
-            margin-bottom: 16px;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 8px;
-        }
-
-        .stat-item {
-            text-align: center;
-        }
-
-        .stat-value {
-            font-size: 20px;
-            font-weight: 700;
-            color: #000;
-        }
-
-        .stat-label {
-            color: #111;
-            font-size: 11px;
-            margin-top: 2px;
-        }
-
-        .toast {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: #ffffe1;
-            color: #000;
-            padding: 8px 12px;
-            border: 1px solid #000;
-            border-radius: 0;
-            opacity: 0;
-            transform: translateY(100px);
-            transition: all 0.2s;
-            z-index: 1000;
-        }
-
-        .toast.show {
-            opacity: 1;
-            transform: translateY(0);
-        }
-
-        /* Модальное окно чата */
-        .chat-modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 2000;
-            align-items: center;
-            justify-content: center;
-            transition: left 0.3s ease;
-        }
-
-        .chat-modal.snippets-open {
-            left: var(--snippets-width, 0px);
-        }
-
-        .chat-modal.show {
-            display: flex;
-        }
-
-        .chat-window {
-            background: #e5e5e5;
-            border: 2px solid #000;
-            border-radius: 0;
-            width: 90%;
-            max-width: 700px;
-            max-height: 85vh;
-            display: flex;
-            flex-direction: column;
-            box-shadow: none;
-            resize: both;
-            overflow: hidden;
-            min-width: 500px;
-            min-height: 400px;
-            position: relative;
-        }
-
-        .control-monitor {
-            padding: 10px 12px;
-            border-bottom: 1px solid #000;
-            background: #dcdcdc;
-        }
-
-        .monitor-title {
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 10px;
-            font-weight: 600;
-        }
-
-        .graph-container {
-            background: #fff;
-            border: 1px solid #000;
-            border-radius: 0;
-            height: 150px;
-            position: relative;
-        }
-
-        .graph-container canvas {
-            width: 100%;
-            height: 100%;
-            display: block;
-        }
-
-        .intensity-display {
-            position: absolute;
-            top: 6px;
-            right: 6px;
-            background: #e0e0e0;
-            color: #000;
-            padding: 3px 8px;
-            border: 1px solid #000;
-            border-radius: 0;
-            font-weight: 700;
-            font-size: 12px;
-        }
-
-        .intensity-display.active {
-            animation: pulse-intensity 1s ease-in-out infinite;
-        }
-
-        @keyframes pulse-intensity {
-
-            0%,
-            100% {
-                transform: scale(1);
-                box-shadow: 0 0 0 0 rgba(255, 45, 118, 0.7);
-            }
-
-            50% {
-                transform: scale(1.05);
-                box-shadow: 0 0 0 10px rgba(255, 45, 118, 0);
-            }
-        }
-
-        .chat-header {
-            padding: 10px 12px;
-            border-bottom: 1px solid #000;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .chat-header h3 {
-            margin: 0;
-            color: #000;
-            font-size: 14px;
-        }
-
-        .close-chat {
-            background: #e0e0e0;
-            border: 2px solid #000;
-            font-size: 16px;
-            color: #000;
-            cursor: pointer;
-            padding: 0 8px;
-            height: 24px;
-            border-radius: 0;
-        }
-
-        .close-chat:hover {
-            background: #f5f5f5;
-        }
-
-        .chat-messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .message {
-            padding: 8px 10px;
-            border: 1px solid #000;
-            border-radius: 0;
-            max-width: 80%;
-            word-wrap: break-word;
-            overflow-wrap: break-word;
-            word-break: break-word;
-        }
-
-        .message.admin {
-            background: #ffffff;
-            align-self: flex-end;
-            margin-left: auto;
-        }
-
-        .message.controller {
-            background: #f2f2f2;
-            align-self: flex-start;
-        }
-
-        .message.system {
-            background: #e3f2fd;
-            align-self: center;
-            text-align: center;
-            font-size: 12px;
-            color: #1565c0;
-            max-width: 90%;
-            white-space: pre-line;
-            font-weight: 600;
-            border: 1px solid #90caf9;
-            word-wrap: break-word;
-            overflow-wrap: break-word;
-            word-break: break-word;
-        }
-
-        .message-time {
-            font-size: 10px;
-            color: #999;
-            margin-top: 4px;
-        }
-
-        .chat-input-area {
-            border-top: 1px solid #000;
-            padding: 10px;
-            display: flex;
-            gap: 8px;
-            align-items: flex-end;
-        }
-
-        .chat-input-area textarea {
-            flex: 1;
-            border: 1px solid #000;
-            border-radius: 0;
-            padding: 8px 10px;
-            font-size: 16px;
-            outline: none;
-            background: #fff;
-            color: #000;
-            font-family: inherit;
-            resize: none;
-            min-height: 36px;
-            max-height: 120px;
-            overflow-y: auto;
-            word-wrap: break-word;
-            overflow-wrap: break-word;
-            word-break: break-word;
-        }
-
-        .chat-input-area textarea:focus {
-            outline: 2px dotted #000;
-        }
-
-        .send-btn {
-            background: #e0e0e0;
-            color: #000;
-            border: 2px solid #000;
-            padding: 8px 12px;
-            border-radius: 0;
-            cursor: pointer;
-            font-weight: 700;
-            flex-shrink: 0;
-            align-self: flex-end;
-            white-space: nowrap;
-        }
-
-        .send-btn:hover {
-            filter: brightness(0.95);
-        }
-
-        .voice-btn {
-            background: #FF2D76;
-            color: white;
-            border: 2px solid #000;
-            padding: 8px 12px;
-            border-radius: 0;
-            cursor: pointer;
-            font-weight: 700;
-            flex-shrink: 0;
-            align-self: flex-end;
-            white-space: nowrap;
-        }
-
-        .voice-btn:hover {
-            filter: brightness(1.1);
-        }
-
-        .voice-picker {
-            position: absolute;
-            bottom: 70px;
-            left: 20px;
-            background: white;
-            border: 2px solid #000;
-            border-radius: 0;
-            box-shadow: 4px 4px #808080;
-            display: none;
-            z-index: 1000;
-            min-width: 200px;
-        }
-
-        .voice-picker.show {
-            display: block;
-        }
-
-        .voice-picker-header {
-            padding: 10px 12px;
-            background: #C0C0C0;
-            border-bottom: 2px solid #000;
-            font-weight: 700;
-            font-size: 12px;
-        }
-
-        .voice-picker-body {
-            padding: 8px;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-
-        .voice-item {
-            padding: 8px 12px;
-            cursor: pointer;
-            border: 1px solid #ddd;
-            margin-bottom: 4px;
-            background: white;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 12px;
-        }
-
-        .voice-item:hover {
-            background: #f0f0f0;
-        }
-
-        .voice-item-icon {
-            font-size: 16px;
-        }
-
-        /* Text Snippets Styles */
-        .snippets-container {
-            position: fixed;
-            left: -100%;
-            top: 0;
-            bottom: 0;
-            display: flex;
-            z-index: 3500;
-            transition: left 0.3s ease;
-        }
-
-        .snippets-container.show {
-            left: 0;
-        }
-
-        .snippets-panel {
-            width: 300px;
-            background: #e5e5e5;
-            border-right: 2px solid #000;
-            padding: 16px;
-            overflow-y: auto;
-            flex-shrink: 0;
-        }
-
-        .snippets-viewer {
-            background: #f5f5f5;
-            border-right: 2px solid #000;
-            display: none;
-            flex-direction: column;
-            width: 500px;
-            min-width: 300px;
-            max-width: 1000px;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .snippets-viewer.has-content {
-            display: flex;
-        }
-
-        .snippet-resize-handle {
-            position: absolute;
-            right: 0;
-            top: 0;
-            bottom: 0;
-            width: 10px;
-            cursor: ew-resize;
-            background: transparent;
-            z-index: 10;
-        }
-
-        .snippet-resize-handle:hover {
-            background: rgba(0, 0, 0, 0.1);
-        }
-
-        .snippet-tabs {
-            display: flex;
-            background: #dcdcdc;
-            border-bottom: 2px solid #000;
-            overflow-x: auto;
-            flex-shrink: 0;
-            scrollbar-width: thin;
-        }
-
-        .snippet-tabs::-webkit-scrollbar {
-            height: 6px;
-        }
-
-        .snippet-tabs::-webkit-scrollbar-track {
-            background: #c0c0c0;
-        }
-
-        .snippet-tabs::-webkit-scrollbar-thumb {
-            background: #808080;
-        }
-
-        .snippet-tab {
-            padding: 8px 12px;
-            border-right: 1px solid #000;
-            cursor: pointer;
-            background: #c0c0c0;
-            white-space: nowrap;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-        }
-
-        .snippet-tab.active {
-            background: #f5f5f5;
-            font-weight: 700;
-        }
-
-        .snippet-tab:hover {
-            background: #d0d0d0;
-        }
-
-        .snippet-tab.active:hover {
-            background: #f5f5f5;
-        }
-
-        .snippet-tab-close {
-            padding: 0 4px;
-            margin-left: 4px;
-            cursor: pointer;
-            font-weight: 700;
-        }
-
-        .snippet-tab-close:hover {
-            color: red;
-        }
-
-        .snippet-content-area {
-            flex: 1;
-            overflow-y: auto;
-            padding: 16px;
-            display: none;
-            flex-direction: column;
-        }
-
-        .snippet-content-area.active {
-            display: flex;
-        }
-
-        .snippet-editor-title {
-            margin: 0 0 12px 0;
-            font-size: 18px;
-            font-weight: 700;
-            padding: 8px;
-            border: 1px solid #000;
-            background: #fff;
-        }
-
-        .snippet-editor-textarea {
-            width: 100%;
-            height: 400px;
-            padding: 12px;
-            border: 1px solid #000;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 14px;
-            resize: vertical;
-            background: #fff;
-        }
-
-        .snippet-editor-actions {
-            margin-top: 12px;
-            display: flex;
-            gap: 8px;
-        }
-
-        .snippet-editor-actions button {
-            padding: 8px 16px;
-            border: 2px solid #000;
-            background: #e0e0e0;
-            cursor: pointer;
-            font-weight: 700;
-        }
-
-        .snippet-editor-actions button:hover {
-            filter: brightness(0.95);
-        }
-
-        body.snippets-open .container {
-            margin-left: 0;
-            transition: margin-left 0.3s ease;
-        }
-
-        .snippets-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
-            padding-bottom: 12px;
-            border-bottom: 2px solid #000;
-        }
-
-        .snippets-header h3 {
-            margin: 0;
-            font-size: 16px;
-        }
-
-        .snippet-controls {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 12px;
-        }
-
-        .snippet-controls button {
-            flex: 1;
-            padding: 8px 12px;
-            background: #e0e0e0;
-            border: 2px solid #000;
-            font-size: 12px;
-            cursor: pointer;
-            font-weight: 700;
-        }
-
-        .snippet-controls button:hover {
-            filter: brightness(0.95);
-        }
-
-        .snippet-tree {
-            margin-top: 12px;
-        }
-
-        .snippet-folder,
-        .snippet-item {
-            padding: 8px 10px;
-            margin: 4px 0;
-            background: #fff;
-            border: 1px solid #000;
-            cursor: pointer;
-            font-size: 13px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .snippet-folder>span:first-child,
-        .snippet-item>span:first-child {
-            flex: 1;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            margin-right: 8px;
-        }
-
-        .snippet-folder:hover,
-        .snippet-item:hover {
-            background: #f5f5f5;
-        }
-
-        .snippet-item.selected {
-            background: #c0c0c0;
-            font-weight: 700;
-        }
-
-        .snippet-folder {
-            font-weight: 600;
-        }
-
-        .snippet-folder-children {
-            margin-left: 20px;
-        }
-
-        .snippet-actions {
-            display: none;
-            white-space: nowrap;
-            flex-shrink: 0;
-        }
-
-        .snippet-folder:hover .snippet-actions,
-        .snippet-item:hover .snippet-actions {
-            display: flex;
-            gap: 4px;
-        }
-
-        .snippet-actions button {
-            padding: 2px 6px;
-            border: 1px solid #000;
-            background: #fff;
-            font-size: 10px;
-            cursor: pointer;
-        }
-
-        .snippets-toggle {
-            position: fixed;
-            left: 20px;
-            bottom: 20px;
-            background: #e0e0e0;
-            color: #000;
-            border: 2px solid #000;
-            padding: 10px 16px;
-            border-radius: 0;
-            cursor: pointer;
-            font-weight: 700;
-            z-index: 3400;
-            font-size: 13px;
-            display: none;
-        }
-
-        .snippets-toggle.show {
-            display: block;
-        }
-
-        .snippets-toggle:hover {
-            filter: brightness(0.95);
-        }
-
-        .snippet-export-section {
-            margin-top: 20px;
-            padding-top: 12px;
-            border-top: 2px solid #000;
-        }
-
-        .snippet-export-section button {
-            width: 100%;
-            padding: 8px 12px;
-            background: #e0e0e0;
-            border: 2px solid #000;
-            margin-bottom: 8px;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: 700;
-        }
-
-        .snippet-export-section button:hover {
-            filter: brightness(0.95);
-        }
-
-        .snippet-modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 3000;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .snippet-modal.show {
-            display: flex;
-        }
-
-        .snippet-modal-content {
-            background: #e5e5e5;
-            border: 2px solid #000;
-            padding: 24px;
-            min-width: 500px;
-            max-width: 800px;
-            width: 80vw;
-            max-height: 85vh;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .snippet-modal-content h3 {
-            margin: 0 0 16px 0;
-            font-size: 16px;
-        }
-
-        .snippet-modal-content input,
-        .snippet-modal-content textarea {
-            width: 100%;
-            padding: 8px 10px;
-            border: 1px solid #000;
-            margin-bottom: 16px;
-            font-family: inherit;
-            font-size: 14px;
-        }
-
-        .snippet-modal-content textarea {
-            min-height: 300px;
-            resize: vertical;
-            flex: 1;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-        }
-
-        .snippet-modal-actions {
-            display: flex;
-            gap: 10px;
-        }
-
-        .snippet-modal-actions button {
-            flex: 1;
-            padding: 10px 16px;
-            border: 2px solid #000;
-            background: #e0e0e0;
-            cursor: pointer;
-            font-weight: 700;
-        }
-
-        .snippet-modal-actions button:hover {
-            filter: brightness(0.95);
-        }
-
-        @media (max-width: 600px) {
-            .container {
-                padding: 25px;
-            }
-
-            h1 {
-                font-size: 24px;
-            }
-
-            .link-item {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-
-            .link-actions {
-                margin-top: 10px;
-                width: 100%;
-                flex-wrap: wrap;
-            }
-
-            .btn-copy,
-            .btn-delete,
-            .btn-chat {
-                flex: 1;
-                min-width: 80px;
-            }
-
-            .snippets-panel {
-                width: 250px;
-            }
-        }
-    </style>
+    <title>Рабочая панель · Control</title>
+    <link rel="stylesheet" href="/workspace-theme.css">
+    <script src="/workspace-theme.js"></script>
+    <link rel="stylesheet" href="/panel.css">
 </head>
 
-<body>
+<body class="work-ui">
     <div class="container" id="appRoot" style="display:none;">
-        <div style="display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:6px;">
+        <header class="app-header">
             <div>
-                <h1 style="margin:0;">Lovense Control Panel</h1>
-                <p class="subtitle" style="margin:0;">Админ-панель для генерации ссылок и приглашений</p>
+                <div class="app-brand">CONTROL PANEL</div>
+                <h1>Рабочее пространство</h1>
+                <p class="subtitle">Сессии, ссылки и переписка</p>
             </div>
-            <div style="display:flex;gap:8px;">
-                <button id="btnInvite" class="btn-generate" style="width:auto;padding:8px 12px;">Generate invite
-                    code</button>
-                <button id="btnWheelCode" class="btn-generate" style="width:auto;padding:8px 12px;">Wheel code</button>
-                <button id="btnCases" class="btn-generate" style="width:auto;padding:8px 12px;"
-                    onclick="window.open('/cases', '_blank')">Кейсы 🎁</button>
-                <button id="btnUsers" class="btn-generate"
-                    style="width:auto;padding:8px 12px;display:none;">Users</button>
-                <button id="btnLogs" class="btn-generate"
-                    style="width:auto;padding:8px 12px;display:none;">Logs</button>
-                <button id="btnTraining" class="btn-generate"
-                    style="width:auto;padding:8px 12px;display:none;">Обучение 🎓</button>
+            <div class="app-tools">
+                <button type="button" onclick="toggleSnippetsPanel()" data-snippets-toggle aria-controls="snippetsContainer" aria-expanded="false">Сниппеты</button>
+                <button type="button" data-work-theme-toggle>Светлая тема</button>
             </div>
-        </div>
-
-        <div style="display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:start;">
-            <div style="border:1px solid #000;background:#fff;min-height:140px;padding:8px;">
-                <div style="font-weight:700;margin-bottom:6px;">Online users</div>
-                <ul id="onlineList"
-                    style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:12px;">
-                </ul>
-            </div>
-            <div class="stats">
-                <div class="stat-item">
-                    <div class="stat-value" id="totalLinks">0</div>
-                    <div class="stat-label">Всего ссылок</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value" id="todayLinks">0</div>
-                    <div class="stat-label">Сегодня</div>
-                </div>
+        </header>
+        <nav class="app-nav" aria-label="Разделы панели">
+            <button id="btnInvite" type="button">Приглашение</button>
+            <button id="btnWheelCode" type="button">Код колеса</button>
+            <button id="btnCases" type="button" onclick="window.open('/cases', '_blank')">Кейсы</button>
+            <button id="btnUsers" type="button" style="display:none;">Пользователи</button>
+            <button id="btnLogs" type="button" style="display:none;">Журнал</button>
+            <button id="btnTraining" type="button" style="display:none;">Обучение</button>
+        </nav>
+        <div class="workspace-overview">
+            <section class="online-panel" aria-label="Пользователи в сети">
+                <div class="section-label">Сейчас в сети</div>
+                <ul id="onlineList"></ul>
+            </section>
+            <div class="stats" aria-label="Статистика ссылок">
+                <div class="stat-item"><div class="stat-value" id="totalLinks">0</div><div class="stat-label">Всего ссылок</div></div>
+                <div class="stat-item"><div class="stat-value" id="todayLinks">0</div><div class="stat-label">Сегодня</div></div>
             </div>
         </div>
-
-        <button class="btn-generate" onclick="generateLink()">
-            Сгенерировать новую ссылку
-        </button>
-
-        <div style="margin-top:12px;color:#555;font-size:13px;">
-            Длительность сессии:
-            <select id="durationSelect" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
-                <option value="3">3 минуты</option>
-                <option value="5">5 минут</option>
-                <option value="7">7 минут</option>
-                <option value="10">10 минут</option>
-                <option value="20" selected>20 минут</option>
-                <option value="30">30 минут</option>
-                <option value="60">60 минут</option>
-                <option value="infinity">♾️ Бесконечно</option>
-            </select>
+        <div class="create-toolbar">
+            <label class="duration-field" for="durationSelect">Длительность сессии
+                <select id="durationSelect">
+                    <option value="3">3 минуты</option><option value="5">5 минут</option>
+                    <option value="7">7 минут</option><option value="10">10 минут</option>
+                    <option value="20" selected>20 минут</option><option value="30">30 минут</option>
+                    <option value="60">60 минут</option><option value="infinity">Без ограничения</option>
+                </select>
+            </label>
+            <button class="btn-generate" type="button" onclick="generateLink()">Создать ссылку</button>
         </div>
-
-        <div class="links-section">
-            <h2 class="links-title">Сгенерированные ссылки:</h2>
-            <div id="linksList">
-                <div class="no-links">Пока нет созданных ссылок. Нажмите кнопку выше!</div>
-            </div>
-        </div>
+        <section class="links-section" aria-label="Ссылки для сессий">
+            <div class="links-heading"><h2 class="links-title">Ссылки для сессий</h2><button type="button" onclick="loadLinks()">Обновить</button></div>
+            <div id="linksList"><div class="no-links">Пока нет сессий. Выберите длительность и создайте ссылку.</div></div>
+        </section>
     </div>
-
-    <div class="toast" id="toast"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <!-- Socket.io для реального времени -->
     <script src="/socket.io/socket.io.js"></script>
@@ -974,13 +70,13 @@
         <div class="chat-window">
             <div class="chat-header">
                 <h3>Генерация кода колеса</h3>
-                <button class="close-chat" onclick="closeWheelCodeModal()">×</button>
+                <button class="close-chat" aria-label="Закрыть окно кода" onclick="closeWheelCodeModal()">×</button>
             </div>
 
             <div style="padding:20px;">
                 <div style="margin-bottom:15px;">
                     <label style="display:block;margin-bottom:8px;font-weight:700;">Выберите приз:</label>
-                    <select id="prizeSelect" style="width:100%;padding:8px;border:1px solid #000;font-size:14px;">
+                    <select id="prizeSelect" style="width:100%;padding:8px;border:1px solid var(--work-border);font-size:14px;">
                         <option value="Lovense">Lovense</option>
                         <option value="Threesome">Threesome</option>
                         <option value="Fucklist">Fucklist</option>
@@ -997,44 +93,44 @@
                 <div style="margin-bottom:15px;">
                     <label style="display:block;margin-bottom:8px;font-weight:700;">Код (8 символов):</label>
                     <input type="text" id="wheelCodeInput"
-                        style="width:100%;padding:8px;border:1px solid #000;font-size:14px;text-align:center;"
+                        style="width:100%;padding:8px;border:1px solid var(--work-border);font-size:14px;text-align:center;"
                         maxlength="8" placeholder="Автогенерация">
                 </div>
 
                 <div style="display:flex;gap:10px;">
                     <button onclick="generateWheelCode()"
-                        style="flex:1;padding:10px;background:#C0C0C0;border:2px outset #C0C0C0;font-weight:700;">Сгенерировать</button>
+                        style="flex:1;padding:10px;">Сгенерировать</button>
                     <button onclick="closeWheelCodeModal()"
-                        style="flex:1;padding:10px;background:#C0C0C0;border:2px outset #C0C0C0;font-weight:700;">Отмена</button>
+                        style="flex:1;padding:10px;">Отмена</button>
                 </div>
 
                 <div id="wheelCodeResult"
-                    style="margin-top:15px;padding:10px;background:#f0f0f0;border:1px solid #000;display:none;">
+                    style="margin-top:15px;padding:10px;background:var(--work-surface-2);border:1px solid var(--work-border);display:none;">
                     <div style="font-weight:700;margin-bottom:5px;">Код создан:</div>
                     <div id="wheelCodeDisplay" style="font-family:monospace;font-size:16px;font-weight:700;"></div>
                     <button onclick="copyWheelCode()"
-                        style="margin-top:8px;padding:6px 12px;background:#C0C0C0;border:1px solid #000;font-size:12px;">Копировать</button>
+                        style="margin-top:8px;padding:6px 12px;font-size:12px;">Копировать</button>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Модальное окно чата -->
-    <div class="chat-modal" id="chatModal">
+    <div class="chat-modal" id="chatModal" role="region" aria-label="Текущая сессия">
         <div class="chat-window">
             <div class="chat-header">
-                <h3>Чат с пользователем</h3>
-                <button class="close-chat" onclick="closeChat()">×</button>
+                <div class="chat-heading"><h3 id="chatSessionTitle">Чат с пользователем</h3><div class="chat-caption">Enter — отправить · Shift+Enter — новая строка</div></div>
+                <button type="button" onclick="toggleSnippetsPanel()" data-snippets-toggle aria-controls="snippetsContainer" aria-expanded="false">Сниппеты</button><button class="close-chat" aria-label="Закрыть чат" onclick="closeChat()">×</button>
             </div>
 
             <!-- График контроля -->
-            <div class="control-monitor">
-                <div class="monitor-title">Мониторинг контроля в реальном времени</div>
+            <details class="control-monitor" open>
+                <summary class="monitor-title">Мониторинг контроля</summary>
                 <div class="graph-container">
                     <canvas id="monitorCanvas" width="600" height="150"></canvas>
                     <div class="intensity-display" id="intensityDisplay">0%</div>
                 </div>
-            </div>
+            </details>
 
             <div class="chat-messages" id="chatMessages"></div>
             <div class="chat-input-area" style="position: relative;">
@@ -1042,12 +138,12 @@
                 <div class="voice-picker" id="voicePicker">
                     <div class="voice-picker-header">Голосовые сообщения</div>
                     <div class="voice-picker-body" id="voicePickerBody">
-                        <div style="padding: 10px; text-align: center; color: #999;">Загрузка...</div>
+                        <div style="padding: 10px; text-align: center; color: var(--work-muted);">Загрузка...</div>
                     </div>
                 </div>
 
-                <button class="voice-btn" onclick="toggleVoicePicker()">🎤</button>
-                <textarea id="chatInput" placeholder="Введите сообщение..." onkeydown="handleChatKeyPress(event)"
+                <button class="voice-btn" onclick="toggleVoicePicker()">Аудио</button>
+                <textarea aria-label="Сообщение в текущую сессию" id="chatInput" placeholder="Введите сообщение..." onkeydown="handleChatKeyPress(event)"
                     rows="1"></textarea>
                 <button class="send-btn" onclick="sendChatMessage()">Отправить</button>
             </div>
@@ -1075,24 +171,17 @@
         async function showAuthChoiceModal() {
             return new Promise((resolve) => {
                 const modal = document.createElement('div');
-                modal.style.cssText = `
-                    position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-                    background: rgba(0,0,0,0.5); z-index: 1000; display: flex; 
-                    align-items: center; justify-content: center;
-                `;
+                modal.className = 'auth-overlay';
 
                 const form = document.createElement('div');
-                form.style.cssText = `
-                    background: #C0C0C0; border: 2px solid #000; padding: 20px; 
-                    box-shadow: 4px 4px #808080; min-width: 300px; text-align: center;
-                `;
+                form.className = 'auth-card';
 
                 form.innerHTML = `
-                    <h3 style="margin: 0 0 20px 0; font-family: 'MS Sans Serif', sans-serif;">Welcome!</h3>
-                    <p style="margin: 0 0 20px 0; font-family: 'MS Sans Serif', sans-serif; font-size: 12px;">Choose an option to continue</p>
+                    <h3 style="margin: 0 0 20px 0; font-family:var(--work-font);">Рабочая панель</h3>
+                    <p style="margin: 0 0 20px 0; font-family:var(--work-font); font-size: 12px;">Войдите в аккаунт или используйте приглашение.</p>
                     <div style="display: flex; gap: 10px; flex-direction: column;">
-                        <button id="btnChoiceLogin" style="padding: 10px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif; font-weight: bold;">🔑 Login</button>
-                        <button id="btnChoiceRegister" style="padding: 10px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif; font-weight: bold;">📝 Register (need invite code)</button>
+                        <button class="primary-action" id="btnChoiceLogin" style="padding: 10px;    ">Вход</button>
+                        <button id="btnChoiceRegister" style="padding: 10px;    ">Регистрация по приглашению</button>
                     </div>
                 `;
 
@@ -1117,31 +206,24 @@
         async function showLoginModal() {
             return new Promise((resolve) => {
                 const modal = document.createElement('div');
-                modal.style.cssText = `
-                    position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-                    background: rgba(0,0,0,0.5); z-index: 1000; display: flex; 
-                    align-items: center; justify-content: center;
-                `;
+                modal.className = 'auth-overlay';
 
                 const form = document.createElement('div');
-                form.style.cssText = `
-                    background: #C0C0C0; border: 2px solid #000; padding: 20px; 
-                    box-shadow: 4px 4px #808080; min-width: 300px;
-                `;
+                form.className = 'auth-card';
 
                 form.innerHTML = `
-                    <h3 style="margin: 0 0 15px 0; font-family: 'MS Sans Serif', sans-serif;">🔑 Login</h3>
+                    <h3 style="margin: 0 0 15px 0; font-family:var(--work-font);">Вход</h3>
                     <div style="margin-bottom: 10px;">
-                        <label style="display: block; margin-bottom: 5px; font-family: 'MS Sans Serif', sans-serif;">Nickname:</label>
-                        <input type="text" id="loginNickname" style="width: 100%; padding: 4px; border: 1px solid #000; font-family: 'MS Sans Serif', sans-serif;" />
+                        <label for="loginNickname" style="display: block; margin-bottom: 5px; font-family:var(--work-font);">Никнейм:</label>
+                        <input type="text" id="loginNickname" style="width: 100%; padding: 4px; border: 1px solid var(--work-border); font-family:var(--work-font);" />
                     </div>
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 5px; font-family: 'MS Sans Serif', sans-serif;">Password:</label>
-                        <input type="password" id="loginPassword" style="width: 100%; padding: 4px; border: 1px solid #000; font-family: 'MS Sans Serif', sans-serif;" />
+                        <label for="loginPassword" style="display: block; margin-bottom: 5px; font-family:var(--work-font);">Пароль:</label>
+                        <input type="password" id="loginPassword" style="width: 100%; padding: 4px; border: 1px solid var(--work-border); font-family:var(--work-font);" />
                     </div>
                     <div style="display: flex; gap: 10px;">
-                        <button id="loginSubmit" style="flex: 1; padding: 6px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif;">Login</button>
-                        <button id="loginBack" style="flex: 1; padding: 6px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif;">Back</button>
+                        <button class="primary-action" id="loginSubmit" style="flex: 1; padding: 6px;   ">Войти</button>
+                        <button id="loginBack" style="flex: 1; padding: 6px;   ">Назад</button>
                     </div>
                 `;
 
@@ -1158,7 +240,7 @@
                     const password = passwordInput.value;
 
                     if (!nickname || !password) {
-                        alert('Please enter nickname and password');
+                        alert('Введите никнейм и пароль');
                         return;
                     }
 
@@ -1173,11 +255,11 @@
 
                         if (!res.ok) {
                             if (data.error === 'invalid_credentials') {
-                                alert('Invalid nickname or password');
+                                alert('Неверный никнейм или пароль');
                             } else if (data.error === 'password_not_set') {
-                                alert('Your account has no password. Please contact admin.');
+                                alert('Для аккаунта не задан пароль. Обратитесь к администратору.');
                             } else {
-                                alert('Login failed');
+                                alert('Не удалось войти');
                             }
                             return;
                         }
@@ -1190,7 +272,7 @@
                         resolve();
 
                     } catch (e) {
-                        alert('Login error');
+                        alert('Ошибка входа');
                     }
                 };
 
@@ -1208,35 +290,28 @@
         async function showRegistrationModal() {
             return new Promise((resolve) => {
                 const modal = document.createElement('div');
-                modal.style.cssText = `
-                    position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-                    background: rgba(0,0,0,0.5); z-index: 1000; display: flex; 
-                    align-items: center; justify-content: center;
-                `;
+                modal.className = 'auth-overlay';
 
                 const form = document.createElement('div');
-                form.style.cssText = `
-                    background: #C0C0C0; border: 2px solid #000; padding: 20px; 
-                    box-shadow: 4px 4px #808080; min-width: 300px;
-                `;
+                form.className = 'auth-card';
 
                 form.innerHTML = `
-                    <h3 style="margin: 0 0 15px 0; font-family: 'MS Sans Serif', sans-serif;">📝 Registration</h3>
+                    <h3 style="margin: 0 0 15px 0; font-family:var(--work-font);">Регистрация</h3>
                     <div style="margin-bottom: 10px;">
-                        <label style="display: block; margin-bottom: 5px; font-family: 'MS Sans Serif', sans-serif;">Nickname:</label>
-                        <input type="text" id="regNickname" style="width: 100%; padding: 4px; border: 1px solid #000; font-family: 'MS Sans Serif', sans-serif;" />
+                        <label for="regNickname" style="display: block; margin-bottom: 5px; font-family:var(--work-font);">Никнейм:</label>
+                        <input type="text" id="regNickname" style="width: 100%; padding: 4px; border: 1px solid var(--work-border); font-family:var(--work-font);" />
                     </div>
                     <div style="margin-bottom: 10px;">
-                        <label style="display: block; margin-bottom: 5px; font-family: 'MS Sans Serif', sans-serif;">Password (min 4 chars):</label>
-                        <input type="password" id="regPassword" style="width: 100%; padding: 4px; border: 1px solid #000; font-family: 'MS Sans Serif', sans-serif;" />
+                        <label for="regPassword" style="display: block; margin-bottom: 5px; font-family:var(--work-font);">Пароль (от 4 символов):</label>
+                        <input type="password" id="regPassword" style="width: 100%; padding: 4px; border: 1px solid var(--work-border); font-family:var(--work-font);" />
                     </div>
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 5px; font-family: 'MS Sans Serif', sans-serif;">Invite Code:</label>
-                        <input type="text" id="regCode" style="width: 100%; padding: 4px; border: 1px solid #000; font-family: 'MS Sans Serif', sans-serif;" />
+                        <label for="regCode" style="display: block; margin-bottom: 5px; font-family:var(--work-font);">Код приглашения:</label>
+                        <input type="text" id="regCode" style="width: 100%; padding: 4px; border: 1px solid var(--work-border); font-family:var(--work-font);" />
                     </div>
                     <div style="display: flex; gap: 10px;">
-                        <button id="regSubmit" style="flex: 1; padding: 6px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif;">Register</button>
-                        <button id="regBack" style="flex: 1; padding: 6px; background: #C0C0C0; border: 2px outset #C0C0C0; font-family: 'MS Sans Serif', sans-serif;">Back</button>
+                        <button class="primary-action" id="regSubmit" style="flex: 1; padding: 6px;   ">Зарегистрироваться</button>
+                        <button id="regBack" style="flex: 1; padding: 6px;   ">Назад</button>
                     </div>
                 `;
 
@@ -1255,12 +330,12 @@
                     const code = codeInput.value.trim();
 
                     if (!nickname || !password || !code) {
-                        alert('Please fill all fields');
+                        alert('Заполните все поля');
                         return;
                     }
 
                     if (password.length < 4) {
-                        alert('Password must be at least 4 characters');
+                        alert('Пароль должен содержать не менее 4 символов');
                         return;
                     }
 
@@ -1275,13 +350,13 @@
 
                         if (!res.ok) {
                             if (data.error === 'nickname_taken') {
-                                alert('Nickname already taken');
+                                alert('Никнейм уже занят');
                             } else if (data.error === 'invalid_or_used_code') {
-                                alert('Invalid or already used invite code');
+                                alert('Неверный или уже использованный код приглашения');
                             } else if (data.error === 'password_too_short') {
-                                alert('Password must be at least 4 characters');
+                                alert('Пароль должен содержать не менее 4 символов');
                             } else {
-                                alert('Registration failed');
+                                alert('Не удалось зарегистрироваться');
                             }
                             return;
                         }
@@ -1294,7 +369,7 @@
                         resolve();
 
                     } catch (e) {
-                        alert('Registration error');
+                        alert('Ошибка регистрации');
                     }
                 };
 
@@ -1404,11 +479,11 @@
             if (!el) { el = document.createElement('div'); el.id = 'traineeView'; document.body.appendChild(el); }
             el.style.cssText = 'max-width:520px;margin:60px auto;padding:0 16px;text-align:center;';
             el.innerHTML =
-                '<div style="border:1px solid #000;background:#fff;padding:28px;box-shadow:4px 4px #808080;">'
+                '<div style="border:1px solid var(--work-border);background:var(--work-surface);padding:28px;">'
                 + '<h1 style="margin:0 0 6px;font-size:22px;">День 1 · Практический тест</h1>'
-                + '<p style="color:#555;margin:0 0 18px;">Привет, ' + nameSafe + '! Тебя ждут 8 ситуаций из переписок. Все ответы нужно написать самостоятельно на английском; переводчик разрешён.</p>'
-                + '<a href="/learn/start" style="display:inline-block;padding:12px 22px;background:#0a7;color:#fff;font-weight:800;text-decoration:none;border-radius:8px;">Начать День 1 ▸</a>'
-                + '<div style="margin-top:16px;"><a href="#" id="traineeLogout" style="color:#888;font-size:13px;">Выйти</a></div>'
+                + '<p style="color:var(--work-muted);margin:0 0 18px;">Привет, ' + nameSafe + '! Тебя ждут 8 ситуаций из переписок. Все ответы нужно написать самостоятельно на английском; переводчик разрешён.</p>'
+                + '<a href="/learn/start" style="display:inline-block;padding:12px 22px;background:var(--work-accent);color:var(--work-text);font-weight:800;text-decoration:none;border-radius:8px;">Начать День 1 ▸</a>'
+                + '<div style="margin-top:16px;"><a href="#" id="traineeLogout" style="color:var(--work-muted);font-size:13px;">Выйти</a></div>'
                 + '</div>';
             const lo = document.getElementById('traineeLogout');
             if (lo) lo.onclick = async (e) => {
@@ -1433,26 +508,18 @@
         // Users management modal for admins
         async function showUsersModal() {
             const modal = document.createElement('div');
-            modal.style.cssText = `
-                position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-                background: rgba(0,0,0,0.5); z-index: 1000; display: flex; 
-                align-items: center; justify-content: center;
-            `;
+            modal.className = 'auth-overlay';
 
             modal.classList.add('user-management-modal');
             const container = document.createElement('div');
-            container.style.cssText = `
-                background: #C0C0C0; border: 2px solid #000; padding: 20px; 
-                box-shadow: 4px 4px #808080; min-width: 400px; max-width: 600px;
-                max-height: 80vh; overflow-y: auto;
-            `;
+            container.className = 'user-management-card';
 
             container.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                    <h3 style="margin:0;font-family:'MS Sans Serif',sans-serif;">👥 User Management</h3>
-                    <button id="closeUsersModal" style="padding:4px 8px;background:#C0C0C0;border:2px outset #C0C0C0;">✕</button>
+                    <h3 style="margin:0;font-family:var(--work-font);">Пользователи</h3>
+                    <button id="closeUsersModal" style="padding:4px 8px;">✕</button>
                 </div>
-                <div id="usersList" style="font-family:'MS Sans Serif',sans-serif;font-size:12px;">Loading...</div>
+                <div id="usersList" style="font-family:var(--work-font);font-size:12px;">Загрузка…</div>
             `;
 
             modal.appendChild(container);
@@ -1468,7 +535,7 @@
                 });
 
                 if (!res.ok) {
-                    container.querySelector('#usersList').innerHTML = '<p style="color:red;">Failed to load users</p>';
+                    container.querySelector('#usersList').innerHTML = '<p style="color:var(--work-danger);">Не удалось загрузить пользователей</p>';
                     return;
                 }
 
@@ -1476,17 +543,17 @@
                 const usersList = container.querySelector('#usersList');
 
                 if (data.users.length === 0) {
-                    usersList.innerHTML = '<p>No users found</p>';
+                    usersList.innerHTML = '<p>Пользователей пока нет</p>';
                     return;
                 }
 
                 usersList.innerHTML = `
                     <table style="width:100%;border-collapse:collapse;">
                         <thead>
-                            <tr style="background:#808080;color:white;">
-                                <th style="padding:6px;text-align:left;border:1px solid #000;">Nickname</th>
-                                <th style="padding:6px;text-align:left;border:1px solid #000;">Role</th>
-                                <th style="padding:6px;text-align:left;border:1px solid #000;">Registered</th>
+                            <tr style="background:var(--work-border);color:var(--work-text);">
+                                <th style="padding:6px;text-align:left;border:1px solid var(--work-border);">Никнейм</th>
+                                <th style="padding:6px;text-align:left;border:1px solid var(--work-border);">Роль</th>
+                                <th style="padding:6px;text-align:left;border:1px solid var(--work-border);">Регистрация</th>
                             </tr>
                         </thead>
                         <tbody id="usersTableBody"></tbody>
@@ -1500,18 +567,18 @@
                     const dateStr = new Date(user.registered_at).toLocaleDateString();
 
                     tr.innerHTML = `
-                        <td style="padding:6px;border:1px solid #000;">${escapeHtml(user.nickname)}${isSuperAdmin ? ' 👑' : ''}</td>
-                        <td style="padding:6px;border:1px solid #000;">
-                            ${isSuperAdmin ? '<span style="color:gold;font-weight:bold;">admin</span>' : `
+                        <td style="padding:6px;border:1px solid var(--work-border);">${escapeHtml(user.nickname)}${isSuperAdmin ? ' · владелец' : ''}</td>
+                        <td style="padding:6px;border:1px solid var(--work-border);">
+                            ${isSuperAdmin ? '<span style="color:var(--work-text);font-weight:bold;">Администратор</span>' : `
                                 <select class="role-select" data-nickname="${escapeHtml(user.nickname)}" style="padding:2px;">
-                                    <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>admin</option>
-                                    <option value="user" ${user.role === 'user' ? 'selected' : ''}>user</option>
-                                    <option value="reader" ${user.role === 'reader' ? 'selected' : ''}>reader</option>
-                                    <option value="new" ${user.role === 'new' ? 'selected' : ''}>new (обучение)</option>
+                                    <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Администратор</option>
+                                    <option value="user" ${user.role === 'user' ? 'selected' : ''}>Редактор</option>
+                                    <option value="reader" ${user.role === 'reader' ? 'selected' : ''}>Читатель</option>
+                                    <option value="new" ${user.role === 'new' ? 'selected' : ''}>Ученик</option>
                                 </select>
                             `}
                         </td>
-                        <td style="padding:6px;border:1px solid #000;">${dateStr}</td>
+                        <td style="padding:6px;border:1px solid var(--work-border);">${dateStr}</td>
                     `;
                     tbody.appendChild(tr);
                 });
@@ -1533,17 +600,17 @@
                             if (res.ok) {
                                 const user = data.users.find(user => user.nickname === targetNickname);
                                 if (user) user.role = newRole;
-                                e.target.style.background = '#90EE90';
+                                e.target.style.background = 'var(--work-accent-soft)';
                                 setTimeout(() => e.target.style.background = '', 1000);
                             } else {
                                 const err = await res.json();
-                                alert('Error: ' + (err.error || 'Unknown error'));
+                                alert('Ошибка: ' + (err.error || 'Неизвестная ошибка'));
                                 // Revert selection
                                 e.target.value = previousRole;
                             }
                         } catch (err) {
                             e.target.value = previousRole;
-                            alert('Network error');
+                            alert('Ошибка сети');
                         } finally {
                             e.target.disabled = false;
                         }
@@ -1551,7 +618,7 @@
                 });
 
             } catch (err) {
-                container.querySelector('#usersList').innerHTML = '<p style="color:red;">Error loading users</p>';
+                container.querySelector('#usersList').innerHTML = '<p style="color:var(--work-danger);">Ошибка загрузки пользователей</p>';
             }
         }
 
@@ -1585,14 +652,14 @@
                 });
                 const data = await res.json();
                 if (!res.ok) {
-                    if (data && data.error === 'no_invites_left') return showToast('No invites left');
-                    if (data && data.error === 'not_registered') return showToast('Register first');
-                    return showToast('Failed to generate invite');
+                    if (data && data.error === 'no_invites_left') return showToast('Приглашений больше нет');
+                    if (data && data.error === 'not_registered') return showToast('Сначала войдите в аккаунт');
+                    return showToast('Не удалось создать приглашение');
                 }
-                showToast('Invite code: ' + data.code);
+                showToast('Код приглашения: ' + data.code);
                 navigator.clipboard && navigator.clipboard.writeText(data.code).catch(() => { });
             } catch (e) {
-                showToast('Error generating invite');
+                showToast('Ошибка создания приглашения');
             }
         });
 
@@ -1775,7 +842,7 @@
             } catch (error) {
                 if (request !== linksRequest || owner !== currentNickname) return;
                 // Never show another user's cached links, even when offline.
-                showToast('Не удалось загрузить ссылки. Нажмите «Обновить ссылки».');
+                showToast('Не удалось загрузить ссылки. Нажмите «Обновить».');
             }
         }
 
@@ -1891,7 +958,7 @@
                 cacheLinks();
                 renderLinks();
                 updateStats();
-                showToast('🗑️ Ссылка удалена!');
+                showToast('Ссылка удалена');
             }
         }
 
@@ -1920,7 +987,7 @@
         function formatTimeUntilExpiry(expiresAt) {
             // Бесконечная ссылка
             if (!expiresAt || expiresAt === null) {
-                return '<span style="color: #ff1744; font-weight: 700;">никогда</span>';
+                return '<span style="color: var(--work-muted); font-weight: 700;">никогда</span>';
             }
 
             const now = new Date();
@@ -1944,7 +1011,7 @@
             const linksList = document.getElementById('linksList');
 
             if (links.length === 0) {
-                linksList.innerHTML = '<div class="no-links">Пока нет созданных ссылок. Нажмите кнопку выше!</div>';
+                linksList.innerHTML = '<div class="no-links">Пока нет сессий. Выберите длительность и создайте ссылку.</div>';
                 return;
             }
 
@@ -1954,7 +1021,7 @@
                 row.className = 'link-item';
                 row.dataset.linkId = link.id;
                 const info = document.createElement('div');
-                info.style.flex = '1';
+                info.className = 'link-info';
                 const anchor = document.createElement('a');
                 // Rebuild the URL from the session ID: never trust a cached href.
                 const url = `${window.location.origin}/t2/${encodeURIComponent(link.id)}?share_type=103`;
@@ -1965,7 +1032,7 @@
                 anchor.textContent = url;
                 info.appendChild(anchor);
                 const dates = document.createElement('div');
-                dates.style.cssText = 'font-size:11px;color:#999;margin-top:5px;';
+                dates.className = 'link-dates';
                 dates.innerHTML = `Создана: ${formatDate(link.created)} · Истекает через: <span class="time-remaining">${formatTimeUntilExpiry(link.expiresAt)}</span>${link.revoked ? ' · Отозвана' : ''}`;
                 info.appendChild(dates);
                 row.appendChild(info);
@@ -2029,10 +1096,6 @@
 
         // Инициализация при загрузке
         window.onload = () => {
-            const refresh = document.createElement('button');
-            refresh.textContent = 'Обновить ссылки';
-            refresh.onclick = loadLinks;
-            document.getElementById('linksList').before(refresh);
             renderLinks();
             updateStats();
             startLinkUpdates();
@@ -2142,6 +1205,9 @@
             currentChatSessionId = sessionId;
             document.getElementById('chatInput').value = chatDrafts.get(sessionId) || '';
             document.getElementById('chatModal').classList.add('show');
+            document.body.classList.add('chat-open');
+            document.getElementById('chatSessionTitle').textContent = 'Сессия ' + sessionId;
+            updateContainerMargin();
 
             // Очищаем предыдущие данные
             document.getElementById('chatMessages').innerHTML = '';
@@ -2171,6 +1237,8 @@
         function closeChat() {
             if (currentChatSessionId) chatDrafts.set(currentChatSessionId, document.getElementById('chatInput').value);
             document.getElementById('chatModal').classList.remove('show');
+            document.body.classList.remove('chat-open');
+            updateContainerMargin();
 
             // Покидаем комнату сессии
             if (currentChatSessionId) {
@@ -2223,7 +1291,7 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             // Сетка
-            ctx.strokeStyle = '#f0f0f0';
+            ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--work-border').trim();
             ctx.lineWidth = 1;
             for (let i = 0; i < 5; i++) {
                 const y = (canvas.height / 4) * i;
@@ -2235,7 +1303,7 @@
 
             // Линия графика
             if (monitorDataPoints.length > 1) {
-                ctx.strokeStyle = '#FF2D76';
+                ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--work-accent').trim();
                 ctx.lineWidth = 2;
                 ctx.beginPath();
 
@@ -2295,7 +1363,7 @@
                             <audio controls style="max-width: 250px; height: 32px;">
                                 <source src="${voiceUrl}" type="audio/ogg">
                             </audio>
-                            <span style="font-size: 11px; color: #666;">${escapeHtml(msg.duration)}</span>
+                            <span style="font-size: 11px; color: var(--work-muted);">${escapeHtml(msg.duration)}</span>
                         </div>
                         <div class="message-time">${time}</div>
                     </div>
@@ -2410,7 +1478,7 @@
         function renderVoicePicker() {
             const body = document.getElementById('voicePickerBody');
             if (!availableVoices || availableVoices.length === 0) {
-                body.innerHTML = '<div style="padding: 10px; text-align: center; color: #999;">Нет голосовых</div>';
+                body.innerHTML = '<div style="padding: 10px; text-align: center; color: var(--work-muted);">Нет голосовых</div>';
                 return;
             }
 
@@ -2418,7 +1486,7 @@
             availableVoices.forEach(voice => {
                 const item = document.createElement('div');
                 item.className = 'voice-item';
-                item.innerHTML = `<span class="voice-item-icon">🎤</span><div style="flex:1;"><div style="font-weight:600;">${escapeHtml(voice.name)}</div><div style="font-size:10px;color:#666;">${escapeHtml(voice.duration)}</div></div>`;
+                item.innerHTML = `<span class="voice-item-icon">Аудио</span><div style="flex:1;"><div style="font-weight:600;">${escapeHtml(voice.name)}</div><div style="font-size:11px;color:var(--work-muted);">${escapeHtml(voice.duration)}</div></div>`;
                 item.onclick = () => sendVoiceMessage(voice.id, voice.file, voice.duration);
                 body.appendChild(item);
             });
@@ -2493,7 +1561,10 @@
             try {
                 const saved = localStorage.getItem('snippetsExpandedState');
                 if (saved) {
-                    expandedFolders = JSON.parse(saved);
+                    const parsed = JSON.parse(saved);
+                    expandedFolders = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                        ? Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === 'boolean'))
+                        : {};
                 }
             } catch (e) {
                 expandedFolders = {};
@@ -2527,7 +1598,7 @@
                 status = document.createElement('div');
                 status.id = 'snippetSaveStatus';
                 status.setAttribute('role', 'status');
-                status.style.cssText = 'padding:8px;font-size:12px;border-bottom:1px solid #808080;';
+                status.style.cssText = 'padding:8px;font-size:12px;border-bottom:1px solid var(--work-border);';
                 tree.before(status);
             }
             status.replaceChildren();
@@ -2609,9 +1680,9 @@
                 const data = await res.json();
                 if (epoch !== authenticatedAccountEpoch || owner !== currentNickname) return false;
                 if (!SnippetsSync.valid(data.snippets) || data.revision == null) throw new Error('invalid_snippets');
+                loadExpandedState();
                 receiveSnippets(data);
                 snippetsSaveError = '';
-                loadExpandedState();
                 renderSnippetSaveStatus();
                 return true;
             } catch (error) {
@@ -2630,44 +1701,64 @@
 
         // Переключение панели snippets
         function toggleSnippetsPanel() {
+            if (panelAccountInvalidated) return;
             const container = document.getElementById('snippetsContainer');
-            container.classList.toggle('show');
-            document.body.classList.toggle('snippets-open');
+            if (!container) return;
+            const open = container.classList.toggle('show');
+            document.body.classList.toggle('snippets-open', open);
+            document.querySelectorAll('[data-snippets-toggle]').forEach(button => button.setAttribute('aria-expanded', String(open)));
             updateContainerMargin();
+            if (open && window.innerWidth < 800) container.querySelector('.snippets-header button')?.focus({ preventScroll: true });
+            if (!open && container.contains(document.activeElement)) {
+                const target = document.querySelector('#chatModal.show [data-snippets-toggle]') || document.querySelector('#appRoot [data-snippets-toggle]');
+                target?.focus({ preventScroll: true });
+            }
         }
 
-        // Обновление отступа контейнера и чата в зависимости от ширины snippets
+        // Keep a usable chat column. On phones the two work areas stack instead
+        // of pushing the chat outside the viewport. Persist geometry only, never drafts.
+        let preferredSnippetWidth = 360;
+        try {
+            const saved = Number(localStorage.getItem('control-panel.snippet-width'));
+            if (Number.isFinite(saved) && saved >= 240 && saved <= 1000) preferredSnippetWidth = saved;
+        } catch (_) { /* Storage can be disabled. */ }
+
+        function snippetWidthLimits() {
+            const viewport = window.innerWidth || 1024;
+            const panel = document.getElementById('snippetsPanel');
+            const treeWidth = panel?.offsetWidth || (viewport >= 1500 ? 248 : 220);
+            return { min: 240, max: Math.max(240, Math.min(1000, viewport - treeWidth - 360)), treeWidth };
+        }
+
         function updateContainerMargin() {
             const container = document.getElementById('snippetsContainer');
             const viewer = document.getElementById('snippetsViewer');
-            const panel = document.querySelector('.snippets-panel');
             const mainContainer = document.querySelector('.container');
             const chatModal = document.getElementById('chatModal');
-
-            if (container && container.classList.contains('show')) {
-                let totalWidth = 300; // Ширина панели списка
-
-                if (viewer && viewer.classList.contains('has-content')) {
-                    totalWidth += viewer.offsetWidth;
-                }
-
-                mainContainer.style.marginLeft = totalWidth + 'px';
-
-                // Сдвигаем чат тоже
-                if (chatModal) {
-                    chatModal.classList.add('snippets-open');
-                    chatModal.style.setProperty('--snippets-width', totalWidth + 'px');
-                }
-            } else {
-                mainContainer.style.marginLeft = '0px';
-
-                // Возвращаем чат на место
-                if (chatModal) {
-                    chatModal.classList.remove('snippets-open');
-                    chatModal.style.setProperty('--snippets-width', '0px');
-                }
+            if (!mainContainer) return;
+            const open = Boolean(container?.classList.contains('show'));
+            const desktop = (window.innerWidth || 1024) >= 800;
+            // The backdrop must not leave covered application controls in the
+            // keyboard sequence; the sibling snippets panel remains operable.
+            mainContainer.inert = Boolean(chatModal?.classList.contains('show')) || (open && !desktop);
+            const limits = snippetWidthLimits();
+            const width = Math.max(limits.min, Math.min(limits.max, preferredSnippetWidth));
+            if (viewer && viewer.style.width !== width + 'px') viewer.style.width = width + 'px';
+            const handle = document.getElementById('snippetResizeHandle');
+            if (handle) {
+                handle.setAttribute('aria-valuemin', String(limits.min));
+                handle.setAttribute('aria-valuemax', String(limits.max));
+                handle.setAttribute('aria-valuenow', String(width));
+            }
+            const offset = open && desktop ? limits.treeWidth + (viewer?.classList.contains('has-content') ? width : 0) : 0;
+            mainContainer.style.marginLeft = offset ? offset + 'px' : '';
+            mainContainer.style.width = offset ? `calc(100% - ${offset}px)` : '';
+            if (chatModal) {
+                chatModal.classList.toggle('snippets-open', open);
+                chatModal.style.setProperty('--snippets-width', offset + 'px');
             }
         }
+        window.addEventListener('resize', updateContainerMargin);
 
         // Отслеживание изменения размера viewer
         const snippetsViewerResizeObserver = new ResizeObserver(() => {
@@ -2683,6 +1774,7 @@
 
             // Инициализация ручного изменения размера
             initSnippetResize();
+            updateContainerMargin();
         });
 
         // Ручное изменение размера панели
@@ -2690,16 +1782,27 @@
             const handle = document.getElementById('snippetResizeHandle');
             const viewer = document.getElementById('snippetsViewer');
 
-            if (!handle || !viewer) return;
+            if (!handle || !viewer || handle.dataset.resizeReady) return;
+            handle.dataset.resizeReady = 'true';
 
             let isResizing = false;
             let startX = 0;
             let startWidth = 0;
 
-            handle.addEventListener('mousedown', function (e) {
+            function rememberWidth() {
+                try { localStorage.setItem('control-panel.snippet-width', String(preferredSnippetWidth)); } catch (_) {}
+            }
+            function resizeTo(value) {
+                const limits = snippetWidthLimits();
+                preferredSnippetWidth = Math.max(limits.min, Math.min(limits.max, value));
+                updateContainerMargin();
+            }
+            handle.addEventListener('pointerdown', function (e) {
+                if (e.button !== 0 || window.innerWidth < 800) return;
                 isResizing = true;
                 startX = e.clientX;
-                startWidth = viewer.offsetWidth;
+                startWidth = Number.parseFloat(viewer.style.width) || viewer.offsetWidth;
+                handle.setPointerCapture?.(e.pointerId);
 
                 document.body.style.cursor = 'ew-resize';
                 document.body.style.userSelect = 'none';
@@ -2707,26 +1810,31 @@
                 e.preventDefault();
             });
 
-            document.addEventListener('mousemove', function (e) {
+            handle.addEventListener('pointermove', function (e) {
                 if (!isResizing) return;
 
                 const delta = e.clientX - startX;
-                const newWidth = startWidth + delta;
-
-                const minWidth = 300;
-                const maxWidth = 1000;
-
-                if (newWidth >= minWidth && newWidth <= maxWidth) {
-                    viewer.style.width = newWidth + 'px';
-                }
+                resizeTo(startWidth + delta);
             });
 
-            document.addEventListener('mouseup', function () {
+            function finishResize() {
                 if (isResizing) {
                     isResizing = false;
                     document.body.style.cursor = '';
                     document.body.style.userSelect = '';
+                    rememberWidth();
                 }
+            }
+            handle.addEventListener('pointerup', finishResize);
+            handle.addEventListener('pointercancel', finishResize);
+            handle.addEventListener('lostpointercapture', finishResize);
+            handle.addEventListener('keydown', event => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || window.innerWidth < 800) return;
+                event.preventDefault();
+                const limits = snippetWidthLimits();
+                const width = Number.parseFloat(viewer.style.width) || preferredSnippetWidth;
+                resizeTo(event.key === 'Home' ? limits.min : event.key === 'End' ? limits.max : width + (event.key === 'ArrowRight' ? 24 : -24));
+                rememberWidth();
             });
         }
 
@@ -2737,7 +1845,7 @@
             tree.innerHTML = '';
 
             if (!snippetsData.structure || snippetsData.structure.length === 0) {
-                tree.innerHTML = '<div style="padding:10px;color:#999;font-size:12px;text-align:center;">Нет сниппетов</div>';
+                tree.innerHTML = '<div style="padding:10px;color:var(--work-muted);font-size:12px;text-align:center;">Нет сниппетов</div>';
                 return;
             }
 
@@ -2765,15 +1873,15 @@
             const folderEl = document.createElement('div');
             folderEl.className = 'snippet-folder';
             folderEl.innerHTML = `
-                <span class="folder-label" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isExpanded ? '▼' : '▶'} 📁 ${escapeHtml(folder.name)}</span>
+                <button type="button" class="folder-label" aria-expanded="${isExpanded}">${isExpanded ? '−' : '+'} ${escapeHtml(folder.name)}</button>
                 <span class="snippet-actions">
-                    <button class="snippet-mutation">+📄</button>
-                    <button class="snippet-mutation">✏️</button>
-                    <button class="snippet-mutation">🗑️</button>
+                    <button type="button" class="snippet-mutation" aria-label="Добавить сниппет в папку">+</button>
+                    <button type="button" class="snippet-mutation" aria-label="Переименовать папку">Имя</button>
+                    <button type="button" class="snippet-mutation" aria-label="Удалить папку">×</button>
                 </span>`;
             folderEl.querySelector('.folder-label').onclick = () => toggleSnippetFolder(folderId);
             [createSnippetInFolder, renameSnippetFolder, deleteSnippetFolder].forEach((action, index) => {
-                const button = folderEl.querySelectorAll('button')[index];
+                const button = folderEl.querySelectorAll('.snippet-actions button')[index];
                 button.hidden = !['admin', 'user'].includes(currentRole);
                 button.onclick = event => { event.stopPropagation(); action(folderId); };
             });
@@ -2804,10 +1912,10 @@
             const div = document.createElement('div');
             div.className = `snippet-item ${currentSnippetId === snippetId ? 'selected' : ''}`;
             div.innerHTML = `
-                <span class="snippet-label" style="cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 ${escapeHtml(snippet.name)}</span>
-                <span class="snippet-actions"><button>📋</button><button class="snippet-mutation">🗑️</button></span>`;
+                <button type="button" class="snippet-label">${escapeHtml(snippet.name)}</button>
+                <span class="snippet-actions"><button type="button" aria-label="Копировать сниппет">Копия</button><button type="button" class="snippet-mutation" aria-label="Удалить сниппет">×</button></span>`;
             div.querySelector('.snippet-label').onclick = () => openSnippetViewer(snippetId);
-            const buttons = div.querySelectorAll('button');
+            const buttons = div.querySelectorAll('.snippet-actions button');
             buttons[0].onclick = event => { event.stopPropagation(); copySnippetToClipboard(snippetId); };
             buttons[1].hidden = !['admin', 'user'].includes(currentRole);
             buttons[1].onclick = event => { event.stopPropagation(); deleteSnippetItem(snippetId); };
@@ -2825,10 +1933,19 @@
         function toggleSnippetFolder(folderId) {
             const folder = snippetsData.folders[folderId];
             if (folder) {
+                const labels = [...document.querySelectorAll('#snippetTree .folder-label')];
+                const focusedIndex = labels.indexOf(document.activeElement);
+                const focusedName = focusedIndex < 0 ? null : labels[focusedIndex].textContent.slice(2);
                 // Переключаем локальное состояние, НЕ синхронизируем с другими пользователями
                 expandedFolders[folderId] = !expandedFolders[folderId];
                 saveExpandedState(); // Сохраняем только локально
                 renderSnippetsTree(); // Перерисовываем UI
+                // The toggled folder keeps its position; inserted/removed children
+                // follow it. Do not steal focus from the editor or chat composer.
+                if (focusedName === folder.name) {
+                    const replacement = document.querySelectorAll('#snippetTree .folder-label')[focusedIndex];
+                    if (replacement?.textContent.slice(2) === focusedName) replacement.focus({ preventScroll: true });
+                }
             }
         }
 
@@ -2839,7 +1956,7 @@
 
         // Генерация уникального имени для новой папки
         function generateUniqueFolderName(parentId = null) {
-            const baseName = 'New Folder';
+            const baseName = 'Новая папка';
             const existingNames = new Set();
 
             // Собираем все существующие имена папок
@@ -2895,7 +2012,7 @@
 
         // Генерация уникального имени для нового сниппета
         function generateUniqueSnippetName(parentId = null) {
-            const baseName = 'New Snippet';
+            const baseName = 'Новый сниппет';
             const existingNames = new Set();
 
             // Собираем все существующие имена в этой папке
@@ -3125,6 +2242,11 @@
 
         function renderSnippetTabs() {
             const tabsContainer = document.getElementById('snippetTabs');
+            const focused = document.activeElement;
+            const restoreTabFocus = tabsContainer.contains(focused);
+            const focusedSnippet = restoreTabFocus ? focused.dataset.snippetId : null;
+            const focusedClose = restoreTabFocus && focused.classList.contains('snippet-tab-close');
+            const scrollLeft = tabsContainer.scrollLeft;
             tabsContainer.innerHTML = '';
 
             openSnippets.forEach(snippetId => {
@@ -3133,26 +2255,43 @@
 
                 const tab = document.createElement('div');
                 tab.className = `snippet-tab ${snippetId === activeSnippetId ? 'active' : ''}`;
-                tab.onclick = () => switchToSnippetTab(snippetId);
-                const title = document.createElement('span');
-                title.textContent = '📄 ' + snippet.name;
-                const close = document.createElement('span');
+                const title = document.createElement('button');
+                title.type = 'button';
+                title.className = 'snippet-tab-title';
+                title.dataset.snippetId = snippetId;
+                title.textContent = snippet.name;
+                title.setAttribute('aria-pressed', String(snippetId === activeSnippetId));
+                title.onclick = () => switchToSnippetTab(snippetId);
+                const close = document.createElement('button');
+                close.type = 'button';
                 close.className = 'snippet-tab-close';
+                close.dataset.snippetId = snippetId;
                 close.textContent = '×';
+                close.setAttribute('aria-label', 'Закрыть сниппет ' + snippet.name);
                 close.onclick = event => { event.stopPropagation(); closeSnippetTab(snippetId); };
                 tab.append(title, close);
                 tabsContainer.appendChild(tab);
             });
 
-            // Убираем active у всех один раз
+            // Leave the active editor visible during unrelated rerenders so its
+            // focus, text selection and scroll position are not disturbed.
             document.querySelectorAll('.snippet-content-area').forEach(area => {
-                area.classList.remove('active');
+                area.classList.toggle('active', area.id === `snippet-content-${activeSnippetId}`);
             });
 
             // Рендерим контент для всех открытых сниппетов
             openSnippets.forEach(snippetId => {
                 renderSnippetContent(snippetId);
             });
+            tabsContainer.scrollLeft = scrollLeft;
+            if (restoreTabFocus) {
+                const buttons = [...tabsContainer.querySelectorAll('button')];
+                const replacement = buttons.find(button => button.dataset.snippetId === focusedSnippet &&
+                    button.classList.contains(focusedClose ? 'snippet-tab-close' : 'snippet-tab-title')) ||
+                    buttons.find(button => button.dataset.snippetId === activeSnippetId && button.classList.contains('snippet-tab-title')) ||
+                    document.querySelector('#snippetsPanel .snippets-header button');
+                replacement?.focus({ preventScroll: true });
+            }
         }
 
         function renderSnippetContent(snippetId) {
@@ -3170,9 +2309,9 @@
                 contentArea.className = 'snippet-content-area';
 
                 contentArea.innerHTML = `
-                    <input type="text" class="snippet-editor-title" placeholder="Название сниппета">
-                    <textarea class="snippet-editor-textarea" placeholder="Содержимое сниппета..."></textarea>
-                    <div class="snippet-editor-actions"><button>📋 Копировать</button></div>`;
+                    <input type="text" class="snippet-editor-title" aria-label="Название сниппета" placeholder="Название сниппета">
+                    <textarea class="snippet-editor-textarea" aria-label="Текст сниппета" placeholder="Содержимое сниппета..."></textarea>
+                    <div class="snippet-editor-actions"><button type="button">Копировать</button><span class="snippet-copy-feedback" role="status" aria-live="polite"></span></div>`;
                 contentArea.querySelector('.snippet-editor-title').oninput = () => autoSaveSnippet(snippetId);
                 contentArea.querySelector('.snippet-editor-textarea').oninput = () => autoSaveSnippet(snippetId);
                 contentArea.querySelector('button').onclick = () => copySnippetToClipboard(snippetId);
@@ -3230,16 +2369,49 @@
             renderSnippetTabs();
         }
 
-        function copySnippetToClipboard(snippetId) {
+        let snippetCopyAttempt = 0;
+        async function copySnippetToClipboard(snippetId) {
             const snippet = snippetsData.snippets[snippetId];
-            if (!snippet) return;
-
-            saveCurrentSnippetState(snippetId);
-            navigator.clipboard.writeText(snippet.content).then(() => {
-                showToast('Сниппет скопирован в буфер обмена!');
-            }).catch(() => {
-                showToast('Ошибка копирования');
+            if (!snippet || panelAccountInvalidated) return;
+            const epoch = authenticatedAccountEpoch;
+            const attempt = ++snippetCopyAttempt;
+            document.querySelectorAll('.snippet-copy-feedback').forEach(element => {
+                element.textContent = '';
+                element.classList.remove('error');
             });
+            saveCurrentSnippetState(snippetId);
+            const feedback = document.getElementById(`snippet-content-${snippetId}`)?.querySelector('.snippet-copy-feedback');
+            const status = document.getElementById('snippetCopyStatus');
+            if (status) status.textContent = '';
+            const show = (text, error = false) => {
+                if (panelAccountInvalidated || epoch !== authenticatedAccountEpoch || attempt !== snippetCopyAttempt) return;
+                if (feedback) { feedback.textContent = text; feedback.classList.toggle('error', error); }
+                if (status) status.textContent = text;
+            };
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(snippet.content);
+                } else {
+                    const active = document.activeElement;
+                    const selection = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd, active.selectionDirection] : null;
+                    const buffer = document.createElement('textarea');
+                    buffer.value = snippet.content;
+                    buffer.style.cssText = 'position:fixed;left:-10000px;top:0;';
+                    document.body.appendChild(buffer);
+                    try { buffer.focus({ preventScroll: true }); buffer.select(); if (!document.execCommand('copy')) throw new Error('copy_failed'); }
+                    finally {
+                        buffer.remove();
+                        active?.focus({ preventScroll: true });
+                        if (selection) active.setSelectionRange(...selection);
+                    }
+                }
+                show('Скопировано');
+                setTimeout(() => show(''), 2200);
+                return true;
+            } catch (_) {
+                show('Не удалось скопировать. Выделите текст и скопируйте вручную.', true);
+                return false;
+            }
         }
 
         function deleteSnippetItem(snippetId) {
@@ -3441,13 +2613,12 @@
     </script>
 
     <!-- Snippets Container -->
-    <div class="snippets-container" id="snippetsContainer">
+    <aside class="snippets-container" id="snippetsContainer" aria-label="Библиотека сниппетов">
         <!-- Snippets Panel (список) -->
         <div class="snippets-panel" id="snippetsPanel">
             <div class="snippets-header">
-                <h3>Text Snippets</h3>
-                <button onclick="toggleSnippetsPanel()"
-                    style="padding:4px 8px;border:1px solid #000;background:#fff;cursor:pointer;">×</button>
+                <h3>Сниппеты</h3>
+                <button type="button" onclick="toggleSnippetsPanel()" aria-label="Свернуть сниппеты">×</button>
             </div>
 
             <div class="snippet-controls">
@@ -3455,11 +2626,12 @@
                 <button onclick="createNewSnippet()">+ Сниппет</button>
             </div>
 
+            <div id="snippetCopyStatus" role="status" aria-live="polite"></div>
             <div class="snippet-tree" id="snippetTree"></div>
 
             <div class="snippet-export-section">
-                <button onclick="exportSnippets()">📦 Экспорт</button>
-                <button class="snippet-mutation" onclick="document.getElementById('snippetImportFile').click()">📥 Импорт</button>
+                <button onclick="exportSnippets()">Экспорт</button>
+                <button class="snippet-mutation" onclick="document.getElementById('snippetImportFile').click()">Импорт</button>
                 <input type="file" id="snippetImportFile" accept=".json" onchange="importSnippets(this)"
                     style="display: none;">
             </div>
@@ -3467,14 +2639,14 @@
 
         <!-- Snippets Viewer (область просмотра с вкладками) -->
         <div class="snippets-viewer" id="snippetsViewer">
-            <div class="snippet-resize-handle" id="snippetResizeHandle"></div>
+            <div class="snippet-resize-handle" id="snippetResizeHandle" role="separator" aria-label="Ширина редактора сниппетов" aria-orientation="vertical" tabindex="0"></div>
             <div class="snippet-tabs" id="snippetTabs"></div>
             <div id="snippetContents"></div>
         </div>
-    </div>
+    </aside>
 
     <!-- Snippets Toggle Button -->
-    <button class="snippets-toggle" onclick="toggleSnippetsPanel()">Snippets</button>
+    <button type="button" class="snippets-toggle" data-snippets-toggle aria-controls="snippetsContainer" aria-expanded="false" onclick="toggleSnippetsPanel()">Сниппеты</button>
 
     <!-- Snippet Modal (для создания) -->
     <div class="snippet-modal" id="snippetModal" onclick="if(event.target === this) closeSnippetModal()">

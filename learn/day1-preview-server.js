@@ -455,6 +455,20 @@ app.use((req, res, next) => {
   next();
 });
 
+const WORKSPACE_THEME_ASSETS = new Map([
+  ['/workspace-theme.css', 'public/workspace-theme.css'],
+  ['/workspace-theme.js', 'public/workspace-theme.js'],
+  ['/panel.css', 'public/panel.css']
+]);
+app.use((req, res, next) => {
+  if (!['GET', 'HEAD'].includes(req.method)) return next();
+  const file = WORKSPACE_THEME_ASSETS.get(req.path);
+  if (!file) return next();
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  return res.sendFile(path.join(ROOT_DIR, file));
+});
+
 app.use(express.static(ROOT_DIR, {
   dotfiles: 'deny',
   etag: false,

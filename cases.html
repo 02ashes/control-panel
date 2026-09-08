@@ -4,29 +4,164 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Кейсы</title>
+<title>Кейсы — Рабочая панель</title>
 <link rel="icon" href="/favicon.ico" type="image/x-icon">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/cases.css">
+<link rel="stylesheet" href="/workspace-theme.css">
+<script src="/workspace-theme.js"></script>
 <style>
-  .confetti-particle{ position:fixed; width:10px; height:10px; top:-14px; pointer-events:none; z-index:300; }
-  @keyframes fall{ to{ transform:translateY(106vh) rotate(720deg); opacity:0; } }
+  body.work-ui {
+    --bg-0:var(--work-bg); --bg-1:var(--work-surface); --bg-2:var(--work-surface-2); --bg-3:var(--work-surface-2);
+    --line:var(--work-border); --line-2:var(--work-muted); --fg:var(--work-text); --fg-2:var(--work-text); --fg-mute:var(--work-muted); --fg-faint:var(--work-muted);
+    --t1:var(--work-accent); --t1-deep:var(--work-accent-hover); --t2:var(--work-muted); --t2-deep:var(--work-border); --t3:var(--work-warning); --t3-deep:var(--work-warning);
+    --ok:var(--work-success); --warn:var(--work-warning); --danger:var(--work-danger);
+    --radius-s:var(--work-radius); --radius-m:var(--work-radius); --radius-l:var(--work-radius); --radius-xl:var(--work-radius);
+    --shadow-soft:var(--work-shadow); --mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+    background:var(--work-bg); color:var(--work-text); font:14px/1.5 var(--work-font); letter-spacing:0;
+  }
+  .work-ui::before, .work-ui .logo-mark, .work-ui .case-card::before, .work-ui .lootbox .halo, .work-ui .lootbox .corner,
+  .work-ui .lootbox .box::before, .work-ui .lootbox .box::after, .work-ui .opening-shell::after { display:none; }
+  .work-ui header.app { background:var(--work-surface); backdrop-filter:none; border-bottom:1px solid var(--work-border); }
+  .work-ui .wrap { max-width:1280px; padding:0 28px; }
+  .work-ui :is(.panel,.empty,.admin,.case-card,.prize-row,.result,.opening-shell,.ed-edit) { border-radius:var(--work-radius); }
+  .work-ui .empty .ic { background:var(--work-surface-2); border-radius:4px; border:1px solid var(--work-border); }
+  .work-ui .header-inner { min-height:70px; height:auto; padding-top:12px; padding-bottom:12px; gap:18px; }
+  .work-ui .logo { font:600 17px/1.4 var(--work-font); text-transform:none; letter-spacing:-.02em; }
+  .work-ui .logo span { font-size:12px; letter-spacing:0; }
+  .work-ui .nav { flex-wrap:wrap; justify-content:flex-end; }
+  .work-ui .nav a, .work-ui .theme-toggle { font-size:13px; padding:7px 10px; border:1px solid var(--work-border); border-radius:var(--work-radius); color:var(--work-text); background:var(--work-surface-2); }
+  .work-ui .nav a.admin { color:var(--work-text); background:var(--work-surface-2); }
+  .work-ui .user-chip { border-radius:var(--work-radius); background:transparent; border:0; padding:0 0 0 12px; }
+  .work-ui .avatar { background:var(--work-surface-2); border:1px solid var(--work-border); border-radius:4px; color:var(--work-muted); box-shadow:none; }
+  .work-ui section.block { padding:28px 0 0; margin-bottom:28px; }
+  .work-ui .section-head { margin-bottom:18px; gap:12px; align-items:flex-end; }
+  .work-ui .section-head h2 { font:650 23px/1.35 var(--work-font); letter-spacing:-.03em; margin-top:4px; }
+  .work-ui .section-head .kicker { font:500 11px/1.4 var(--work-font); letter-spacing:.1em; color:var(--work-muted); }
+  .work-ui .kicker .dot { display:none; }
+  .work-ui .section-head .meta { font-size:12px; }
+  .work-ui .inventory-tools { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:12px; }
+  .work-ui .sound-option { display:inline-flex; gap:7px; align-items:center; color:var(--work-muted); font-size:12px; cursor:pointer; }
+  .work-ui .sound-option input { margin:0; accent-color:var(--work-accent); }
+  .work-ui .cases-grid { gap:16px; }
+  .work-ui .case-card { padding:20px; background:var(--work-surface); transition:border-color .15s; }
+  .work-ui .case-card:hover, .work-ui .prize-row:hover { transform:none; box-shadow:none; border-color:var(--work-muted); }
+  .work-ui .case-card .tier-label { border-color:var(--work-border); background:var(--work-surface-2); border-radius:4px; font-size:11px; letter-spacing:.04em; color:var(--work-text); }
+  .work-ui .case-card .tier-label::before, .work-ui .tier-pill::before, .work-ui .badge .pip { box-shadow:none; animation:none; }
+  .work-ui .case-card .count { font:600 13px/1.5 var(--mono); border:0; border-radius:4px; background:transparent; }
+  .work-ui .lootbox { width:100%; height:106px; aspect-ratio:auto; margin:20px auto; }
+  .work-ui .lootbox .box { width:100%; height:100%; aspect-ratio:auto; background:var(--work-surface-2); border:1px solid var(--work-border); border-radius:var(--work-radius); box-shadow:none; transform:none; }
+  .work-ui .lootbox .emblem { width:54px; height:54px; background:transparent; box-shadow:none; font:500 26px/1 var(--mono); color:var(--tier); border:1px solid var(--work-border); border-radius:4px; }
+  .work-ui .case-card h3 { font:600 17px/1.4 var(--work-font); }
+  .work-ui .case-card .desc { line-height:1.55; }
+  .work-ui .btn-open, .work-ui .btn.primary, .work-ui .btn.action { padding:9px 14px; min-height:36px; border:1px solid var(--work-accent); border-radius:var(--work-radius); background:var(--work-accent); color:var(--work-on-accent); font:550 13px/1.4 var(--work-font); box-shadow:none; letter-spacing:0; text-transform:none; }
+  .work-ui .btn-open:hover, .work-ui .btn.primary:hover, .work-ui .btn.action:hover { background:var(--work-accent-hover); box-shadow:none; filter:none; }
+  .work-ui .btn-open:active, .work-ui .case-card:hover .btn-open .arrow { transform:none; }
+  .work-ui .btn { font:550 13px/1.4 var(--work-font); min-height:36px; padding:8px 12px; letter-spacing:0; }
+  .work-ui .prizes { gap:12px; }
+  .work-ui .prize-row { padding:15px; background:var(--work-surface); gap:12px; transition:none; }
+  .work-ui .prize-row::before { display:none; }
+  .work-ui .prize-icon { width:40px; height:40px; border-radius:4px; background:var(--work-surface-2); border:1px solid var(--work-border); box-shadow:none; text-shadow:none; font-size:20px; }
+  .work-ui .prize-name { font-size:14px; overflow-wrap:anywhere; }
+  .work-ui .prize-sub { flex-wrap:wrap; gap:3px 8px; }
+  .work-ui .prize-sub .rar-tag, .work-ui .reel .rc .rt, .work-ui .result .info .rar-tag { color:var(--work-muted); }
+  .work-ui .tier-pill { color:var(--work-text); border-color:var(--work-border); }
+  .work-ui .log .lvl.info { color:var(--work-muted); }
+  .work-ui .badge { border-radius:4px; background:transparent; white-space:nowrap; }
+  .work-ui .admin { background:var(--work-surface); }
+  .work-ui .tabs { background:var(--work-surface); gap:0; overflow-x:auto; }
+  .work-ui .tab { appearance:none; border:0; background:transparent; font:550 13px/1.4 var(--work-font); padding:15px 18px; white-space:nowrap; position:relative; color:var(--work-muted); cursor:pointer; }
+  .work-ui .tab.active { background:var(--work-accent-soft); color:var(--work-text); }
+  .work-ui .tab.active::after { background:var(--work-accent); height:2px; }
+  .work-ui .tab .count-chip { background:var(--work-surface-2); border:1px solid var(--work-border); border-radius:4px; color:var(--work-text); }
+  .work-ui .admin-body { padding:20px; }
+  .work-ui .panel { padding:20px; background:var(--work-surface); border:1px solid var(--work-border); }
+  .work-ui .panel h4, .work-ui .weight-block h5 { font:600 15px/1.4 var(--work-font); letter-spacing:0; }
+  .work-ui .panel h4 .tag { font:400 11px/1.4 var(--work-font); }
+  .work-ui .field label { font-size:12px; font-weight:500; letter-spacing:0; text-transform:none; }
+  .work-ui .input, .work-ui .select { min-height:36px; padding:8px 10px; font:13px/1.4 var(--work-font); background:var(--work-bg); color:var(--work-text); }
+  .work-ui .tier-radio { gap:8px; }
+  .work-ui .tier-radio label { border-radius:4px; padding:8px 12px; background:var(--work-bg); color:var(--work-text); }
+  .work-ui .tier-radio label.sel { background:var(--work-accent-soft); border-color:var(--work-accent); color:var(--work-text); }
+  .work-ui .tier-radio label::before { display:none; }
+  .work-ui #pendingArea { overflow-x:auto; }
+  .work-ui .tbl { min-width:480px; }
+  .work-ui .tbl thead th { font-size:11px; letter-spacing:.04em; }
+  .work-ui .icon-btn { min-width:34px; min-height:34px; }
+  .work-ui .ed-edit { background:var(--work-bg); padding:14px; }
+  .work-ui .ed-edit .field { min-width:0; }
+  .work-ui .ed-edit .ep-del { color:var(--work-danger); }
+  .work-ui .weight-row { background:var(--work-bg); }
+  .work-ui .log { background:var(--work-bg); font-size:12px; overflow-wrap:anywhere; }
+  .work-ui .empty { background:var(--work-surface); border:1px dashed var(--work-border); padding:32px 20px; color:var(--work-muted); }
+  .work-ui .empty .ic { color:var(--work-muted); text-shadow:none; font:500 24px/1 var(--mono); width:40px; height:40px; margin-bottom:12px; }
+  .work-ui .empty h5 { font:550 15px/1.5 var(--work-font); color:var(--work-text); }
+  .work-ui .empty p { margin-bottom:0; max-width:400px; }
+  .work-ui footer { border-top:1px solid var(--work-border); margin-top:32px; padding:18px 0; font-size:12px; color:var(--work-muted); }
+  .work-ui .gate h3 { font:600 22px/1.4 var(--work-font); }
+  .work-ui .gate .gico { font:600 28px/1 var(--mono); text-shadow:none; }
+  .work-ui .gate .theme-toggle { margin-top:14px; }
+  .work-ui .overlay-backdrop { background:rgb(0 0 0 / .65); backdrop-filter:none; overflow-y:auto; }
+  .work-ui .opening-shell { background:var(--work-surface); }
+  .work-ui .opening-shell .ribbon { font-size:11px; letter-spacing:.03em; max-width:calc(100% - 48px); }
+  .work-ui .opening-shell .ribbon .live { border:1px solid var(--work-border); color:var(--work-muted); border-radius:4px; background:transparent; white-space:nowrap; }
+  .work-ui .opening-shell .ribbon .live::before { display:none; }
+  .work-ui .opening-shell .ribbon .source { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .work-ui .reel-wrap::before { background:linear-gradient(90deg,var(--work-surface),transparent); }
+  .work-ui .reel-wrap::after { background:linear-gradient(-90deg,var(--work-surface),transparent); }
+  .work-ui .reel .rc { background:var(--work-surface-2); box-shadow:none; border-radius:var(--work-radius); }
+  .work-ui .reel .rc::before { box-shadow:none; border-radius:0; height:2px; }
+  .work-ui .reel .rc .ric { background:var(--work-bg); box-shadow:none; text-shadow:none; border-radius:4px; }
+  .work-ui .reel .rc.center { transform:none; box-shadow:none; }
+  .work-ui .pointer { background:var(--work-accent); box-shadow:none; }
+  .work-ui .pointer::before, .work-ui .pointer::after { filter:none; }
+  .work-ui .result { background:var(--work-surface-2); box-shadow:none; grid-template-columns:70px 1fr auto; padding:20px; gap:18px; border-color:var(--work-border); }
+  .work-ui .result .visual { width:70px; background:var(--work-bg); box-shadow:none; border:1px solid var(--work-border); border-radius:4px; text-shadow:none; font-size:32px; }
+  .work-ui .result .info h3 { font:600 22px/1.3 var(--work-font); }
+  .work-ui .result .info p { font-size:13px; }
+  .work-ui :where(button,a,input,select,[tabindex]):focus-visible { outline:2px solid var(--work-accent); outline-offset:3px; }
+  @media(max-width:820px) {
+    .work-ui .wrap { padding-left:18px; padding-right:18px; }
+    .work-ui .result { grid-template-columns:70px 1fr; text-align:left; }
+    .work-ui .result .actions { grid-column:1 / -1; }
+  }
+  @media(max-width:620px) {
+    .work-ui .header-inner { flex-wrap:wrap; gap:10px; }
+    .work-ui .nav { gap:6px; }
+    .work-ui .user-chip { padding-left:4px; }
+    .work-ui .user-chip .avatar { display:none; }
+    .work-ui .section-head { align-items:flex-start; flex-direction:column; }
+    .work-ui .section-head .meta { display:block; text-align:left; }
+    .work-ui .admin-body, .work-ui .panel { padding:12px; }
+    .work-ui .tab { padding:13px 12px; }
+    .work-ui .prize-row { flex-wrap:wrap; }
+    .work-ui .prize-meta { flex:1; min-width:120px; }
+    .work-ui .badge { margin-left:52px; }
+    .work-ui .log .row { grid-template-columns:75px 1fr; gap:8px; }
+    .work-ui .log .row > :last-child { grid-column:1 / -1; }
+    .work-ui .ed-edit .field { flex:1 1 120px; }
+    .work-ui .ed-edit .input, .work-ui .ed-edit .select { width:100%; }
+    .work-ui .weight-row { gap:8px; flex-wrap:wrap; }
+    .work-ui .weight-row .wn { min-width:120px; overflow-wrap:anywhere; }
+    .work-ui .weight-row .input { width:64px; }
+    .work-ui .opening-shell { padding:56px 16px 20px; }
+    .work-ui .reel-wrap { margin-left:-16px; margin-right:-16px; }
+  }
+  @media(prefers-reduced-motion:reduce) { .work-ui *, .work-ui *::before, .work-ui *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
 </style>
 </head>
 
-<body>
+<body class="work-ui cases-page">
 
 <audio id="winSound" src="win.mp3" preload="auto"></audio>
 
 <!-- Заглушка для незалогиненных -->
 <div class="gate" id="gate" style="display:none;">
   <div class="panel">
-    <div class="gico">🎁</div>
+    <div class="gico" aria-hidden="true">◇</div>
     <h3>Кейсы</h3>
     <p>Сначала зайди в панель воркера под своим ником. После этого кейсы откроются здесь автоматически.</p>
     <a class="btn primary" href="/admin">Открыть панель</a>
+    <div><button class="theme-toggle" type="button" data-work-theme-toggle>Светлая тема</button></div>
   </div>
 </div>
 
@@ -37,10 +172,11 @@
     <div class="wrap header-inner">
       <div class="logo">
         <div class="logo-mark" aria-hidden="true"></div>
-        <div><b>Кейсы</b> <span>· внутр.</span></div>
+        <div><b>Кейсы</b> <span>· рабочая панель</span></div>
       </div>
-      <nav class="nav">
-        <a href="/admin" class="admin">панель</a>
+      <nav class="nav" aria-label="Навигация кейсов">
+        <a href="/admin" class="admin">К сессиям</a>
+        <button class="theme-toggle" type="button" data-work-theme-toggle>Светлая тема</button>
         <div class="user-chip" title="Профиль">
           <div class="avatar" id="userAvatar">··</div>
           <div>
@@ -61,7 +197,7 @@
           <div class="kicker"><span class="dot"></span>инвентарь</div>
           <h2>Мои кейсы</h2>
         </div>
-        <div class="meta" id="casesMeta"></div>
+        <div class="inventory-tools"><label class="sound-option"><input type="checkbox" id="caseSoundEnabled">Звук открытия</label><div class="meta" id="casesMeta"></div></div>
       </div>
       <div id="casesArea"></div>
     </section>
@@ -88,32 +224,32 @@
       </div>
 
       <div class="admin">
-        <div class="tabs" role="tablist">
-          <div class="tab active" data-tab="grant">Выдать кейс</div>
-          <div class="tab" data-tab="pending">Очередь выдачи <span class="count-chip" id="pendingCount">0</span></div>
-          <div class="tab" data-tab="editor">Редактор призов</div>
-          <div class="tab" data-tab="log">Лог</div>
+        <div class="tabs" role="tablist" aria-label="Управление кейсами">
+          <button type="button" class="tab active" data-tab="grant" role="tab" id="tab-grant" aria-controls="panel-grant" aria-selected="true" tabindex="0">Выдать кейс</button>
+          <button type="button" class="tab" data-tab="pending" role="tab" id="tab-pending" aria-controls="panel-pending" aria-selected="false" tabindex="-1">Очередь выдачи <span class="count-chip" id="pendingCount">0</span></button>
+          <button type="button" class="tab" data-tab="editor" role="tab" id="tab-editor" aria-controls="panel-editor" aria-selected="false" tabindex="-1">Редактор призов</button>
+          <button type="button" class="tab" data-tab="log" role="tab" id="tab-log" aria-controls="panel-log" aria-selected="false" tabindex="-1">Журнал</button>
         </div>
 
         <div class="admin-body">
 
-          <div class="tab-panel active" id="panel-grant">
+          <div class="tab-panel active" id="panel-grant" role="tabpanel" aria-labelledby="tab-grant">
             <div class="panel">
               <h4>Выдать кейс <span class="tag">форма</span></h4>
               <div class="field">
-                <label>Сотрудник</label>
+                <label for="grantWorker">Сотрудник</label>
                 <div class="select-wrap"><select class="select" id="grantWorker"></select></div>
               </div>
               <div class="field">
                 <label>Тир кейса</label>
-                <div class="tier-radio" id="grantTierRadio">
-                  <label class="t1 sel" data-tier="1">Тир 1</label>
-                  <label class="t2" data-tier="2">Тир 2</label>
-                  <label class="t3" data-tier="3">Тир 3</label>
+                <div class="tier-radio" id="grantTierRadio" role="radiogroup" aria-label="Тир кейса">
+                  <label class="t1 sel" data-tier="1" role="radio" tabindex="0" aria-checked="true">Тир 1</label>
+                  <label class="t2" data-tier="2" role="radio" tabindex="0" aria-checked="false">Тир 2</label>
+                  <label class="t3" data-tier="3" role="radio" tabindex="0" aria-checked="false">Тир 3</label>
                 </div>
               </div>
               <div class="field">
-                <label>Количество</label>
+                <label for="grantCount">Количество</label>
                 <input class="input" id="grantCount" type="text" value="1" />
               </div>
               <div class="submit-row">
@@ -123,16 +259,16 @@
             </div>
           </div>
 
-          <div class="tab-panel" id="panel-pending">
+          <div class="tab-panel" id="panel-pending" role="tabpanel" aria-labelledby="tab-pending">
             <div class="panel">
               <h4>Очередь выдачи <span class="tag" id="pendingTag">0 в ожидании</span></h4>
               <p style="color:var(--fg-mute);font-size:13px;margin:-8px 0 16px;">
-                Жми «✓» после того, как отдал приз воркеру в Телеграм.</p>
+                Нажмите «Выдать» после передачи приза сотруднику в Telegram.</p>
               <div id="pendingArea"></div>
             </div>
           </div>
 
-          <div class="tab-panel" id="panel-editor">
+          <div class="tab-panel" id="panel-editor" role="tabpanel" aria-labelledby="tab-editor">
             <div class="panel">
               <h4>Редактор призов <span class="tag">призы и веса</span></h4>
               <div class="editor-list" id="prizeEditor"></div>
@@ -141,7 +277,7 @@
             </div>
           </div>
 
-          <div class="tab-panel" id="panel-log">
+          <div class="tab-panel" id="panel-log" role="tabpanel" aria-labelledby="tab-log">
             <div class="panel">
               <h4>Лог системы <span class="tag">последние 100</span></h4>
               <div id="logArea"></div>
@@ -152,7 +288,7 @@
       </div>
     </section>
 
-    <footer>кейсы · внутренняя система · работает на твоей панели</footer>
+    <footer>Рабочая панель · Кейсы и призы</footer>
   </main>
 </div>
 
@@ -160,7 +296,7 @@
 <div class="overlay-backdrop" id="openOverlay" style="display:none;">
   <div class="opening-shell">
     <div class="ribbon">
-      <span class="live">live</span>
+      <span class="live">Открытие кейса</span>
       <span class="source" id="openSource"></span>
     </div>
     <div class="reel-wrap">
@@ -180,6 +316,7 @@
   const REEL_GAP = 14;
   const REEL_PAD = 40;
   const SPIN_MS = 6200;
+  const reduceMotion = () => typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const TIER_INFO = {
     1: { word: 'обычный',     roman: 'I',   title: 'Стартовый кейс',   desc: 'Пасты от админа, мелкие награды, призовые задания.' },
@@ -200,6 +337,7 @@
   let opening = false;
 
   const winSound = document.getElementById('winSound');
+  document.getElementById('caseSoundEnabled').addEventListener('change', function () { if (!this.checked) winSound.pause(); });
   const openOverlay = document.getElementById('openOverlay');
   const socket = (typeof io !== 'undefined') ? io() : null;
 
@@ -262,7 +400,7 @@
 
     ROLE = auth.role || 'reader';
     document.getElementById('whoName').textContent = auth.nickname || NICK;
-    document.getElementById('whoRole').textContent = ROLE;
+    document.getElementById('whoRole').textContent = ({ admin: 'Администратор', user: 'Сотрудник', reader: 'Читатель', new: 'Стажёр' })[ROLE] || 'Сотрудник';
     document.getElementById('userAvatar').textContent = initials(auth.nickname || NICK);
     document.getElementById('app').style.display = 'block';
 
@@ -414,6 +552,13 @@
     const winCenter = REEL_PAD + WIN_INDEX * (REEL_ITEM + REEL_GAP) + REEL_ITEM / 2;
     const finalX = vpW / 2 - winCenter + jitter;
 
+    if (reduceMotion()) {
+      strip.style.transform = 'translateX(' + finalX + 'px)';
+      if (strip.children[WIN_INDEX]) strip.children[WIN_INDEX].classList.add('center');
+      done();
+      return;
+    }
+
     strip.offsetHeight; // форс reflow
 
     requestAnimationFrame(function () {
@@ -430,7 +575,9 @@
       strip.removeEventListener('transitionend', onEnd);
       const items = strip.children;
       if (items[WIN_INDEX]) items[WIN_INDEX].classList.add('center');
-      try { winSound.currentTime = 0; winSound.play(); } catch (e) {}
+      if (document.getElementById('caseSoundEnabled').checked) {
+        winSound.currentTime = 0; winSound.play().catch(() => {});
+      }
       done();
     }
     strip.addEventListener('transitionend', onEnd);
@@ -453,31 +600,11 @@
       + '<h3>' + escapeHtml(prize.name) + '</h3><p>' + msg + '</p></div>'
       + '<div class="actions"><button class="btn primary" onclick="closeOpening()">Забрать приз</button></div>';
     card.style.display = 'grid';
-    if (rar === 'legendary' || rar === 'rare') confetti(rar === 'legendary' ? 130 : 70);
   }
 
   function closeOpening() {
     openOverlay.style.display = 'none';
     loadInventory();
-  }
-
-  function confetti(count) {
-    const colors = ['oklch(0.78 0.13 220)', 'oklch(0.72 0.22 300)', 'oklch(0.84 0.16 85)', 'oklch(0.78 0.14 155)', '#fff'];
-    const frag = document.createDocumentFragment();
-    const els = [];
-    for (let i = 0; i < count; i++) {
-      const c = document.createElement('div');
-      c.className = 'confetti-particle';
-      c.style.left = Math.random() * 100 + 'vw';
-      c.style.background = colors[Math.floor(Math.random() * colors.length)];
-      c.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
-      c.style.animation = 'fall ' + (2.6 + Math.random() * 1.7) + 's linear forwards';
-      c.style.animationDelay = (Math.random() * 0.4) + 's';
-      els.push(c);
-      frag.appendChild(c);
-    }
-    document.body.appendChild(frag);
-    setTimeout(function () { els.forEach(e => e.remove()); }, 5000);
   }
 
   // ===== Админка =====
@@ -486,17 +613,31 @@
   function initAdmin() {
     document.querySelectorAll('.tabs .tab').forEach(function (tab) {
       tab.addEventListener('click', function () {
-        document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
+        document.querySelectorAll('.tabs .tab').forEach(t => {
+          t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); t.tabIndex = -1;
+        });
+        tab.classList.add('active'); tab.setAttribute('aria-selected', 'true'); tab.tabIndex = 0;
         document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
         document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
       });
     });
 
+    document.querySelector('.tabs').addEventListener('keydown', function (event) {
+      const tabs = Array.from(this.querySelectorAll('.tab'));
+      const index = tabs.indexOf(event.target);
+      if (index < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      tabs[next].click(); tabs[next].focus();
+    });
+
     document.querySelectorAll('#grantTierRadio label').forEach(function (l) {
+      l.addEventListener('keydown', function (event) {
+        if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); l.click(); }
+      });
       l.addEventListener('click', function () {
-        document.querySelectorAll('#grantTierRadio label').forEach(x => x.classList.remove('sel'));
-        l.classList.add('sel');
+        document.querySelectorAll('#grantTierRadio label').forEach(x => { x.classList.remove('sel'); x.setAttribute('aria-checked', 'false'); });
+        l.classList.add('sel'); l.setAttribute('aria-checked', 'true');
       });
     });
 
@@ -565,7 +706,7 @@
           + ' <span class="tier-pill t' + p.tier + '">тир ' + p.tier + '</span></td>'
           + '<td class="when">' + fmtTime(p.opened_at) + '</td>'
           + '<td><button class="icon-btn" title="' + (isTask ? 'Зачтено' : 'Выдать')
-          + '" onclick="deliverPrize(' + p.id + ')">✓</button></td></tr>';
+          + '" onclick="deliverPrize(' + p.id + ')">' + (isTask ? 'Зачесть' : 'Выдать') + '</button></td></tr>';
       }).join('')
       + '</tbody></table>';
   }
@@ -709,7 +850,7 @@
     }
     area.innerHTML = '<div class="log">' + log.map(function (l) {
       const lvl = l.prize_kind === 'case' ? 'info' : 'win';
-      const label = l.prize_kind === 'case' ? 'CASE' : 'WIN';
+      const label = l.prize_kind === 'case' ? 'КЕЙС' : 'ПРИЗ';
       return '<div class="row"><span class="ts">' + fmtTime(l.opened_at) + '</span>'
         + '<span class="lvl ' + lvl + '">' + label + '</span>'
         + '<span>' + escapeHtml(l.worker_nickname) + ' открыл Тир ' + l.tier

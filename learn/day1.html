@@ -3,15 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="dark light">
   <title>Day 1 · База и практика</title>
+  <script src="/workspace-theme.js"></script>
+  <link rel="stylesheet" href="/workspace-theme.css">
   <link rel="stylesheet" href="/learn/day1-styles.css">
 </head>
-<body>
+<body class="work-ui">
   <div class="page-shell">
+    <nav class="learning-topbar" aria-label="Рабочая область">
+      <div class="learning-location"><a href="/admin">Control Panel</a><span aria-hidden="true">/</span><span>Обучение · День 1</span></div>
+      <button class="learning-theme-button" type="button" data-work-theme-toggle>Светлая тема</button>
+    </nav>
     <header class="course-header" aria-labelledby="programTitle">
       <div class="course-heading">
-        <div class="eyebrow">WORKER ONBOARDING · DAY 1</div>
+        <div class="eyebrow">Обучение · День 1</div>
         <h1 id="programTitle">База работы</h1>
         <p id="programDescription" class="course-description">
           Короткая теория, реальные примеры и письменная практика.
