@@ -10,6 +10,50 @@
         const keys = Object.keys(a);
         return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && equal(a[key], b[key]));
     };
+    const safeId = id => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(id) &&
+        !['__proto__', 'prototype', 'constructor'].includes(id);
+    function childIds(data, parentId) {
+        if (!data || !data.folders || !data.snippets) return [];
+        const parent = parentId == null ? null : parentId;
+        if (parent !== null && !Object.hasOwn(data.folders, parent)) return [];
+        const result = [];
+        const seen = new Set();
+        // This is the pre-ordering UI's enumeration, kept for old libraries and
+        // newly created children omitted from a folder's stored preference.
+        for (const group of ['folders', 'snippets']) {
+            for (const [id, item] of Object.entries(data[group])) {
+                if (item && (item.parentId || null) === parent && !seen.has(id)) {
+                    result.push(id); seen.add(id);
+                }
+            }
+        }
+        return result;
+    }
+    function children(data, parentId = null) {
+        const available = childIds(data, parentId);
+        const remaining = new Set(available);
+        const stored = parentId == null ? data?.structure : data?.folders?.[parentId]?.order;
+        const result = [];
+        if (Array.isArray(stored)) {
+            for (const id of stored) if (remaining.delete(id)) result.push(id);
+        }
+        return result.concat(available.filter(id => remaining.has(id)));
+    }
+    function setOrder(data, parentId, ids) {
+        if (!data || !data.folders || !data.snippets || !Array.isArray(data.structure) || !Array.isArray(ids)) return false;
+        if (parentId != null && (!safeId(parentId) || !Object.hasOwn(data.folders, parentId))) return false;
+        const expected = new Set(childIds(data, parentId));
+        if (ids.length !== expected.size || ids.some(id => !safeId(id) || !expected.delete(id)) || expected.size) return false;
+        if (parentId == null) data.structure = ids.slice();
+        else data.folders[parentId].order = ids.slice();
+        return true;
+    }
+    function validOrder(data, parentId, order) {
+        if (!Array.isArray(order) || order.length > 20000) return false;
+        const available = new Set(childIds(data, parentId));
+        for (const id of order) if (!safeId(id) || !available.delete(id)) return false;
+        return true;
+    }
     function valid(data) {
         if (!data || typeof data !== 'object' || !Array.isArray(data.structure)) return false;
         for (const group of ['folders', 'snippets']) {
@@ -25,6 +69,9 @@
                 if (item.parentId != null && typeof item.parentId !== 'string') return false;
             }
         }
+        for (const [id, folder] of Object.entries(data.folders)) {
+            if (Object.hasOwn(folder, 'order') && !validOrder(data, id, folder.order)) return false;
+        }
         return data.structure.every(id => typeof id === 'string' && (Object.hasOwn(data.snippets, id) || Object.hasOwn(data.folders, id)));
     }
     function canonical(data) {
@@ -33,6 +80,10 @@
             for (const [id, item] of Object.entries(data[kind])) {
                 if (['__proto__', 'prototype', 'constructor'].includes(id)) continue;
                 result[kind][id] = { id: item.id, name: item.name, parentId: item.parentId || null };
+                if (kind === 'folders' && Object.hasOwn(item, 'order')) {
+                    if (!validOrder(data, id, item.order)) throw new TypeError('invalid_snippet_order');
+                    result[kind][id].order = item.order.slice();
+                }
                 if (kind === 'snippets') {
                     result[kind][id].content = item.content;
                     const formatted = richText.normalize(item.richText, item.content);
@@ -73,32 +124,54 @@
             return clone(mine);
         }
         const data = visit(base, local, remote, []);
-        // Preserve both independent additions to the root list. Ordering-only edits
-        // are conflicts, since guessing an order would hide a user's change.
-        if (conflicts.includes('structure')) {
-            const old = base.structure || [];
-            const mine = local.structure || [];
-            const theirs = remote.structure || [];
-            const oldMine = mine.filter(id => old.includes(id));
-            const oldTheirs = theirs.filter(id => old.includes(id));
-            if (equal(oldMine, old.filter(id => mine.includes(id))) && equal(oldTheirs, old.filter(id => theirs.includes(id)))) {
-                data.structure = [...new Set([...theirs, ...mine])].filter(id => Object.hasOwn(data.folders, id) || Object.hasOwn(data.snippets, id));
-                conflicts.splice(conflicts.indexOf('structure'), 1);
-            }
-        }
         // A delete-versus-edit conflict may retain a local record which the remote
         // root list removed; keep the draft reachable until explicitly resolved.
-        data.structure = data.structure.filter(id => Object.hasOwn(data.folders, id) || Object.hasOwn(data.snippets, id));
         for (const group of ['folders', 'snippets']) {
             for (const [id, item] of Object.entries(data[group])) {
                 if (item.parentId && !Object.hasOwn(data.folders, item.parentId)) {
                     item.parentId = null;
                     conflicts.push(`${group}.${id}.parentId`);
                 }
-                if (!item.parentId && !data.structure.includes(id)) data.structure.push(id);
             }
         }
+        function mergeOrder(parentId) {
+            if (parentId !== null && ![base, local, remote, data].some(snapshot =>
+                snapshot.folders[parentId] && Object.hasOwn(snapshot.folders[parentId], 'order'))) return;
+            const path = parentId === null ? 'structure' : `folders.${parentId}.order`;
+            const staleConflict = conflicts.indexOf(path);
+            if (staleConflict >= 0) conflicts.splice(staleConflict, 1);
+            const available = childIds(data, parentId);
+            const live = new Set(available);
+            const before = children(base, parentId).filter(id => live.has(id));
+            const mine = children(local, parentId).filter(id => live.has(id));
+            const theirs = children(remote, parentId).filter(id => live.has(id));
+            let primary;
+            let secondary;
+            if (equal(mine, before)) { primary = theirs; secondary = mine; }
+            else if (equal(theirs, before) || equal(mine, theirs)) { primary = mine; secondary = theirs; }
+            else {
+                const old = new Set(before), mineSet = new Set(mine), theirsSet = new Set(theirs);
+                const mineReordered = !equal(mine.filter(id => old.has(id)), before.filter(id => mineSet.has(id)));
+                const theirsReordered = !equal(theirs.filter(id => old.has(id)), before.filter(id => theirsSet.has(id)));
+                const shared = new Set(mine.filter(id => theirsSet.has(id)));
+                if (mineReordered && theirsReordered &&
+                    !equal(mine.filter(id => shared.has(id)), theirs.filter(id => shared.has(id)))) conflicts.push(path);
+                primary = mineReordered ? mine : theirs;
+                secondary = mineReordered ? theirs : mine;
+            }
+            const merged = [...new Set([...primary, ...secondary, ...available])];
+            if (parentId === null) { data.structure = merged; return; }
+            const folder = data.folders[parentId];
+            if (Object.hasOwn(folder, 'order')) {
+                folder.order = folder.order.filter(id => live.has(id));
+            }
+            // Preserve absent/partial preferences when they already express the
+            // merged order. This avoids modifying every old folder on any save.
+            if (!equal(children(data, parentId), merged)) folder.order = merged;
+        }
+        mergeOrder(null);
+        for (const id of Object.keys(data.folders)) mergeOrder(id);
         return { data, conflicts };
     }
-    return { clone, equal, valid, canonical, merge };
+    return { clone, equal, valid, canonical, merge, children, setOrder };
 });

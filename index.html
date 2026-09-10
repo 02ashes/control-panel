@@ -402,6 +402,8 @@
 
         function clearSnippetWorkspace() {
             snippetsPermissionEpoch++;
+            resetSnippetTabState();
+            resetSnippetTreeInteraction();
             snippetCopyAttempt++;
             snippetEditors.forEach(editor => editor.destroy());
             snippetEditors.clear();
@@ -418,7 +420,7 @@
             openSnippets = [];
             activeSnippetId = currentSnippetId = null;
             snippetAction = snippetParentId = null;
-            for (const id of ['snippetContents', 'snippetTabs', 'snippetTree', 'snippetCopyStatus']) {
+            for (const id of ['snippetContents', 'snippetTabs', 'snippetTree', 'snippetCopyStatus', 'snippetOrderStatus']) {
                 document.getElementById(id)?.replaceChildren();
             }
             document.getElementById('snippetsViewer')?.classList.remove('has-content');
@@ -574,6 +576,8 @@
                 input.readOnly = !canEditSnippets() || Boolean(input.closest('.snippet-content-area')?.querySelector('.snippet-editor-fallback'));
             });
             snippetEditors.forEach(editor => editor.setReadOnly(!canEditSnippets()));
+            document.querySelectorAll('#snippetTree .snippet-label, #snippetTree .folder-label').forEach(label => { label.draggable = canEditSnippets(); });
+            if (!canEditSnippets()) resetSnippetTreeInteraction();
         }
 
         // Users management modal for admins
@@ -1794,6 +1798,7 @@
             snippetsBaseData = SnippetsSync.clone(data.snippets);
             snippetsRevision = Number(data.revision);
             snippetsConflicts = [...new Set([...snippetsConflicts, ...merged.conflicts])];
+            restoreSnippetTabs();
             refreshSnippetEditors();
             renderSnippetSaveStatus();
             return true;
@@ -1842,6 +1847,7 @@
             document.body.classList.toggle('snippets-open', open);
             document.querySelectorAll('[data-snippets-toggle]').forEach(button => button.setAttribute('aria-expanded', String(open)));
             updateContainerMargin();
+            if (open) revealSnippetTab();
             if (open && window.innerWidth < 800) container.querySelector('.snippets-header button')?.focus({ preventScroll: true });
             if (!open && container.contains(document.activeElement)) {
                 const target = document.querySelector('#chatModal.show [data-snippets-toggle]') || document.querySelector('#appRoot [data-snippets-toggle]');
@@ -1972,11 +1978,230 @@
             });
         }
 
+        // Shared library order is distinct from the personal order of open tabs.
+        let snippetTreeDrag = null;
+        let snippetOrderMenu = null;
+        let snippetTreeSuppressClickUntil = 0;
+        const snippetNameCollator = new Intl.Collator(['ru', 'en'], { numeric: true, sensitivity: 'base' });
+
+        function snippetTreeRecord(id) {
+            return Object.hasOwn(snippetsData.folders, id) ? snippetsData.folders[id]
+                : Object.hasOwn(snippetsData.snippets, id) ? snippetsData.snippets[id] : null;
+        }
+
+        function clearSnippetTreeDropMarks() {
+            document.querySelectorAll('#snippetTree .tree-drop-before, #snippetTree .tree-drop-after').forEach(row => row.classList.remove('tree-drop-before', 'tree-drop-after'));
+        }
+
+        function closeSnippetOrderMenu(restoreFocus = false) {
+            if (!snippetOrderMenu) return;
+            const { element, trigger, id } = snippetOrderMenu;
+            element.remove();
+            trigger.setAttribute('aria-expanded', 'false');
+            snippetOrderMenu = null;
+            if (restoreFocus && hasSnippetsAccess()) {
+                const replacement = trigger.isConnected ? trigger : [...document.querySelectorAll('#snippetTree [data-tree-id]')]
+                    .find(row => row.dataset.treeId === id)?.querySelector('.snippet-order-button');
+                replacement?.focus({ preventScroll: true });
+            }
+        }
+
+        function resetSnippetTreeInteraction() {
+            snippetTreeDrag = null;
+            clearSnippetTreeDropMarks();
+            document.querySelectorAll('#snippetTree .tree-dragging').forEach(row => row.classList.remove('tree-dragging'));
+            closeSnippetOrderMenu();
+        }
+
+        function announceSnippetOrder(message) {
+            const status = document.getElementById('snippetOrderStatus');
+            if (status && hasSnippetsAccess()) status.textContent = message;
+        }
+
+        function commitSnippetTreeOrder(parentId, order, message) {
+            if (!canEditSnippets() || SnippetsSync.equal(SnippetsSync.children(snippetsData, parentId), order)) return false;
+            if (!SnippetsSync.setOrder(snippetsData, parentId, order)) return false;
+            // Body drafts already update on input. No editor is destroyed or refocused here.
+            renderSnippetsTree();
+            announceSnippetOrder(message);
+            void saveSnippets();
+            return true;
+        }
+
+        function moveSnippetTreeItem(sourceId, targetId, after = false) {
+            if (!canEditSnippets() || sourceId === targetId) return false;
+            const source = snippetTreeRecord(sourceId), target = snippetTreeRecord(targetId);
+            if (!source || !target || (source.parentId || null) !== (target.parentId || null)) return false;
+            const order = SnippetsSync.children(snippetsData, source.parentId).filter(id => id !== sourceId);
+            const index = order.indexOf(targetId);
+            if (index < 0) return false;
+            order.splice(index + (after ? 1 : 0), 0, sourceId);
+            return commitSnippetTreeOrder(source.parentId, order, 'Порядок в папке изменён.');
+        }
+
+        function moveSnippetTreeBy(id, offset) {
+            if (!canEditSnippets() || ![-1, 1].includes(offset)) return false;
+            const item = snippetTreeRecord(id);
+            if (!item) return false;
+            const order = SnippetsSync.children(snippetsData, item.parentId);
+            const next = order.indexOf(id) + offset;
+            if (next < 0 || next >= order.length) return false;
+            return moveSnippetTreeItem(id, order[next], offset > 0);
+        }
+
+        function sortSnippetChildren(parentId, direction = 'asc') {
+            if (!canEditSnippets() || !['asc', 'desc'].includes(direction) || (parentId != null && !Object.hasOwn(snippetsData.folders, parentId))) return false;
+            const order = SnippetsSync.children(snippetsData, parentId).slice().sort((a, b) =>
+                snippetNameCollator.compare(snippetTreeRecord(a).name, snippetTreeRecord(b).name) * (direction === 'desc' ? -1 : 1));
+            return commitSnippetTreeOrder(parentId, order, 'Список отсортирован по названию.');
+        }
+
+        function showSnippetOrderMenu(id, trigger) {
+            if (!canEditSnippets()) return false;
+            const sameTrigger = snippetOrderMenu?.trigger === trigger;
+            closeSnippetOrderMenu();
+            if (sameTrigger) return;
+            const item = id == null ? null : snippetTreeRecord(id);
+            if (id != null && !item) return false;
+            const menu = document.createElement('div');
+            menu.className = 'snippet-order-menu';
+            menu.setAttribute('role', 'menu');
+            menu.tabIndex = -1;
+            menu.setAttribute('aria-label', 'Порядок сниппетов');
+            const permissionEpoch = snippetsPermissionEpoch, accountEpoch = authenticatedAccountEpoch;
+            function action(text, handler, disabled = false) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.setAttribute('role', 'menuitem');
+                button.textContent = text;
+                button.disabled = disabled;
+                button.onclick = () => {
+                    if (permissionEpoch !== snippetsPermissionEpoch || accountEpoch !== authenticatedAccountEpoch || !canEditSnippets()) { closeSnippetOrderMenu(); return; }
+                    closeSnippetOrderMenu(true);
+                    handler();
+                };
+                menu.appendChild(button);
+            }
+            if (item) {
+                const siblings = SnippetsSync.children(snippetsData, item.parentId), index = siblings.indexOf(id);
+                action('Выше', () => moveSnippetTreeBy(id, -1), index <= 0);
+                action('Ниже', () => moveSnippetTreeBy(id, 1), index < 0 || index === siblings.length - 1);
+            }
+            if (id == null || Object.hasOwn(snippetsData.folders, id)) {
+                const small = SnippetsSync.children(snippetsData, id).length < 2;
+                action('По названию: А–Я', () => sortSnippetChildren(id, 'asc'), small);
+                action('По названию: Я–А', () => sortSnippetChildren(id, 'desc'), small);
+            }
+            snippetOrderMenu = { element: menu, trigger, id };
+            trigger.setAttribute('aria-expanded', 'true');
+            document.body.appendChild(menu);
+            const rect = trigger.getBoundingClientRect();
+            menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+            menu.style.top = Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 8)) + 'px';
+            menu.addEventListener('keydown', event => {
+                if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSnippetOrderMenu(true); return; }
+                if (event.key === 'Tab') { closeSnippetOrderMenu(true); return; }
+                if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                const buttons = [...menu.querySelectorAll('button:not(:disabled)')];
+                if (!buttons.length) return;
+                const index = buttons.indexOf(document.activeElement);
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+                    : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+                buttons[next].focus();
+            });
+            (menu.querySelector('button:not(:disabled)') || menu).focus({ preventScroll: true });
+        }
+
+        document.addEventListener('pointerdown', event => {
+            if (snippetOrderMenu && !snippetOrderMenu.element.contains(event.target) && !snippetOrderMenu.trigger.contains(event.target)) closeSnippetOrderMenu();
+        });
+        document.addEventListener('scroll', event => {
+            if (snippetOrderMenu && !snippetOrderMenu.element.contains(event.target)) closeSnippetOrderMenu();
+        }, true);
+        window.addEventListener('resize', () => closeSnippetOrderMenu());
+
+        function wireSnippetTreeOrder(row, id) {
+            row.dataset.treeId = id;
+            const label = row.querySelector('.folder-label, .snippet-label');
+            label.draggable = canEditSnippets();
+            label.title = label.textContent + '\nПеретащите для перестановки в этой папке. Alt + ↑ / ↓ — с клавиатуры.';
+            label.setAttribute('aria-keyshortcuts', 'Alt+ArrowUp Alt+ArrowDown');
+            label.addEventListener('click', event => {
+                if (Date.now() < snippetTreeSuppressClickUntil) { event.preventDefault(); event.stopImmediatePropagation(); }
+            }, true);
+            label.addEventListener('keydown', event => {
+                if (!event.altKey || event.ctrlKey || event.metaKey || !['ArrowUp', 'ArrowDown'].includes(event.key) || !canEditSnippets()) return;
+                event.preventDefault();
+                moveSnippetTreeBy(id, event.key === 'ArrowUp' ? -1 : 1);
+            });
+            const orderButton = document.createElement('button');
+            orderButton.type = 'button';
+            orderButton.className = 'snippet-mutation snippet-order-button';
+            orderButton.textContent = '↕';
+            orderButton.title = 'Порядок';
+            orderButton.setAttribute('aria-label', 'Порядок: ' + snippetTreeRecord(id).name);
+            orderButton.setAttribute('aria-haspopup', 'menu');
+            orderButton.setAttribute('aria-expanded', 'false');
+            orderButton.hidden = !canEditSnippets();
+            orderButton.onclick = event => { event.stopPropagation(); showSnippetOrderMenu(id, orderButton); };
+            row.querySelector('.snippet-actions').appendChild(orderButton);
+            label.addEventListener('dragstart', event => {
+                if (!canEditSnippets()) { event.preventDefault(); return; }
+                resetSnippetTreeInteraction();
+                snippetTreeDrag = { id, permissionEpoch: snippetsPermissionEpoch, accountEpoch: authenticatedAccountEpoch };
+                if (event.dataTransfer) {
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('application/x-snippet-tree', id);
+                }
+                row.classList.add('tree-dragging');
+            });
+            function allowedDrop() {
+                const source = snippetTreeDrag && snippetTreeRecord(snippetTreeDrag.id), target = snippetTreeRecord(id);
+                return canEditSnippets() && snippetTreeDrag?.permissionEpoch === snippetsPermissionEpoch &&
+                    snippetTreeDrag?.accountEpoch === authenticatedAccountEpoch && source && target && source.id !== id &&
+                    (source.parentId || null) === (target.parentId || null);
+            }
+            row.addEventListener('dragover', event => {
+                if (!allowedDrop()) return;
+                event.preventDefault();
+                if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+                clearSnippetTreeDropMarks();
+                const rect = row.getBoundingClientRect();
+                row.classList.add(event.clientY > rect.top + rect.height / 2 ? 'tree-drop-after' : 'tree-drop-before');
+                const panel = document.getElementById('snippetsPanel'), bounds = panel.getBoundingClientRect();
+                if (event.clientY < bounds.top + 32) panel.scrollTop -= 18;
+                else if (event.clientY > bounds.bottom - 32) panel.scrollTop += 18;
+            });
+            row.addEventListener('dragleave', event => {
+                if (!row.contains(event.relatedTarget)) row.classList.remove('tree-drop-before', 'tree-drop-after');
+            });
+            row.addEventListener('drop', event => {
+                if (!allowedDrop()) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const sourceId = snippetTreeDrag.id, rect = row.getBoundingClientRect();
+                resetSnippetTreeInteraction();
+                snippetTreeSuppressClickUntil = Date.now() + 250;
+                moveSnippetTreeItem(sourceId, id, event.clientY > rect.top + rect.height / 2);
+            });
+            label.addEventListener('dragend', () => {
+                snippetTreeSuppressClickUntil = Date.now() + 250;
+                resetSnippetTreeInteraction();
+            });
+        }
+
         // Рендеринг дерева snippets
         function renderSnippetsTree() {
             if (!hasSnippetsAccess()) return false;
             const tree = document.getElementById('snippetTree');
             if (!tree) return;
+            const focused = tree.contains(document.activeElement) ? document.activeElement : null;
+            const focusedId = focused?.closest('[data-tree-id]')?.dataset.treeId;
+            const focusClass = focused?.classList.contains('snippet-order-button') ? 'snippet-order-button'
+                : focused?.classList.contains('folder-label') ? 'folder-label' : focused?.classList.contains('snippet-label') ? 'snippet-label' : null;
+            const scrollTop = document.getElementById('snippetsPanel').scrollTop;
+            resetSnippetTreeInteraction();
             tree.innerHTML = '';
 
             if (!snippetsData.structure || snippetsData.structure.length === 0) {
@@ -1984,13 +2209,18 @@
                 return;
             }
 
-            snippetsData.structure.forEach(id => {
+            SnippetsSync.children(snippetsData, null).forEach(id => {
                 if (snippetsData.folders[id]) {
                     tree.appendChild(renderSnippetFolder(id));
                 } else if (snippetsData.snippets[id]) {
                     tree.appendChild(renderSnippetItem(id));
                 }
             });
+            document.getElementById('snippetsPanel').scrollTop = scrollTop;
+            if (focusedId && focusClass) {
+                const row = [...tree.querySelectorAll('[data-tree-id]')].find(item => item.dataset.treeId === focusedId);
+                row?.querySelector('.' + focusClass)?.focus({ preventScroll: true });
+            }
         }
 
         // Рендеринг папки
@@ -2021,6 +2251,7 @@
                 button.onclick = event => { event.stopPropagation(); action(folderId); };
             });
 
+            wireSnippetTreeOrder(folderEl, folderId);
             div.appendChild(folderEl);
 
             if (isExpanded) {
@@ -2054,15 +2285,18 @@
             buttons[0].onclick = event => { event.stopPropagation(); copySnippetToClipboard(snippetId); };
             buttons[1].hidden = !canEditSnippets();
             buttons[1].onclick = event => { event.stopPropagation(); deleteSnippetItem(snippetId); };
+            wireSnippetTreeOrder(div, snippetId);
             return div;
         }
 
         function getSnippetChildren(parentId) {
-            const children = [];
-            [...Object.values(snippetsData.folders), ...Object.values(snippetsData.snippets)].forEach(item => {
-                if (item.parentId === parentId) children.push(item.id);
-            });
-            return children;
+            return SnippetsSync.children(snippetsData, parentId);
+        }
+
+        function pruneSnippetFolderOrders() {
+            for (const folder of Object.values(snippetsData.folders)) {
+                if (Array.isArray(folder.order)) folder.order = folder.order.filter(id => snippetTreeRecord(id)?.parentId === folder.id);
+            }
         }
 
         function toggleSnippetFolder(folderId) {
@@ -2304,10 +2538,174 @@
             renderSnippetsTree();
         }
 
+        let snippetTabsLoadedAccount = null;
+        let snippetTabPendingReveal = null;
+        let snippetTabDrag = null;
+        let snippetTabSuppressClickUntil = 0;
+        let snippetTabScrollFrame = null;
+        let snippetTabScrollSpeed = 0;
+        const SNIPPET_TABS_STORAGE_PREFIX = 'control-panel.snippet-tabs:';
+        const MAX_SAVED_SNIPPET_TABS = 200;
+
+        function snippetTabsStorageKey(nickname) {
+            return SNIPPET_TABS_STORAGE_PREFIX + encodeURIComponent(nickname);
+        }
+
+        function validOpenSnippetIds(ids) {
+            if (!Array.isArray(ids)) return [];
+            return [...new Set(ids.filter(id => typeof id === 'string' &&
+                /^[a-zA-Z0-9_-]{1,128}$/.test(id) && Object.hasOwn(snippetsData.snippets, id)))];
+        }
+
+        function saveSnippetTabs() {
+            if (!hasSnippetsAccess() || !currentNickname || snippetTabsLoadedAccount !== currentNickname) return;
+            const open = validOpenSnippetIds(openSnippets).slice(0, MAX_SAVED_SNIPPET_TABS);
+            const active = open.includes(activeSnippetId) ? activeSnippetId : open.at(-1) || null;
+            try { localStorage.setItem(snippetTabsStorageKey(currentNickname), JSON.stringify({ open, active })); }
+            catch (_) { /* Local preferences are optional when storage is unavailable. */ }
+        }
+
+        // Called only after an authorized snapshot is merged, before rendering.
+        // No names, text, formatting or server/shared ordering are stored here.
+        function restoreSnippetTabs() {
+            if (!hasSnippetsAccess() || !currentNickname || snippetsRevision === null) return false;
+            if (snippetTabsLoadedAccount === currentNickname) return false;
+            snippetTabsLoadedAccount = currentNickname;
+            let saved = null;
+            try {
+                const raw = localStorage.getItem(snippetTabsStorageKey(currentNickname));
+                if (raw && raw.length <= 100000) saved = JSON.parse(raw);
+            } catch (_) { /* Corrupt or blocked storage must not prevent work. */ }
+            if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+                openSnippets = validOpenSnippetIds(saved.open).slice(0, MAX_SAVED_SNIPPET_TABS);
+                activeSnippetId = openSnippets.includes(saved.active) ? saved.active : openSnippets.at(-1) || null;
+                snippetTabPendingReveal = activeSnippetId;
+            }
+            saveSnippetTabs();
+            return true;
+        }
+
+        function clearSnippetTabDragIndicators() {
+            document.querySelectorAll('#snippetTabs .snippet-tab').forEach(tab => {
+                tab.classList.remove('tab-drop-before', 'tab-drop-after');
+                tab.classList.toggle('is-tab-dragging', tab.dataset.snippetId === currentSnippetTabDrag()?.id);
+            });
+        }
+
+        function revealSnippetTab(snippetId = activeSnippetId) {
+            if (!hasSnippetsAccess() || !openSnippets.includes(snippetId)) return false;
+            const container = document.getElementById('snippetTabs');
+            const tab = [...(container?.querySelectorAll('.snippet-tab') || [])]
+                .find(node => node.dataset.snippetId === snippetId);
+            if (!container || !tab) return false;
+            const viewport = container.getBoundingClientRect();
+            const bounds = tab.getBoundingClientRect();
+            if (viewport.width <= 0 || bounds.width <= 0) return false;
+            let offset = 0;
+            if (bounds.left < viewport.left) offset = bounds.left - viewport.left;
+            else if (bounds.right > viewport.right) offset = bounds.width > viewport.width
+                ? bounds.left - viewport.left : bounds.right - viewport.right;
+            const max = Math.max(0, container.scrollWidth - container.clientWidth);
+            if (offset) container.scrollLeft = Math.max(0, Math.min(max, container.scrollLeft + offset));
+            if (snippetTabPendingReveal === snippetId) snippetTabPendingReveal = null;
+            return true;
+        }
+
+        function stopSnippetTabAutoScroll() {
+            if (snippetTabScrollFrame !== null) cancelAnimationFrame(snippetTabScrollFrame);
+            snippetTabScrollFrame = null;
+            snippetTabScrollSpeed = 0;
+        }
+
+        function autoScrollSnippetTabs(event) {
+            const container = document.getElementById('snippetTabs');
+            if (!currentSnippetTabDrag() || !container) { stopSnippetTabAutoScroll(); return; }
+            const bounds = container.getBoundingClientRect();
+            const edge = Math.min(36, bounds.width / 3);
+            const speed = bounds.width > 0 && event.clientX < bounds.left + edge ? -12
+                : bounds.width > 0 && event.clientX > bounds.right - edge ? 12 : 0;
+            if (!speed) { stopSnippetTabAutoScroll(); return; }
+            snippetTabScrollSpeed = speed;
+            if (snippetTabScrollFrame !== null) return;
+            const tick = () => {
+                snippetTabScrollFrame = null;
+                if (!currentSnippetTabDrag() || !snippetTabScrollSpeed || !container.isConnected) {
+                    stopSnippetTabAutoScroll();
+                    return;
+                }
+                const previous = container.scrollLeft;
+                const max = Math.max(0, container.scrollWidth - container.clientWidth);
+                container.scrollLeft = Math.max(0, Math.min(max, previous + snippetTabScrollSpeed));
+                if (container.scrollLeft !== previous) snippetTabScrollFrame = requestAnimationFrame(tick);
+            };
+            tick();
+        }
+
+        function resetSnippetTabState() {
+            // A default denied boot has no loaded identity and must not erase
+            // preferences before authentication. A real revoke/logout does.
+            if (snippetTabsLoadedAccount) {
+                try { localStorage.removeItem(snippetTabsStorageKey(snippetTabsLoadedAccount)); }
+                catch (_) { /* Storage may be disabled. */ }
+            }
+            snippetTabsLoadedAccount = null;
+            snippetTabPendingReveal = null;
+            snippetTabDrag = null;
+            snippetTabSuppressClickUntil = 0;
+            stopSnippetTabAutoScroll();
+            clearSnippetTabDragIndicators();
+            const status = document.getElementById('snippetTabOrderStatus');
+            if (status) status.textContent = '';
+        }
+
+        function currentSnippetTabDrag() {
+            return snippetTabDrag && hasSnippetsAccess() && snippetTabDrag.nickname === currentNickname &&
+                snippetTabDrag.accountEpoch === authenticatedAccountEpoch &&
+                snippetTabDrag.permissionEpoch === snippetsPermissionEpoch &&
+                openSnippets.includes(snippetTabDrag.id) && Object.hasOwn(snippetsData.snippets, snippetTabDrag.id)
+                ? snippetTabDrag : null;
+        }
+
+        function finishSnippetTabDrag() {
+            if (snippetTabDrag) snippetTabSuppressClickUntil = Date.now() + 350;
+            snippetTabDrag = null;
+            stopSnippetTabAutoScroll();
+            clearSnippetTabDragIndicators();
+        }
+
+        function announceSnippetTabPosition(snippetId) {
+            let status = document.getElementById('snippetTabOrderStatus');
+            if (!status) {
+                status = document.createElement('span');
+                status.id = 'snippetTabOrderStatus';
+                status.className = 'snippet-tab-order-status';
+                status.setAttribute('role', 'status');
+                status.setAttribute('aria-live', 'polite');
+                document.getElementById('snippetTabs').insertAdjacentElement('afterend', status);
+            }
+            status.textContent = `Позиция вкладки: ${openSnippets.indexOf(snippetId) + 1} из ${openSnippets.length}`;
+        }
+
+        function reorderSnippetTab(snippetId, targetId, position = 'before') {
+            if (!hasSnippetsAccess() || !['before', 'after'].includes(position) || snippetId === targetId ||
+                !openSnippets.includes(snippetId) || !openSnippets.includes(targetId) ||
+                !Object.hasOwn(snippetsData.snippets, snippetId) || !Object.hasOwn(snippetsData.snippets, targetId)) return false;
+            const next = openSnippets.filter(id => id !== snippetId);
+            next.splice(next.indexOf(targetId) + (position === 'after' ? 1 : 0), 0, snippetId);
+            if (next.every((id, index) => id === openSnippets[index])) return false;
+            openSnippets = next;
+            // Reordering only moves tab controls. It never touches an editor,
+            // its content, selection, undo stack, focus or pending autosave.
+            renderSnippetTabs({ renderContents: false });
+            announceSnippetTabPosition(snippetId);
+            return true;
+        }
+
         function openSnippetViewer(snippetId) {
             if (!hasSnippetsAccess()) return false;
             const snippet = snippetsData.snippets[snippetId];
             if (!snippet) return;
+            restoreSnippetTabs();
 
             // Проверяем, не открыт ли уже этот сниппет
             if (!openSnippets.includes(snippetId)) {
@@ -2315,6 +2713,7 @@
             }
 
             activeSnippetId = snippetId;
+            snippetTabPendingReveal = null;
             renderSnippetTabs();
             renderSnippetContent(snippetId);
 
@@ -2322,9 +2721,12 @@
             const viewer = document.getElementById('snippetsViewer');
             viewer.classList.add('has-content');
             updateContainerMargin();
+            revealSnippetTab(snippetId);
         }
 
         function closeSnippetTab(snippetId) {
+            if (!hasSnippetsAccess() || !openSnippets.includes(snippetId)) return false;
+            if (snippetTabPendingReveal === snippetId) snippetTabPendingReveal = null;
             saveCurrentSnippetState(snippetId);
             if (autoSaveTimeouts.has(snippetId)) {
                 clearTimeout(autoSaveTimeouts.get(snippetId));
@@ -2359,13 +2761,16 @@
         }
 
         function switchToSnippetTab(snippetId) {
+            if (!hasSnippetsAccess() || !openSnippets.includes(snippetId) || !Object.hasOwn(snippetsData.snippets, snippetId)) return false;
             // Сохраняем текущее состояние перед переключением
             if (activeSnippetId && activeSnippetId !== snippetId) {
                 saveCurrentSnippetState(activeSnippetId);
             }
 
             activeSnippetId = snippetId;
+            snippetTabPendingReveal = null;
             renderSnippetTabs();
+            revealSnippetTab(snippetId);
         }
 
         // Сохранение текущего состояния сниппета без отправки на сервер
@@ -2385,8 +2790,11 @@
             }
         }
 
-        function renderSnippetTabs() {
+        function renderSnippetTabs({ renderContents = true } = {}) {
             if (!hasSnippetsAccess()) return false;
+            // Remote updates can replace a dragged title mid-gesture. Cancel
+            // that gesture rather than accepting a later drop from stale DOM.
+            if (snippetTabDrag) finishSnippetTabDrag();
             const tabsContainer = document.getElementById('snippetTabs');
             const focused = document.activeElement;
             const restoreTabFocus = tabsContainer.contains(focused);
@@ -2394,6 +2802,14 @@
             const focusedClose = restoreTabFocus && focused.classList.contains('snippet-tab-close');
             const scrollLeft = tabsContainer.scrollLeft;
             tabsContainer.innerHTML = '';
+            tabsContainer.ondragover = event => {
+                if (!currentSnippetTabDrag()) return;
+                event.preventDefault();
+                autoScrollSnippetTabs(event);
+            };
+            tabsContainer.ondragleave = event => {
+                if (!event.relatedTarget || !tabsContainer.contains(event.relatedTarget)) stopSnippetTabAutoScroll();
+            };
 
             openSnippets.forEach(snippetId => {
                 const snippet = snippetsData.snippets[snippetId];
@@ -2401,20 +2817,78 @@
 
                 const tab = document.createElement('div');
                 tab.className = `snippet-tab ${snippetId === activeSnippetId ? 'active' : ''}`;
+                tab.dataset.snippetId = snippetId;
                 const title = document.createElement('button');
                 title.type = 'button';
                 title.className = 'snippet-tab-title';
                 title.dataset.snippetId = snippetId;
                 title.textContent = snippet.name;
                 title.setAttribute('aria-pressed', String(snippetId === activeSnippetId));
-                title.onclick = () => switchToSnippetTab(snippetId);
+                title.setAttribute('aria-keyshortcuts', 'Alt+ArrowLeft Alt+ArrowRight');
+                title.title = 'Перетащите вкладку или используйте Alt + стрелка влево / вправо';
+                title.draggable = true;
+                title.onclick = event => {
+                    if (Date.now() < snippetTabSuppressClickUntil) { event.preventDefault(); return; }
+                    switchToSnippetTab(snippetId);
+                };
+                title.onkeydown = event => {
+                    if (!event.altKey || event.ctrlKey || event.metaKey ||
+                        !['ArrowLeft', 'ArrowRight'].includes(event.key) || !hasSnippetsAccess()) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const direction = event.key === 'ArrowLeft' ? -1 : 1;
+                    const targetId = openSnippets[openSnippets.indexOf(snippetId) + direction];
+                    if (targetId && reorderSnippetTab(snippetId, targetId, direction < 0 ? 'before' : 'after')) revealSnippetTab(snippetId);
+                };
+                title.ondragstart = event => {
+                    if (!hasSnippetsAccess() || !openSnippets.includes(snippetId)) { event.preventDefault(); return; }
+                    snippetTabDrag = { id: snippetId, nickname: currentNickname,
+                        accountEpoch: authenticatedAccountEpoch, permissionEpoch: snippetsPermissionEpoch };
+                    event.dataTransfer?.setData('application/x-control-panel-snippet-tab', snippetId);
+                    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+                    tab.classList.add('is-tab-dragging');
+                    event.stopPropagation();
+                };
+                title.ondragend = finishSnippetTabDrag;
+                const dropPosition = event => event.clientX < tab.getBoundingClientRect().left + tab.getBoundingClientRect().width / 2 ? 'before' : 'after';
+                tab.ondragover = event => {
+                    const drag = currentSnippetTabDrag();
+                    if (!drag) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+                    autoScrollSnippetTabs(event);
+                    clearSnippetTabDragIndicators();
+                    if (drag.id === snippetId) return;
+                    tab.classList.add(dropPosition(event) === 'before' ? 'tab-drop-before' : 'tab-drop-after');
+                };
+                tab.ondragleave = event => {
+                    if (event.relatedTarget && tab.contains(event.relatedTarget)) return;
+                    tab.classList.remove('tab-drop-before', 'tab-drop-after');
+                };
+                tab.ondrop = event => {
+                    const drag = currentSnippetTabDrag();
+                    if (!drag) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const position = dropPosition(event);
+                    finishSnippetTabDrag();
+                    reorderSnippetTab(drag.id, snippetId, position);
+                };
                 const close = document.createElement('button');
                 close.type = 'button';
                 close.className = 'snippet-tab-close';
                 close.dataset.snippetId = snippetId;
                 close.textContent = '×';
+                close.draggable = false;
                 close.setAttribute('aria-label', 'Закрыть сниппет ' + snippet.name);
-                close.onclick = event => { event.stopPropagation(); closeSnippetTab(snippetId); };
+                close.onmousedown = event => event.stopPropagation();
+                close.ondragstart = event => { event.preventDefault(); event.stopPropagation(); };
+                close.onclick = event => {
+                    event.stopPropagation();
+                    if (Date.now() < snippetTabSuppressClickUntil) { event.preventDefault(); return; }
+                    closeSnippetTab(snippetId);
+                };
                 tab.append(title, close);
                 tabsContainer.appendChild(tab);
             });
@@ -2426,10 +2900,13 @@
             });
 
             // Рендерим контент для всех открытых сниппетов
-            openSnippets.forEach(snippetId => {
+            if (renderContents) openSnippets.forEach(snippetId => {
                 renderSnippetContent(snippetId);
             });
+            saveSnippetTabs();
             tabsContainer.scrollLeft = scrollLeft;
+            if (!openSnippets.includes(snippetTabPendingReveal)) snippetTabPendingReveal = null;
+            if (snippetTabPendingReveal) revealSnippetTab(snippetTabPendingReveal);
             if (restoreTabFocus) {
                 const buttons = [...tabsContainer.querySelectorAll('button')];
                 const replacement = buttons.find(button => button.dataset.snippetId === focusedSnippet &&
@@ -2584,6 +3061,7 @@
 
             delete snippetsData.snippets[snippetId];
             snippetsData.structure = snippetsData.structure.filter(id => id !== snippetId);
+            pruneSnippetFolderOrders();
 
             if (currentSnippetId === snippetId) {
                 currentSnippetId = null;
@@ -2629,6 +3107,7 @@
             });
             deletedFolders.forEach(id => delete snippetsData.folders[id]);
             snippetsData.structure = snippetsData.structure.filter(id => snippetsData.folders[id] || snippetsData.snippets[id]);
+            pruneSnippetFolderOrders();
             refreshSnippetEditors();
             saveSnippets();
         }
@@ -2801,7 +3280,10 @@
             <div class="snippet-controls">
                 <button onclick="createSnippetFolder()">+ Папка</button>
                 <button onclick="createNewSnippet()">+ Сниппет</button>
+                <button type="button" id="snippetSortOrder" onclick="showSnippetOrderMenu(null, this)" aria-label="Сортировать корневой список" aria-haspopup="menu" aria-expanded="false">Порядок</button>
             </div>
+            <p class="snippet-order-hint snippet-mutation">Перетаскивайте названия. Меню ↕ — порядок и сортировка.</p>
+            <div id="snippetOrderStatus" class="snippet-order-status" role="status" aria-live="polite"></div>
 
             <div id="snippetCopyStatus" role="status" aria-live="polite"></div>
             <div class="snippet-tree" id="snippetTree"></div>

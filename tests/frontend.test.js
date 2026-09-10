@@ -890,3 +890,347 @@ test('an unavailable rich editor retains formatted source and offers safe plain-
     assert.equal(p.run('hasUnsavedSnippets()'), false);
     assert.ok(p.run('snippetsData.snippets.a.richText'));
 });
+
+// Shared tree ordering is deliberately separate from each user's local tab order.
+function orderLibrary() {
+    const data = {
+        folders: {
+            folder: { id: 'folder', name: 'Folder', parentId: null },
+            other: { id: 'other', name: 'Other folder', parentId: null }
+        },
+        snippets: {
+            a: { id: 'a', name: 'Block 1', content: 'first', parentId: null },
+            b: { id: 'b', name: 'Block 2', content: 'second', parentId: null },
+            c: { id: 'c', name: 'Block 10', content: 'third', parentId: null },
+            nested10: { id: 'nested10', name: 'Блок 10', content: 'ten', parentId: 'folder' },
+            nested2: { id: 'nested2', name: 'Блок 2', content: 'two', parentId: 'folder' },
+            nested1: { id: 'nested1', name: 'Блок 1', content: 'one', parentId: 'folder' },
+            nestedTie: { id: 'nestedTie', name: 'блок 2', content: 'two with equal name', parentId: 'folder' }
+        },
+        structure: ['c', 'folder', 'a', 'other', 'b']
+    };
+    data.snippets.a.richText = styledLibrary().snippets.a.richText;
+    return data;
+}
+function recordTreeSaves(p) {
+    const requests = [];
+    let revision = Number(p.run('snippetsRevision')) || 1;
+    p.w.fetch = async (url, options) => {
+        assert.equal(url, '/api/snippets/save');
+        assert.equal(options.method, 'POST');
+        const body = JSON.parse(options.body);
+        requests.push(body);
+        return reply(200, { ok: true, snippets: body.snippets, revision: ++revision });
+    };
+    return requests;
+}
+function currentTreeOrder(p, parentId = null) {
+    p.w.orderTestParent = parentId;
+    return Array.from(p.run('SnippetsSync.children(snippetsData, orderTestParent)'));
+}
+function treeLabel(p, id) {
+    const row = [...p.w.document.querySelectorAll('#snippetTree [data-tree-id]')]
+        .find(node => node.dataset.treeId === id);
+    assert.ok(row, 'Expected rendered tree row ' + id);
+    const label = row.matches('.snippet-label,.folder-label') ? row : row.querySelector('.snippet-label,.folder-label');
+    assert.ok(label, 'Expected focusable tree label ' + id);
+    return label;
+}
+async function flushTreeSave(p) {
+    await p.w.saveSnippets();
+    await new Promise(resolve => setImmediate(resolve));
+}
+
+test('tree sibling moves persist root and folder ordering through save and fresh reload', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, orderLibrary());
+    const requests = recordTreeSaves(p);
+    await p.w.moveSnippetTreeItem('a', 'c'); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p), ['a', 'c', 'folder', 'other', 'b']);
+    await p.w.moveSnippetTreeItem('b', 'a', true); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p), ['a', 'b', 'c', 'folder', 'other']);
+    await p.w.moveSnippetTreeItem('nested1', 'nested10'); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p, 'folder'), ['nested1', 'nested10', 'nested2', 'nestedTie']);
+    assert.ok(requests.length >= 3);
+    const saved = requests.at(-1).snippets;
+    assert.deepEqual(sync.children(saved, null), ['a', 'b', 'c', 'folder', 'other']);
+    assert.deepEqual(sync.children(saved, 'folder'), ['nested1', 'nested10', 'nested2', 'nestedTie']);
+    assert.equal(p.run('hasUnsavedSnippets()'), false);
+    const fresh = panel(); t.after(() => fresh.dom.window.close());
+    fresh.run("currentNickname='alice'; currentRole='user'; applySnippetsAccess(true);");
+    fresh.w.fetch = async url => { assert.equal(url, '/api/snippets/list'); return reply(200, { snippets: saved, revision: 10 }); };
+    assert.equal(await fresh.w.loadSnippets(), true);
+    assert.deepEqual(currentTreeOrder(fresh), ['a', 'b', 'c', 'folder', 'other']);
+    assert.deepEqual(currentTreeOrder(fresh, 'folder'), ['nested1', 'nested10', 'nested2', 'nestedTie']);
+    fresh.w.toggleSnippetFolder('folder');
+    const labels = [...fresh.w.document.querySelectorAll('#snippetTree .snippet-label')].map(node => node.textContent);
+    assert.deepEqual(labels, ['Block 1', 'Block 2', 'Block 10', 'Блок 1', 'Блок 10', 'Блок 2', 'блок 2']);
+});
+
+test('tree sorting is natural for English and Russian names and preserves ties in both directions', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, orderLibrary());
+    recordTreeSaves(p);
+    await p.w.sortSnippetChildren(null, 'asc'); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p), ['a', 'b', 'c', 'folder', 'other']);
+    await p.w.sortSnippetChildren('folder', 'asc'); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p, 'folder'), ['nested1', 'nested2', 'nestedTie', 'nested10']);
+    await p.w.sortSnippetChildren('folder', 'desc'); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p, 'folder'), ['nested10', 'nested2', 'nestedTie', 'nested1']);
+    assert.deepEqual(currentTreeOrder(p), ['a', 'b', 'c', 'folder', 'other']);
+    assert.equal(p.run('snippetsData.snippets.nested2.parentId'), 'folder');
+    assert.equal(p.run('snippetsData.snippets.nestedTie.content'), 'two with equal name');
+});
+
+test('tree moves and sorting preserve the live rich editor, selection, undo and working chat draft', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, orderLibrary());
+    p.w.openSnippetViewer('a'); p.w.openSnippetViewer('b'); p.w.switchToSnippetTab('a');
+    p.w.openChat('tree-session');
+    const chat = p.w.document.getElementById('chatInput');
+    chat.value = 'Do not lose this session draft'; chat.dispatchEvent(new p.w.Event('input', { bubbles: true }));
+    const editor = snippetEditor(p, 'a');
+    const quill = p.w.Quill.find(editor.root.parentElement);
+    quill.formatText(0, 5, 'italic', true, 'user');
+    quill.setSelection(1, 3, 'silent');
+    const beforeBody = JSON.parse(JSON.stringify(editor.getValue()));
+    const undoLength = quill.history.stack.undo.length;
+    const requests = recordTreeSaves(p);
+    await p.w.moveSnippetTreeItem('c', 'b', true); await flushTreeSave(p);
+    await p.w.sortSnippetChildren('folder', 'asc'); await flushTreeSave(p);
+    assert.equal(snippetEditor(p, 'a'), editor);
+    assert.equal(editor.root.isConnected, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(editor.getValue())), beforeBody);
+    assert.deepEqual(JSON.parse(JSON.stringify(quill.getSelection())), { index: 1, length: 3 });
+    assert.equal(quill.history.stack.undo.length, undoLength);
+    assert.equal(p.run('activeSnippetId'), 'a');
+    assert.deepEqual(Array.from(p.run('openSnippets')), ['a', 'b']);
+    assert.equal(p.run('currentChatSessionId'), 'tree-session');
+    assert.equal(chat.value, 'Do not lose this session draft');
+    assert.equal(p.run("chatDrafts.get('tree-session')"), 'Do not lose this session draft');
+    assert.equal(requests.at(-1).snippets.snippets.a.richText.ops[0].attributes.italic, true);
+});
+
+test('tree ordering cannot move items between parents, into descendants or onto missing records', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, orderLibrary());
+    const before = JSON.stringify(p.run('snippetsData'));
+    const requests = recordTreeSaves(p);
+    for (const [source, target] of [['a', 'nested1'], ['nested1', 'b'], ['folder', 'nested1'], ['a', 'missing'], ['missing', 'a'], ['a', 'a']]) {
+        await p.w.moveSnippetTreeItem(source, target);
+    }
+    await p.w.sortSnippetChildren('missing', 'asc');
+    await flushTreeSave(p);
+    assert.equal(JSON.stringify(p.run('snippetsData')), before);
+    assert.equal(requests.length, 0);
+});
+
+test('shared tree reordering is denied for readers, trainees and accounts without snippets access', async t => {
+    for (const permission of ['reader', 'new', 'revoked']) {
+        const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, orderLibrary());
+        if (permission === 'revoked') p.w.applySnippetsAccess(false);
+        else { p.w.permissionRole = permission; p.run('currentRole=permissionRole;'); p.w.applyRoleRestrictions(); p.w.renderSnippetsTree(); }
+        const before = JSON.stringify(p.run('snippetsData'));
+        const requests = recordTreeSaves(p);
+        await p.w.moveSnippetTreeItem('a', 'c');
+        await p.w.sortSnippetChildren(null, 'asc');
+        await p.w.sortSnippetChildren('folder', 'desc');
+        await flushTreeSave(p);
+        assert.equal(JSON.stringify(p.run('snippetsData')), before, permission);
+        assert.equal(requests.length, 0, permission);
+        assert.ok([...p.w.document.querySelectorAll('#snippetTree .snippet-label,#snippetTree .folder-label')].every(label => !label.draggable), permission);
+        if (permission === 'reader') {
+            p.w.openSnippetViewer('a'); p.w.openSnippetViewer('b'); p.w.switchToSnippetTab('a');
+            assert.equal(p.run('activeSnippetId'), 'a', 'Reader must retain local tab navigation');
+            assert.equal(snippetEditor(p, 'a').root.getAttribute('contenteditable'), 'false');
+        }
+    }
+});
+
+test('Alt+Arrow tree reorder keeps focus on the moved label and ignores ordinary arrows and boundaries', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, orderLibrary());
+    const requests = recordTreeSaves(p);
+    const original = currentTreeOrder(p);
+    let label = treeLabel(p, 'c'); label.focus();
+    const down = new p.w.KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true });
+    label.dispatchEvent(down); await flushTreeSave(p);
+    assert.equal(down.defaultPrevented, true);
+    assert.deepEqual(currentTreeOrder(p), ['folder', 'c', 'a', 'other', 'b']);
+    assert.equal(p.w.document.activeElement, treeLabel(p, 'c'));
+    label = treeLabel(p, 'c');
+    label.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true, cancelable: true }));
+    await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p), original);
+    assert.equal(p.w.document.activeElement, treeLabel(p, 'c'));
+    const savedCount = requests.length;
+    label = treeLabel(p, 'c');
+    label.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true, cancelable: true }));
+    label.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p), original);
+    assert.equal(requests.length, savedCount);
+});
+
+function treeTransfer() {
+    const values = new Map();
+    return {
+        types: ['application/x-snippet-tree'], effectAllowed: 'all', dropEffect: 'none',
+        setData(type, value) { values.set(type, value); },
+        getData(type) { return values.get(type) || ''; }
+    };
+}
+function dispatchTreeDrag(p, target, type, dataTransfer, clientY = 20) {
+    const event = new p.w.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperties(event, { dataTransfer: { value: dataTransfer }, clientY: { value: clientY } });
+    target.dispatchEvent(event);
+    return event;
+}
+function treeRow(p, id) {
+    const row = treeLabel(p, id).closest('[data-tree-id]');
+    row.getBoundingClientRect = () => ({ top: 10, bottom: 110, left: 0, right: 200, width: 200, height: 100 });
+    return row;
+}
+function openRootOrderMenu(p, trigger) {
+    // This fixture deliberately uses outside-only scripts; execute this one
+    // actual inline handler explicitly rather than pretending .click runs it.
+    const handler = trigger.getAttribute('onclick');
+    assert.match(handler, /showSnippetOrderMenu/);
+    p.w.Function('event', handler).call(trigger, new p.w.MouseEvent('click'));
+}
+function orderMenuButton(p, name) {
+    const button = [...p.w.document.querySelectorAll('.snippet-order-menu [role="menuitem"]')]
+        .find(item => item.textContent === name);
+    assert.ok(button, 'Expected ordering menu action ' + name);
+    return button;
+}
+
+test('native tree drag displays before/after insertion marks and moves only its internally started source', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, orderLibrary());
+    p.w.openSnippetViewer('b');
+    recordTreeSaves(p);
+    const transfer = treeTransfer();
+    assert.equal(treeLabel(p, 'c').draggable, true);
+    dispatchTreeDrag(p, treeLabel(p, 'c'), 'dragstart', transfer);
+    // External text cannot replace the ID captured by the local dragstart.
+    transfer.getData = () => 'b';
+    let target = treeRow(p, 'a');
+    const before = dispatchTreeDrag(p, target, 'dragover', transfer, 20);
+    assert.equal(before.defaultPrevented, true);
+    assert.equal(target.classList.contains('tree-drop-before'), true);
+    dispatchTreeDrag(p, target, 'dragover', transfer, 90);
+    assert.equal(target.classList.contains('tree-drop-before'), false);
+    assert.equal(target.classList.contains('tree-drop-after'), true);
+    dispatchTreeDrag(p, target, 'drop', transfer, 90); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p), ['folder', 'a', 'c', 'other', 'b']);
+    assert.equal(p.w.document.querySelector('.tree-drop-before,.tree-drop-after,.tree-dragging'), null);
+    assert.equal(p.run('activeSnippetId'), 'b');
+    dispatchTreeDrag(p, treeLabel(p, 'b'), 'dragstart', treeTransfer());
+    target = treeRow(p, 'folder');
+    dispatchTreeDrag(p, target, 'drop', transfer, 20); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p), ['b', 'folder', 'a', 'c', 'other']);
+});
+
+test('external, cross-folder and reader tree drags cannot reorder or persist the shared library', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, orderLibrary());
+    p.w.toggleSnippetFolder('folder');
+    const requests = recordTreeSaves(p);
+    const original = JSON.stringify(p.run('snippetsData'));
+    const external = treeTransfer(); external.setData('application/x-snippet-tree', 'c'); external.setData('text/plain', 'c');
+    let target = treeRow(p, 'a');
+    dispatchTreeDrag(p, target, 'dragover', external, 90);
+    dispatchTreeDrag(p, target, 'drop', external, 90);
+    assert.equal(p.w.document.querySelector('.tree-drop-before,.tree-drop-after'), null);
+    const internal = treeTransfer();
+    dispatchTreeDrag(p, treeLabel(p, 'nested1'), 'dragstart', internal);
+    dispatchTreeDrag(p, target, 'dragover', internal, 90);
+    dispatchTreeDrag(p, target, 'drop', internal, 90);
+    dispatchTreeDrag(p, treeLabel(p, 'nested1'), 'dragend', internal);
+    p.run("currentRole='reader';"); p.w.applyRoleRestrictions(); p.w.renderSnippetsTree();
+    target = treeRow(p, 'a');
+    const start = dispatchTreeDrag(p, treeLabel(p, 'c'), 'dragstart', treeTransfer());
+    assert.equal(start.defaultPrevented, true);
+    dispatchTreeDrag(p, target, 'drop', external, 90);
+    await flushTreeSave(p);
+    assert.equal(JSON.stringify(p.run('snippetsData')), original);
+    assert.equal(requests.length, 0);
+});
+
+test('tree drags and already-open menu actions are invalidated by permission revocation and regrant', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, orderLibrary());
+    const requests = recordTreeSaves(p);
+    const transfer = treeTransfer();
+    dispatchTreeDrag(p, treeLabel(p, 'c'), 'dragstart', transfer);
+    const oldTarget = treeRow(p, 'a');
+    p.w.applySnippetsAccess(false);
+    p.w.seed = orderLibrary(); p.run('applySnippetsAccess(true); receiveSnippets({snippets:seed,revision:5});');
+    dispatchTreeDrag(p, oldTarget, 'drop', transfer, 90);
+    assert.deepEqual(currentTreeOrder(p), orderLibrary().structure);
+    const rootOrder = p.w.document.getElementById('snippetSortOrder');
+    openRootOrderMenu(p, rootOrder);
+    const staleAction = orderMenuButton(p, 'По названию: А–Я');
+    p.w.applySnippetsAccess(false);
+    assert.equal(p.w.document.querySelector('.snippet-order-menu'), null);
+    p.w.seed = orderLibrary(); p.run('applySnippetsAccess(true); receiveSnippets({snippets:seed,revision:6});');
+    staleAction.click();
+    await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p), orderLibrary().structure);
+    assert.equal(requests.length, 0);
+});
+
+test('root and folder order menus expose sorting and movement with correct keyboard focus', async t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, orderLibrary());
+    recordTreeSaves(p);
+    const rootOrder = p.w.document.getElementById('snippetSortOrder');
+    openRootOrderMenu(p, rootOrder);
+    assert.equal(rootOrder.getAttribute('aria-expanded'), 'true');
+    const asc = orderMenuButton(p, 'По названию: А–Я');
+    assert.equal(p.w.document.activeElement, asc);
+    asc.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+    assert.equal(p.w.document.activeElement, orderMenuButton(p, 'По названию: Я–А'));
+    p.w.document.activeElement.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert.equal(p.w.document.querySelector('.snippet-order-menu'), null);
+    assert.equal(p.w.document.activeElement, rootOrder);
+    openRootOrderMenu(p, rootOrder); orderMenuButton(p, 'По названию: А–Я').click(); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p), ['a', 'b', 'c', 'folder', 'other']);
+    treeRow(p, 'folder').querySelector('[aria-label="Порядок: Folder"]').click();
+    orderMenuButton(p, 'По названию: А–Я').click(); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p, 'folder'), ['nested1', 'nested2', 'nestedTie', 'nested10']);
+    treeRow(p, 'a').querySelector('[aria-label="Порядок: Block 1"]').click();
+    assert.equal(orderMenuButton(p, 'Выше').disabled, true);
+    orderMenuButton(p, 'Ниже').click(); await flushTreeSave(p);
+    assert.deepEqual(currentTreeOrder(p), ['b', 'a', 'c', 'folder', 'other']);
+    assert.equal(p.w.document.activeElement, treeRow(p, 'a').querySelector('.snippet-order-button'));
+});
+
+test('an all-disabled ordering menu is still focusable and dismissible with Escape', t => {
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, empty());
+    const trigger = p.w.document.getElementById('snippetSortOrder');
+    openRootOrderMenu(p, trigger);
+    const menu = p.w.document.querySelector('.snippet-order-menu');
+    assert.equal(p.w.document.activeElement, menu);
+    assert.equal(menu.querySelectorAll('button:disabled').length, 2);
+    menu.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert.equal(p.w.document.querySelector('.snippet-order-menu'), null);
+    assert.equal(p.w.document.activeElement, trigger);
+});
+
+test('deleting ordered snippets and nested folders prunes preferences before durable save', async t => {
+    const data = { folders: {
+        f: { id: 'f', name: 'Folder', parentId: null, order: ['b', 'g', 'a'] },
+        g: { id: 'g', name: 'Nested', parentId: 'f', order: ['c'] }
+    }, snippets: {
+        a: { id: 'a', name: 'A', content: 'a', parentId: 'f' },
+        b: { id: 'b', name: 'B', content: 'b', parentId: 'f' },
+        c: { id: 'c', name: 'C', content: 'c', parentId: 'g' }
+    }, structure: ['f'] };
+    const p = panel(); t.after(() => p.dom.window.close()); initEditor(p, data);
+    const validate = require('../lib/backend-state').validateSnippets;
+    let revision = 1;
+    p.w.fetch = async (url, options) => {
+        assert.equal(url, '/api/snippets/save');
+        const body = JSON.parse(options.body);
+        return reply(200, { snippets: validate(body.snippets), revision: ++revision });
+    };
+    p.w.deleteSnippetItem('b'); await flushTreeSave(p);
+    assert.deepEqual(Array.from(p.run('snippetsData.folders.f.order')), ['g', 'a']);
+    p.w.deleteSnippetFolder('g'); await flushTreeSave(p);
+    assert.deepEqual(Array.from(p.run('snippetsData.folders.f.order')), ['a']);
+    assert.equal(p.run('snippetsData.snippets.c'), undefined);
+    assert.equal(p.w.hasUnsavedSnippets(), false);
+});

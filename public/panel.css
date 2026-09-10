@@ -187,3 +187,64 @@ body.work-ui [hidden] { display: none !important; }
   .snippet-rich-editor { min-height: 100px; }
   body.chat-open .snippet-content-area.active { overflow-y: auto; }
 }
+
+/* Library ordering: quiet handles, explicit insertion line, keyboard/touch menu. */
+body.work-ui .snippet-order-hint { margin: 10px 0 4px; color: var(--work-muted); font-size: 11px; line-height: 1.5; }
+.snippet-folder, .snippet-item { position: relative; }
+body.work-ui #snippetTree [draggable="true"] { cursor: grab; }
+body.work-ui #snippetTree [draggable="true"]:active { cursor: grabbing; }
+.tree-dragging { opacity: .55; }
+.tree-drop-before::before, .tree-drop-after::after {
+  content: ''; position: absolute; left: 0; right: 0; height: 2px;
+  background: var(--work-accent); border-radius: 2px; pointer-events: none; z-index: 2;
+}
+.tree-drop-before::before { top: -2px; }
+.tree-drop-after::after { bottom: -2px; }
+body.work-ui .snippet-order-button { min-width: 24px; font-size: 14px; line-height: 1; }
+body.work-ui .snippet-order-menu {
+  position: fixed; z-index: 12000; display: flex; flex-direction: column; gap: 3px;
+  padding: 5px; width: 202px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px);
+  overflow-y: auto; background: var(--work-surface); border: 1px solid var(--work-border);
+  border-radius: var(--work-radius); box-shadow: 0 8px 28px #0003;
+}
+body.work-ui .snippet-order-menu button { padding: 9px 11px; text-align: left; border: 0; background: transparent; font-size: 12px; }
+body.work-ui .snippet-order-menu button:hover:not(:disabled), body.work-ui .snippet-order-menu button:focus-visible { background: var(--work-accent-soft); }
+.snippet-order-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (hover: none) {
+  .snippet-folder .snippet-actions { display: flex; }
+  body.work-ui .snippet-order-button { min-width: 32px; min-height: 32px; }
+}
+/* Local tab ordering only; library hierarchy/order remains unchanged. */
+.snippet-tab { position: relative; flex-shrink: 0; }
+body.work-ui .snippet-tab-title[draggable="true"] { cursor: grab; }
+body.work-ui .snippet-tab-title[draggable="true"]:active { cursor: grabbing; }
+.snippet-tab.is-tab-dragging { opacity: .55; }
+.snippet-tab.tab-drop-before::before,
+.snippet-tab.tab-drop-after::after {
+    content: '';
+    position: absolute;
+    z-index: 2;
+    top: 5px;
+    bottom: 5px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--work-accent);
+    pointer-events: none;
+}
+.snippet-tab.tab-drop-before::before { left: 0; }
+.snippet-tab.tab-drop-after::after { right: 0; }
+.snippet-tab-order-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+/* Reserve action space before hover: folder labels must not move underneath a click. */
+.snippet-folder .snippet-actions { display: flex; opacity: 0; pointer-events: none; }
+.snippet-folder:hover .snippet-actions, .snippet-folder:focus-within .snippet-actions { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .snippet-folder .snippet-actions { opacity: 1; pointer-events: auto; } }
